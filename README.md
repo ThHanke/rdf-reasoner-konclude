@@ -38,6 +38,19 @@ docker compose run shell
 
 Build output: `dist/konclude.mjs` (ES module, `EXPORT_NAME=createKoncludeModule`) and `dist/konclude.wasm`.
 
+## Integration Test Results
+
+| Ontology | Expressiveness | NTriples | Konclude desktop | WASM (after build) |
+|---|---|---|---|---|
+| LUBM schema | SHI | 307 | 7 ms | — |
+| GALEN | SHIF | 30 817 | 164 ms | — |
+| Roberts family | SROIQ | 3 866 | 2 082 ms | — |
+| LUBM data | SHI | TBD | — | — |
+
+- Konclude desktop timings = precompute + classify, measured on `konclude/konclude:latest` Docker image (native binary)
+- WASM times measured after `docker compose run build` produces `dist/konclude.wasm`
+- Fixtures converted from `vendor/konclude/Tests/` via `scripts/convert-test-fixtures.sh`
+
 ## Architecture
 
 ### End-to-end pipeline
