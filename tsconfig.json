@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "rootDir": "ts",
+    "outDir": "dist",
+    "strict": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "esModuleInterop": false,
+    "skipLibCheck": false,
+    "lib": ["ES2022", "WebWorker"]
+  },
+  "include": ["ts/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

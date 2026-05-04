@@ -1,0 +1,58 @@
+{
+  "name": "rdf-reasoner-konclude",
+  "version": "0.1.0",
+  "description": "OWL-DL tableau reasoning via Konclude compiled to WebAssembly, with an async TypeScript API using RDF.js Quad types",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "type": "module",
+  "sideEffects": ["./dist/worker.js"],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./worker": {
+      "types": "./dist/worker.d.ts",
+      "import": "./dist/worker.js"
+    },
+    "./wasm": "./dist/konclude.wasm"
+  },
+  "files": [
+    "dist",
+    "NOTICE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "apply-patches": "bash scripts/apply-patches.sh"
+  },
+  "peerDependencies": {
+    "@rdfjs/types": ">=2.0",
+    "n3": ">=1.0"
+  },
+  "devDependencies": {
+    "@rdfjs/types": "^2.0.1",
+    "@types/n3": "^1.21.1",
+    "n3": "^1.22.0",
+    "typescript": "^5.4.5",
+    "vitest": "^4.0.0",
+    "@types/node": "^20.0.0"
+  },
+  "license": "MIT",
+  "keywords": [
+    "owl",
+    "owl-dl",
+    "rdf",
+    "reasoner",
+    "webassembly",
+    "wasm",
+    "rdfjs"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rdf-reasoner-konclude/rdf-reasoner-konclude"
+  }
+}
