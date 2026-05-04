@@ -1,0 +1,3 @@
+[submodule "vendor/konclude"]
+	path = vendor/konclude
+	url = https://github.com/konclude/Konclude

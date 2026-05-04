@@ -1,0 +1,1856 @@
+diff --git a/Source/Concurrent/CIntervalThread.h b/Source/Concurrent/CIntervalThread.h
+index 4e6cea32..d2916796 100644
+--- a/Source/Concurrent/CIntervalThread.h
++++ b/Source/Concurrent/CIntervalThread.h
+@@ -25,7 +25,7 @@
+ #include <QSemaphore>
+ #include <QTime>
+ #include <QTimer>
+-#include <QHash>
++#include "QtCompat.h"
+ #include <QMutex>
+ 
+ #include "CIntervalThreadData.h"
+diff --git a/Source/Concurrent/CIntervalThreadData.h b/Source/Concurrent/CIntervalThreadData.h
+index ea979dbe..70edda30 100644
+--- a/Source/Concurrent/CIntervalThreadData.h
++++ b/Source/Concurrent/CIntervalThreadData.h
+@@ -21,7 +21,7 @@
+ #define KONCLUDE_CONCURRENT_CINTERVALTHREADDATA_H
+ 
+ 
+-#include <QString>
++#include "QtCompat.h"
+ 
+ 
+ namespace Konclude {
+diff --git a/Source/Concurrent/CWatchDogThread.h b/Source/Concurrent/CWatchDogThread.h
+index 61af1373..f060f691 100644
+--- a/Source/Concurrent/CWatchDogThread.h
++++ b/Source/Concurrent/CWatchDogThread.h
+@@ -23,9 +23,8 @@
+ 
+ #include <QSemaphore>
+ #include <QReadWriteLock>
+-#include <QHash>
++#include "QtCompat.h"
+ #include <QDateTime>
+-#include <QLinkedList>
+ 
+ #include "CThread.h"
+ #include "CIntervalThread.h"
+diff --git a/Source/Concurrent/CWatchDogThreadData.h b/Source/Concurrent/CWatchDogThreadData.h
+index 370304f8..d4065963 100644
+--- a/Source/Concurrent/CWatchDogThreadData.h
++++ b/Source/Concurrent/CWatchDogThreadData.h
+@@ -21,7 +21,7 @@
+ #define KONCLUDE_CONCURRENT_CWATCHDOGTHREADDATA_H
+ 
+ 
+-#include <QString>
++#include "QtCompat.h"
+ 
+ 
+ #include "CThread.h"
+diff --git a/Source/Concurrent/Callback/CSynchronizedCallbackListExecuter.h b/Source/Concurrent/Callback/CSynchronizedCallbackListExecuter.h
+index 15d143dc..ff71d2d6 100644
+--- a/Source/Concurrent/Callback/CSynchronizedCallbackListExecuter.h
++++ b/Source/Concurrent/Callback/CSynchronizedCallbackListExecuter.h
+@@ -23,7 +23,7 @@
+ 
+ // Libraries includes
+ #include <QMutex>
+-#include <QLinkedList>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "CCallbackListExecuter.h"
+diff --git a/Source/Reasoner/Classifier/CClassPossibleSubsumptionMap.h b/Source/Reasoner/Classifier/CClassPossibleSubsumptionMap.h
+index 653df2cb..1b3aabec 100644
+--- a/Source/Reasoner/Classifier/CClassPossibleSubsumptionMap.h
++++ b/Source/Reasoner/Classifier/CClassPossibleSubsumptionMap.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_CLASSIFIER_CCLASSPOSSIBLESUBSUMPTIONMAP_H
+ 
+ // Libraries includes
+-#include <QMap>
++#include "QtCompat.h"
+ 
+ 
+ // Namespace includes
+diff --git a/Source/Reasoner/Classifier/CClassPossibleSubsumptionMapIterator.h b/Source/Reasoner/Classifier/CClassPossibleSubsumptionMapIterator.h
+index fd37119b..da07c683 100644
+--- a/Source/Reasoner/Classifier/CClassPossibleSubsumptionMapIterator.h
++++ b/Source/Reasoner/Classifier/CClassPossibleSubsumptionMapIterator.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_CLASSIFIER_CCLASSPOSSIBLESUBSUMPTIONMAPITERATOR_H
+ 
+ // Libraries includes
+-#include <QMap>
++#include "QtCompat.h"
+ 
+ 
+ // Namespace includes
+diff --git a/Source/Reasoner/Classifier/CConceptNegationOverRoleTuble.h b/Source/Reasoner/Classifier/CConceptNegationOverRoleTuble.h
+index 03549d84..cf48fead 100644
+--- a/Source/Reasoner/Classifier/CConceptNegationOverRoleTuble.h
++++ b/Source/Reasoner/Classifier/CConceptNegationOverRoleTuble.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_CLASSIFIER_CCONCEPTNEGATIONOVERROLETUBLE_H
+ 
+ // Libraries includes
+-#include <QHash>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "ClassifierSettings.h"
+diff --git a/Source/Reasoner/Classifier/COntologyClassClassificationItem.h b/Source/Reasoner/Classifier/COntologyClassClassificationItem.h
+index b9bce15e..61c1af27 100644
+--- a/Source/Reasoner/Classifier/COntologyClassClassificationItem.h
++++ b/Source/Reasoner/Classifier/COntologyClassClassificationItem.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_CLASSIFIER_CONTOLOGYCLASSCLASSIFICATIONITEM_H
+ 
+ // Libraries includes
+-#include <QPair>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "ClassifierSettings.h"
+diff --git a/Source/Reasoner/Classifier/COntologyClassificationItem.h b/Source/Reasoner/Classifier/COntologyClassificationItem.h
+index 2afaa064..2b671887 100644
+--- a/Source/Reasoner/Classifier/COntologyClassificationItem.h
++++ b/Source/Reasoner/Classifier/COntologyClassificationItem.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_CLASSIFIER_CONTOLOGYCLASSIFICATIONITEM_H
+ 
+ // Libraries includes
+-#include <QPair>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "ClassifierSettings.h"
+diff --git a/Source/Reasoner/Classifier/COntologyPropertyRoleClassificationItem.h b/Source/Reasoner/Classifier/COntologyPropertyRoleClassificationItem.h
+index 4b23e3d1..86b66d22 100644
+--- a/Source/Reasoner/Classifier/COntologyPropertyRoleClassificationItem.h
++++ b/Source/Reasoner/Classifier/COntologyPropertyRoleClassificationItem.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_CLASSIFIER_CONTOLOGYPROPERTYROLECLASSIFICATIONITEM_H
+ 
+ // Libraries includes
+-#include <QPair>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "ClassifierSettings.h"
+diff --git a/Source/Reasoner/Classifier/COptimizedKPSetClassPossibleSubsumptionMap.h b/Source/Reasoner/Classifier/COptimizedKPSetClassPossibleSubsumptionMap.h
+index e96ca648..8f3f55d8 100644
+--- a/Source/Reasoner/Classifier/COptimizedKPSetClassPossibleSubsumptionMap.h
++++ b/Source/Reasoner/Classifier/COptimizedKPSetClassPossibleSubsumptionMap.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_CLASSIFIER_COPTIMIZEDKPSETCLASSPOSSIBLESUBSUMPTIONMAP_H
+ 
+ // Libraries includes
+-#include <QMap>
++#include "QtCompat.h"
+ 
+ 
+ // Namespace includes
+diff --git a/Source/Reasoner/Classifier/COptimizedKPSetClassPossibleSubsumptionMapIterator.h b/Source/Reasoner/Classifier/COptimizedKPSetClassPossibleSubsumptionMapIterator.h
+index b4d98c1c..66ce574f 100644
+--- a/Source/Reasoner/Classifier/COptimizedKPSetClassPossibleSubsumptionMapIterator.h
++++ b/Source/Reasoner/Classifier/COptimizedKPSetClassPossibleSubsumptionMapIterator.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_CLASSIFIER_COPTIMIZEDKPSETCLASSPOSSIBLESUBSUMPTIONMAPITERATOR_H
+ 
+ // Libraries includes
+-#include <QMap>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "ClassifierSettings.h"
+diff --git a/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.h b/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.h
+index e0e9782d..42b9efce 100644
+--- a/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.h
++++ b/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_CLASSIFIER_COPTIMIZEDKPSETCLASSSUBSUMPTIONCLASSIFIERTHREAD_H
+ 
+ // Libraries includes
+-#include <QLinkedList>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "ClassifierSettings.h"
+diff --git a/Source/Reasoner/Classifier/COptimizedKPSetRolePossibleSubsumptionMap.h b/Source/Reasoner/Classifier/COptimizedKPSetRolePossibleSubsumptionMap.h
+index c09df578..7ee21fe4 100644
+--- a/Source/Reasoner/Classifier/COptimizedKPSetRolePossibleSubsumptionMap.h
++++ b/Source/Reasoner/Classifier/COptimizedKPSetRolePossibleSubsumptionMap.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_CLASSIFIER_COPTIMIZEDKPSETROLEPOSSIBLESUBSUMPTIONMAP_H
+ 
+ // Libraries includes
+-#include <QMap>
++#include "QtCompat.h"
+ 
+ 
+ // Namespace includes
+diff --git a/Source/Reasoner/Classifier/COptimizedKPSetRolePossibleSubsumptionMapIterator.h b/Source/Reasoner/Classifier/COptimizedKPSetRolePossibleSubsumptionMapIterator.h
+index ebe30b3c..cf141c74 100644
+--- a/Source/Reasoner/Classifier/COptimizedKPSetRolePossibleSubsumptionMapIterator.h
++++ b/Source/Reasoner/Classifier/COptimizedKPSetRolePossibleSubsumptionMapIterator.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_CLASSIFIER_COPTIMIZEDKPSETROLEPOSSIBLESUBSUMPTIONMAPITERATOR_H
+ 
+ // Libraries includes
+-#include <QMap>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "ClassifierSettings.h"
+diff --git a/Source/Reasoner/Classifier/COptimizedKPSetRoleSubsumptionClassifierThread.h b/Source/Reasoner/Classifier/COptimizedKPSetRoleSubsumptionClassifierThread.h
+index c7a3c1d8..ea4be5d6 100644
+--- a/Source/Reasoner/Classifier/COptimizedKPSetRoleSubsumptionClassifierThread.h
++++ b/Source/Reasoner/Classifier/COptimizedKPSetRoleSubsumptionClassifierThread.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_CLASSIFIER_COptimizedKPSetRoleSubsumptionClassifierThread_H
+ 
+ // Libraries includes
+-#include <QLinkedList>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "ClassifierSettings.h"
+diff --git a/Source/Reasoner/Classifier/COptimizedSubClassSubsumptionClassifierThread.h b/Source/Reasoner/Classifier/COptimizedSubClassSubsumptionClassifierThread.h
+index 25c88d21..81b79905 100644
+--- a/Source/Reasoner/Classifier/COptimizedSubClassSubsumptionClassifierThread.h
++++ b/Source/Reasoner/Classifier/COptimizedSubClassSubsumptionClassifierThread.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_CLASSIFIER_COPTIMIZEDSUBCLASSSUBSUMPTIONCLASSIFIERTHREAD_H
+ 
+ // Libraries includes
+-#include <QLinkedList>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "ClassifierSettings.h"
+diff --git a/Source/Reasoner/Classifier/CPropertyPossibleSubsumptionMap.h b/Source/Reasoner/Classifier/CPropertyPossibleSubsumptionMap.h
+index 07a356e4..a93c175b 100644
+--- a/Source/Reasoner/Classifier/CPropertyPossibleSubsumptionMap.h
++++ b/Source/Reasoner/Classifier/CPropertyPossibleSubsumptionMap.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_CLASSIFIER_CPROPERTYPOSSIBLESUBSUMPTIONMAP_H
+ 
+ // Libraries includes
+-#include <QMap>
++#include "QtCompat.h"
+ 
+ 
+ // Namespace includes
+diff --git a/Source/Reasoner/Classifier/CPropertyPossibleSubsumptionMapIterator.h b/Source/Reasoner/Classifier/CPropertyPossibleSubsumptionMapIterator.h
+index a0ca9e05..4ac5ef25 100644
+--- a/Source/Reasoner/Classifier/CPropertyPossibleSubsumptionMapIterator.h
++++ b/Source/Reasoner/Classifier/CPropertyPossibleSubsumptionMapIterator.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_CLASSIFIER_CPROPERTYPOSSIBLESUBSUMPTIONMAPITERATOR_H
+ 
+ // Libraries includes
+-#include <QMap>
++#include "QtCompat.h"
+ 
+ 
+ // Namespace includes
+diff --git a/Source/Reasoner/Consistiser/CIncrementalPrecomputationThread.h b/Source/Reasoner/Consistiser/CIncrementalPrecomputationThread.h
+index 6fd9e756..7fdfadc5 100644
+--- a/Source/Reasoner/Consistiser/CIncrementalPrecomputationThread.h
++++ b/Source/Reasoner/Consistiser/CIncrementalPrecomputationThread.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_CONSISTISER_CINCREMENTALPRECOMPUTATIONTHREAD_H
+ 
+ // Libraries includes
+-#include <QStack>
++#include "QtCompat.h"
+ #include <QListIterator>
+ 
+ 
+diff --git a/Source/Reasoner/Consistiser/CTotallyPrecomputationThread.h b/Source/Reasoner/Consistiser/CTotallyPrecomputationThread.h
+index 112b31a0..0c2efa78 100644
+--- a/Source/Reasoner/Consistiser/CTotallyPrecomputationThread.h
++++ b/Source/Reasoner/Consistiser/CTotallyPrecomputationThread.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_CONSISTISER_CTOTALLYPRECOMPUTATIONTHREAD_H
+ 
+ // Libraries includes
+-#include <QStack>
++#include "QtCompat.h"
+ #include <QListIterator>
+ 
+ 
+diff --git a/Source/Reasoner/Generator/CConcreteOntologyRedlandTriplesDataExpressionMapper.h b/Source/Reasoner/Generator/CConcreteOntologyRedlandTriplesDataExpressionMapper.h
+index 8df9ce6d..915a548a 100644
+--- a/Source/Reasoner/Generator/CConcreteOntologyRedlandTriplesDataExpressionMapper.h
++++ b/Source/Reasoner/Generator/CConcreteOntologyRedlandTriplesDataExpressionMapper.h
+@@ -24,8 +24,7 @@
+ 
+ 
+ // Libraries includes
+-#include <QHash>
+-#include <QStack>
++#include "QtCompat.h"
+ 
+ 
+ // Namespace includes
+diff --git a/Source/Reasoner/Kernel/Cache/CBackendCacheWriteData.h b/Source/Reasoner/Kernel/Cache/CBackendCacheWriteData.h
+index 07fd57f6..69a67b42 100644
+--- a/Source/Reasoner/Kernel/Cache/CBackendCacheWriteData.h
++++ b/Source/Reasoner/Kernel/Cache/CBackendCacheWriteData.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_CACHE_CBACKENDCACHEWRITEDATA_H
+ 
+ // Libraries includes
+-#include <QList>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "CacheSettings.h"
+diff --git a/Source/Reasoner/Kernel/Cache/CBackendIndividualRetrievalComputationUpdateCoordinationHash.h b/Source/Reasoner/Kernel/Cache/CBackendIndividualRetrievalComputationUpdateCoordinationHash.h
+index 0f6339bc..09e59c67 100644
+--- a/Source/Reasoner/Kernel/Cache/CBackendIndividualRetrievalComputationUpdateCoordinationHash.h
++++ b/Source/Reasoner/Kernel/Cache/CBackendIndividualRetrievalComputationUpdateCoordinationHash.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_CACHE_CBACKENDINDIVIDUALRETRIEVALCOMPUTATIONUPDATECOORDINATIONHASH_H
+ 
+ // Libraries includes
+-#include <QHash>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "CacheSettings.h"
+diff --git a/Source/Reasoner/Kernel/Cache/CBackendIndividualRetrievalComputationUpdateCoordinationHashData.h b/Source/Reasoner/Kernel/Cache/CBackendIndividualRetrievalComputationUpdateCoordinationHashData.h
+index a505aaa5..96f2da60 100644
+--- a/Source/Reasoner/Kernel/Cache/CBackendIndividualRetrievalComputationUpdateCoordinationHashData.h
++++ b/Source/Reasoner/Kernel/Cache/CBackendIndividualRetrievalComputationUpdateCoordinationHashData.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_CACHE_CBACKENDINDIVIDUALRETRIEVALCOMPUTATIONUPDATECOORDINATIONHASHDATA_H
+ 
+ // Libraries includes
+-#include <QList>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "CacheSettings.h"
+diff --git a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.h b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.h
+index 8c2b680a..d637c566 100644
+--- a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.h
++++ b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.h
+@@ -22,8 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_CACHE_CBACKENDREPRESENTATIVEMEMORYCACHE_H
+ 
+ // Libraries includes
+-#include <QHash>
+-#include <QSet>
++#include "QtCompat.h"
+ #include <QMutex>
+ #include <QSemaphore>
+ #include <QtConcurrent>
+diff --git a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCacheUtilities.h b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCacheUtilities.h
+index cd0ad257..3199b4e0 100644
+--- a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCacheUtilities.h
++++ b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCacheUtilities.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_CACHE_CBACKENDREPRESENTATIVEMEMORYCACHEUTILITIES_H
+ 
+ // Libraries includes
+-#include <QHash>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "CacheSettings.h"
+diff --git a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCacheWriteData.h b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCacheWriteData.h
+index 40ce8e2d..1fc20635 100644
+--- a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCacheWriteData.h
++++ b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCacheWriteData.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_CACHE_CBACKENDREPRESENTATIVEMEMORYCACHEWRITEDATA_H
+ 
+ // Libraries includes
+-#include <QList>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "CacheSettings.h"
+diff --git a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryLabelCacheItemCardinalityExtensionData.h b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryLabelCacheItemCardinalityExtensionData.h
+index a81ea5dd..3890206f 100644
+--- a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryLabelCacheItemCardinalityExtensionData.h
++++ b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryLabelCacheItemCardinalityExtensionData.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_CACHE_CBACKENDREPRESENTATIVEMEMORYLABELCACHEITEMCARDINALITYEXTENSIONDATA_H
+ 
+ // Libraries includes
+-#include <QMap>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "CacheSettings.h"
+diff --git a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryLabelCacheItemIndividualAssociationMapExtensionData.h b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryLabelCacheItemIndividualAssociationMapExtensionData.h
+index 73b92ccb..cb5a96c3 100644
+--- a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryLabelCacheItemIndividualAssociationMapExtensionData.h
++++ b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryLabelCacheItemIndividualAssociationMapExtensionData.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_CACHE_CBACKENDREPRESENTATIVEMEMORYLABELCACHEITEMINDIVIDUALASSOCIATIONMAPEXTENSIONDATA_H
+ 
+ // Libraries includes
+-#include <QMap>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "CacheSettings.h"
+diff --git a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryLabelCacheItemIndividualAssociationMapIterator.h b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryLabelCacheItemIndividualAssociationMapIterator.h
+index 3f57dceb..fc7b97ea 100644
+--- a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryLabelCacheItemIndividualAssociationMapIterator.h
++++ b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryLabelCacheItemIndividualAssociationMapIterator.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_CACHE_CBACKENDREPRESENTATIVEMEMORYLABELCACHEITEMINDIVIDUALASSOCIATIONMAPITERATOR_H
+ 
+ // Libraries includes
+-#include <QMap>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "CacheSettings.h"
+diff --git a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryLabelCacheItemTagLabelResolvingDataLinker.h b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryLabelCacheItemTagLabelResolvingDataLinker.h
+index b0ee0ae0..a348abf3 100644
+--- a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryLabelCacheItemTagLabelResolvingDataLinker.h
++++ b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryLabelCacheItemTagLabelResolvingDataLinker.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_CACHE_CBACKENDREPRESENTATIVEMEMORYLABELCACHEITEMTAGLABELRESOLVINGDATALINKER_H
+ 
+ // Libraries includes
+-#include <QMap>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "CacheSettings.h"
+diff --git a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryLabelCacheItemTagLabelResolvingExtensionData.h b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryLabelCacheItemTagLabelResolvingExtensionData.h
+index 3db9a713..2e0d1556 100644
+--- a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryLabelCacheItemTagLabelResolvingExtensionData.h
++++ b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryLabelCacheItemTagLabelResolvingExtensionData.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_CACHE_CBACKENDREPRESENTATIVEMEMORYLABELCACHEITEMTAGLABELRESOLVINGEXTENSIONDATA_H
+ 
+ // Libraries includes
+-#include <QMap>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "CacheSettings.h"
+diff --git a/Source/Reasoner/Kernel/Cache/CCacheEntryWriteData.h b/Source/Reasoner/Kernel/Cache/CCacheEntryWriteData.h
+index 62e2d9d8..14370a68 100644
+--- a/Source/Reasoner/Kernel/Cache/CCacheEntryWriteData.h
++++ b/Source/Reasoner/Kernel/Cache/CCacheEntryWriteData.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_CACHE_CCACHEENTRYWRITEDATA_H
+ 
+ // Libraries includes
+-#include <QList>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ 
+diff --git a/Source/Reasoner/Kernel/Cache/CCacheValue.h b/Source/Reasoner/Kernel/Cache/CCacheValue.h
+index 187caa84..02121fed 100644
+--- a/Source/Reasoner/Kernel/Cache/CCacheValue.h
++++ b/Source/Reasoner/Kernel/Cache/CCacheValue.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_CACHE_CCACHEVALUE_H
+ 
+ // Libraries includes
+-#include <QHash>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ 
+diff --git a/Source/Reasoner/Kernel/Cache/CCacheValueHasher.h b/Source/Reasoner/Kernel/Cache/CCacheValueHasher.h
+index e385af6a..a843e4d4 100644
+--- a/Source/Reasoner/Kernel/Cache/CCacheValueHasher.h
++++ b/Source/Reasoner/Kernel/Cache/CCacheValueHasher.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_CACHE_CCACHEVALUEHASHER_H
+ 
+ // Libraries includes
+-#include <QHash>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "CacheSettings.h"
+diff --git a/Source/Reasoner/Kernel/Cache/CComputedConsequencesCache.h b/Source/Reasoner/Kernel/Cache/CComputedConsequencesCache.h
+index b1f25fe8..cce52c4d 100644
+--- a/Source/Reasoner/Kernel/Cache/CComputedConsequencesCache.h
++++ b/Source/Reasoner/Kernel/Cache/CComputedConsequencesCache.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_CACHE_CCOMPUTEDCONSEQUENCESCACHE_H
+ 
+ // Libraries includes
+-#include <QHash>
++#include "QtCompat.h"
+ #include <QMutex>
+ #include <QSemaphore>
+ 
+diff --git a/Source/Reasoner/Kernel/Cache/CComputedConsequencesCacheWriteData.h b/Source/Reasoner/Kernel/Cache/CComputedConsequencesCacheWriteData.h
+index bf8c91d1..fa85c550 100644
+--- a/Source/Reasoner/Kernel/Cache/CComputedConsequencesCacheWriteData.h
++++ b/Source/Reasoner/Kernel/Cache/CComputedConsequencesCacheWriteData.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_CACHE_CCOMPUTEDCONSEQUENCESCACHEWRITEDATA_H
+ 
+ // Libraries includes
+-#include <QList>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "CacheSettings.h"
+diff --git a/Source/Reasoner/Kernel/Cache/CComputedConsequencesCacheWriteTypesData.h b/Source/Reasoner/Kernel/Cache/CComputedConsequencesCacheWriteTypesData.h
+index e5138dc2..d89cc36c 100644
+--- a/Source/Reasoner/Kernel/Cache/CComputedConsequencesCacheWriteTypesData.h
++++ b/Source/Reasoner/Kernel/Cache/CComputedConsequencesCacheWriteTypesData.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_CACHE_CCOMPUTEDCONSEQUENCESCACHEWRITETYPESDATA_H
+ 
+ // Libraries includes
+-#include <QList>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "CacheSettings.h"
+diff --git a/Source/Reasoner/Kernel/Cache/CIncrementalUnsatisfiableCacheReader.h b/Source/Reasoner/Kernel/Cache/CIncrementalUnsatisfiableCacheReader.h
+index 00d4c093..8c8a2416 100644
+--- a/Source/Reasoner/Kernel/Cache/CIncrementalUnsatisfiableCacheReader.h
++++ b/Source/Reasoner/Kernel/Cache/CIncrementalUnsatisfiableCacheReader.h
+@@ -22,8 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_CACHE_CINCREMENTALUNSATISFIABLECACHEREADER_H
+ 
+ // Libraries includes
+-#include <QVector>
+-#include <QList>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "CCacheValue.h"
+diff --git a/Source/Reasoner/Kernel/Cache/COccurrenceStatisticsCache.h b/Source/Reasoner/Kernel/Cache/COccurrenceStatisticsCache.h
+index b3cc955c..791cfdb1 100644
+--- a/Source/Reasoner/Kernel/Cache/COccurrenceStatisticsCache.h
++++ b/Source/Reasoner/Kernel/Cache/COccurrenceStatisticsCache.h
+@@ -22,8 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_CACHE_COCCURRENCESTATISTICSCACHE_H
+ 
+ // Libraries includes
+-#include <QHash>
+-#include <QSet>
++#include "QtCompat.h"
+ #include <QMutex>
+ #include <QSemaphore>
+ 
+diff --git a/Source/Reasoner/Kernel/Cache/COccurrenceStatisticsCacheOntologyData.h b/Source/Reasoner/Kernel/Cache/COccurrenceStatisticsCacheOntologyData.h
+index 9d38c779..78b21327 100644
+--- a/Source/Reasoner/Kernel/Cache/COccurrenceStatisticsCacheOntologyData.h
++++ b/Source/Reasoner/Kernel/Cache/COccurrenceStatisticsCacheOntologyData.h
+@@ -23,7 +23,7 @@
+ 
+ // Libraries includes
+ #include <QAtomicInteger>
+-#include <QList>
++#include "QtCompat.h"
+ 
+ 
+ // Namespace includes
+diff --git a/Source/Reasoner/Kernel/Cache/COccurrenceStatisticsCacheWriteData.h b/Source/Reasoner/Kernel/Cache/COccurrenceStatisticsCacheWriteData.h
+index 208bc559..4410d570 100644
+--- a/Source/Reasoner/Kernel/Cache/COccurrenceStatisticsCacheWriteData.h
++++ b/Source/Reasoner/Kernel/Cache/COccurrenceStatisticsCacheWriteData.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_CACHE_COccurrenceStatisticsCacheWriteData_H
+ 
+ // Libraries includes
+-#include <QList>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "CacheSettings.h"
+diff --git a/Source/Reasoner/Kernel/Cache/COccurrenceUnsatisfiableCache.h b/Source/Reasoner/Kernel/Cache/COccurrenceUnsatisfiableCache.h
+index fe7e2503..7873507d 100644
+--- a/Source/Reasoner/Kernel/Cache/COccurrenceUnsatisfiableCache.h
++++ b/Source/Reasoner/Kernel/Cache/COccurrenceUnsatisfiableCache.h
+@@ -22,12 +22,9 @@
+ #define KONCLUDE_REASONER_KERNEL_CACHE_COCCURRENCEUNSATISFIABLECACHE_H
+ 
+ // Libraries includes
+-#include <QHash>
++#include "QtCompat.h"
+ #include <QMutex>
+ #include <QSemaphore>
+-#include <QVector>
+-#include <QList>
+-#include <QStringList>
+ #include <QReadWriteLock>
+ 
+ // Namespace includes
+diff --git a/Source/Reasoner/Kernel/Cache/COccurrenceUnsatisfiableCacheEntriesHash.h b/Source/Reasoner/Kernel/Cache/COccurrenceUnsatisfiableCacheEntriesHash.h
+index 6c5dea08..19e8ebc7 100644
+--- a/Source/Reasoner/Kernel/Cache/COccurrenceUnsatisfiableCacheEntriesHash.h
++++ b/Source/Reasoner/Kernel/Cache/COccurrenceUnsatisfiableCacheEntriesHash.h
+@@ -22,11 +22,9 @@
+ #define KONCLUDE_REASONER_KERNEL_CACHE_COCCURRENCEUNSATISFIABLECACHEENTRIESHASH_H
+ 
+ // Libraries includes
+-#include <QHash>
++#include "QtCompat.h"
+ #include <QMutex>
+ #include <QSemaphore>
+-#include <QVector>
+-#include <QLinkedList>
+ 
+ // Namespace includes
+ #include "CacheSettings.h"
+diff --git a/Source/Reasoner/Kernel/Cache/COccurrenceUnsatisfiableCacheEntry.h b/Source/Reasoner/Kernel/Cache/COccurrenceUnsatisfiableCacheEntry.h
+index 1446bf69..c50aa240 100644
+--- a/Source/Reasoner/Kernel/Cache/COccurrenceUnsatisfiableCacheEntry.h
++++ b/Source/Reasoner/Kernel/Cache/COccurrenceUnsatisfiableCacheEntry.h
+@@ -22,8 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_CACHE_COCCURRENCEUNSATISFIABLECACHEENTRY_H
+ 
+ // Libraries includes
+-#include <QHash>
+-#include <QList>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "CCacheEntry.h"
+diff --git a/Source/Reasoner/Kernel/Cache/COccurrenceUnsatisfiableCacheUpdateSlotItem.h b/Source/Reasoner/Kernel/Cache/COccurrenceUnsatisfiableCacheUpdateSlotItem.h
+index 6579ad11..e2c30bcf 100644
+--- a/Source/Reasoner/Kernel/Cache/COccurrenceUnsatisfiableCacheUpdateSlotItem.h
++++ b/Source/Reasoner/Kernel/Cache/COccurrenceUnsatisfiableCacheUpdateSlotItem.h
+@@ -24,8 +24,7 @@
+ // Libraries includes
+ #include <QLinkedListIterator>
+ #include <QMutex>
+-#include <QSet>
+-#include <QHash>
++#include "QtCompat.h"
+ #include <QAtomicInt>
+ 
+ // Namespace includes
+diff --git a/Source/Reasoner/Kernel/Cache/CReuseCompletionGraphCache.h b/Source/Reasoner/Kernel/Cache/CReuseCompletionGraphCache.h
+index e46911ae..84712cc9 100644
+--- a/Source/Reasoner/Kernel/Cache/CReuseCompletionGraphCache.h
++++ b/Source/Reasoner/Kernel/Cache/CReuseCompletionGraphCache.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_CACHE_CREUSECOMPLETIONGRAPHCACHE_H
+ 
+ // Libraries includes
+-#include <QHash>
++#include "QtCompat.h"
+ #include <QMutex>
+ #include <QSemaphore>
+ 
+diff --git a/Source/Reasoner/Kernel/Cache/CReuseCompletionGraphCacheEntryWriteData.h b/Source/Reasoner/Kernel/Cache/CReuseCompletionGraphCacheEntryWriteData.h
+index c851f439..063139f3 100644
+--- a/Source/Reasoner/Kernel/Cache/CReuseCompletionGraphCacheEntryWriteData.h
++++ b/Source/Reasoner/Kernel/Cache/CReuseCompletionGraphCacheEntryWriteData.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_CACHE_CREUSECOMPLETIONGRAPHCACHEENTRYWRITEDATA_H
+ 
+ // Libraries includes
+-#include <QList>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "CacheSettings.h"
+diff --git a/Source/Reasoner/Kernel/Cache/CReuseCompletionGraphCacheReader.h b/Source/Reasoner/Kernel/Cache/CReuseCompletionGraphCacheReader.h
+index d1321fb7..5a65ea84 100644
+--- a/Source/Reasoner/Kernel/Cache/CReuseCompletionGraphCacheReader.h
++++ b/Source/Reasoner/Kernel/Cache/CReuseCompletionGraphCacheReader.h
+@@ -23,7 +23,7 @@
+ 
+ // Libraries includes
+ #include <QAtomicPointer>
+-#include <QVector>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "CacheSettings.h"
+diff --git a/Source/Reasoner/Kernel/Cache/CSatisfiableCacheReader.h b/Source/Reasoner/Kernel/Cache/CSatisfiableCacheReader.h
+index 4c0872fc..dc695c6b 100644
+--- a/Source/Reasoner/Kernel/Cache/CSatisfiableCacheReader.h
++++ b/Source/Reasoner/Kernel/Cache/CSatisfiableCacheReader.h
+@@ -22,8 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_CACHE_CSATISFIABLECACHEREADER_H
+ 
+ // Libraries includes
+-#include <QVector>
+-#include <QLinkedList>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "CCacheValue.h"
+diff --git a/Source/Reasoner/Kernel/Cache/CSatisfiableCacheWriter.h b/Source/Reasoner/Kernel/Cache/CSatisfiableCacheWriter.h
+index c2d3c896..9ff36d90 100644
+--- a/Source/Reasoner/Kernel/Cache/CSatisfiableCacheWriter.h
++++ b/Source/Reasoner/Kernel/Cache/CSatisfiableCacheWriter.h
+@@ -23,7 +23,7 @@
+ 
+ // Libraries includes
+ #include <QLinkedListIterator>
+-#include <QLinkedList>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "CCacheValue.h"
+diff --git a/Source/Reasoner/Kernel/Cache/CSaturationNodeAssociatedExpansionCache.h b/Source/Reasoner/Kernel/Cache/CSaturationNodeAssociatedExpansionCache.h
+index fc8463f5..07537085 100644
+--- a/Source/Reasoner/Kernel/Cache/CSaturationNodeAssociatedExpansionCache.h
++++ b/Source/Reasoner/Kernel/Cache/CSaturationNodeAssociatedExpansionCache.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_CACHE_CSATURATIONNODEASSOCIATEDEXPANSIONCACHE_H
+ 
+ // Libraries includes
+-#include <QHash>
++#include "QtCompat.h"
+ #include <QMutex>
+ #include <QSemaphore>
+ 
+diff --git a/Source/Reasoner/Kernel/Cache/CSaturationNodeAssociatedExpansionCacheWriteData.h b/Source/Reasoner/Kernel/Cache/CSaturationNodeAssociatedExpansionCacheWriteData.h
+index 20358398..0cda64f8 100644
+--- a/Source/Reasoner/Kernel/Cache/CSaturationNodeAssociatedExpansionCacheWriteData.h
++++ b/Source/Reasoner/Kernel/Cache/CSaturationNodeAssociatedExpansionCacheWriteData.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_CACHE_CSATURATIONNODEASSOCIATEDEXPANSIONCACHEWRITEDATA_H
+ 
+ // Libraries includes
+-#include <QList>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "CacheSettings.h"
+diff --git a/Source/Reasoner/Kernel/Cache/CSignatureSatisfiableExpanderCache.h b/Source/Reasoner/Kernel/Cache/CSignatureSatisfiableExpanderCache.h
+index 0790cbb5..c6564625 100644
+--- a/Source/Reasoner/Kernel/Cache/CSignatureSatisfiableExpanderCache.h
++++ b/Source/Reasoner/Kernel/Cache/CSignatureSatisfiableExpanderCache.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_CACHE_CSIGNATURESATISFIABLEEXPANDERCACHE_H
+ 
+ // Libraries includes
+-#include <QHash>
++#include "QtCompat.h"
+ #include <QMutex>
+ #include <QSemaphore>
+ 
+diff --git a/Source/Reasoner/Kernel/Cache/CSignatureSatisfiableExpanderCacheEntryWriteData.h b/Source/Reasoner/Kernel/Cache/CSignatureSatisfiableExpanderCacheEntryWriteData.h
+index 7e11c342..bf2d2316 100644
+--- a/Source/Reasoner/Kernel/Cache/CSignatureSatisfiableExpanderCacheEntryWriteData.h
++++ b/Source/Reasoner/Kernel/Cache/CSignatureSatisfiableExpanderCacheEntryWriteData.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_CACHE_CSIGNATURESATISFIABLEEXPANDERCACHEENTRYWRITEDATA_H
+ 
+ // Libraries includes
+-#include <QList>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "CacheSettings.h"
+diff --git a/Source/Reasoner/Kernel/Cache/CSignatureSatisfiableExpanderCacheHasher.h b/Source/Reasoner/Kernel/Cache/CSignatureSatisfiableExpanderCacheHasher.h
+index 6de6f1e4..43c4edd4 100644
+--- a/Source/Reasoner/Kernel/Cache/CSignatureSatisfiableExpanderCacheHasher.h
++++ b/Source/Reasoner/Kernel/Cache/CSignatureSatisfiableExpanderCacheHasher.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_CACHE_CSIGNATURESATISFIABLEEXPANDERCACHEHASHER_H
+ 
+ // Libraries includes
+-#include <QHash>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "CacheSettings.h"
+diff --git a/Source/Reasoner/Kernel/Cache/CUnsatisfiableCacheReader.h b/Source/Reasoner/Kernel/Cache/CUnsatisfiableCacheReader.h
+index afedfcb7..7d0dc7d8 100644
+--- a/Source/Reasoner/Kernel/Cache/CUnsatisfiableCacheReader.h
++++ b/Source/Reasoner/Kernel/Cache/CUnsatisfiableCacheReader.h
+@@ -22,8 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_CACHE_CUNSATISFIABLECACHEREADER_H
+ 
+ // Libraries includes
+-#include <QVector>
+-#include <QList>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "CCacheValue.h"
+diff --git a/Source/Reasoner/Kernel/Cache/CUnsatisfiableCacheWriter.h b/Source/Reasoner/Kernel/Cache/CUnsatisfiableCacheWriter.h
+index d32bd033..4bb7e1e6 100644
+--- a/Source/Reasoner/Kernel/Cache/CUnsatisfiableCacheWriter.h
++++ b/Source/Reasoner/Kernel/Cache/CUnsatisfiableCacheWriter.h
+@@ -23,7 +23,7 @@
+ 
+ // Libraries includes
+ #include <QListIterator>
+-#include <QList>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "CCacheValue.h"
+diff --git a/Source/Reasoner/Kernel/Cache/Events/CInitializeIndividualAssociationsCacheEvent.h b/Source/Reasoner/Kernel/Cache/Events/CInitializeIndividualAssociationsCacheEvent.h
+index 1daa91d3..2b5c5164 100644
+--- a/Source/Reasoner/Kernel/Cache/Events/CInitializeIndividualAssociationsCacheEvent.h
++++ b/Source/Reasoner/Kernel/Cache/Events/CInitializeIndividualAssociationsCacheEvent.h
+@@ -23,7 +23,7 @@
+ 
+ // Libraries includes
+ #include <QEvent>
+-#include <QList>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ 
+diff --git a/Source/Reasoner/Kernel/Cache/Events/CReportMaximumHandledRecomputationIdsEvent.h b/Source/Reasoner/Kernel/Cache/Events/CReportMaximumHandledRecomputationIdsEvent.h
+index b9300890..9c9cea30 100644
+--- a/Source/Reasoner/Kernel/Cache/Events/CReportMaximumHandledRecomputationIdsEvent.h
++++ b/Source/Reasoner/Kernel/Cache/Events/CReportMaximumHandledRecomputationIdsEvent.h
+@@ -23,7 +23,7 @@
+ 
+ // Libraries includes
+ #include <QEvent>
+-#include <QList>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ 
+diff --git a/Source/Reasoner/Kernel/Cache/Events/CRetrieveIncompletelyAssociationCachedEvent.h b/Source/Reasoner/Kernel/Cache/Events/CRetrieveIncompletelyAssociationCachedEvent.h
+index 587b38c0..6af8c7d5 100644
+--- a/Source/Reasoner/Kernel/Cache/Events/CRetrieveIncompletelyAssociationCachedEvent.h
++++ b/Source/Reasoner/Kernel/Cache/Events/CRetrieveIncompletelyAssociationCachedEvent.h
+@@ -23,7 +23,7 @@
+ 
+ // Libraries includes
+ #include <QEvent>
+-#include <QList>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ 
+diff --git a/Source/Reasoner/Kernel/Cache/Events/CWriteBackendAssociationCachedEvent.h b/Source/Reasoner/Kernel/Cache/Events/CWriteBackendAssociationCachedEvent.h
+index 556e773f..0783988c 100644
+--- a/Source/Reasoner/Kernel/Cache/Events/CWriteBackendAssociationCachedEvent.h
++++ b/Source/Reasoner/Kernel/Cache/Events/CWriteBackendAssociationCachedEvent.h
+@@ -23,7 +23,7 @@
+ 
+ // Libraries includes
+ #include <QEvent>
+-#include <QList>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ 
+diff --git a/Source/Reasoner/Kernel/Cache/Events/CWriteCachedDataEvent.h b/Source/Reasoner/Kernel/Cache/Events/CWriteCachedDataEvent.h
+index e1852010..6cc04c7e 100644
+--- a/Source/Reasoner/Kernel/Cache/Events/CWriteCachedDataEvent.h
++++ b/Source/Reasoner/Kernel/Cache/Events/CWriteCachedDataEvent.h
+@@ -23,7 +23,7 @@
+ 
+ // Libraries includes
+ #include <QEvent>
+-#include <QList>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ 
+diff --git a/Source/Reasoner/Kernel/Cache/Events/CWriteComputedConcequencesCacheEntryEvent.h b/Source/Reasoner/Kernel/Cache/Events/CWriteComputedConcequencesCacheEntryEvent.h
+index 17651e6f..0b9fab98 100644
+--- a/Source/Reasoner/Kernel/Cache/Events/CWriteComputedConcequencesCacheEntryEvent.h
++++ b/Source/Reasoner/Kernel/Cache/Events/CWriteComputedConcequencesCacheEntryEvent.h
+@@ -23,7 +23,7 @@
+ 
+ // Libraries includes
+ #include <QEvent>
+-#include <QList>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ 
+diff --git a/Source/Reasoner/Kernel/Cache/Events/CWriteExpandCachedEvent.h b/Source/Reasoner/Kernel/Cache/Events/CWriteExpandCachedEvent.h
+index 3b91c54d..8eb60a2d 100644
+--- a/Source/Reasoner/Kernel/Cache/Events/CWriteExpandCachedEvent.h
++++ b/Source/Reasoner/Kernel/Cache/Events/CWriteExpandCachedEvent.h
+@@ -23,7 +23,7 @@
+ 
+ // Libraries includes
+ #include <QEvent>
+-#include <QList>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ 
+diff --git a/Source/Reasoner/Kernel/Cache/Events/CWriteSatisfiableBranchCachedEvent.h b/Source/Reasoner/Kernel/Cache/Events/CWriteSatisfiableBranchCachedEvent.h
+index e14a0f92..1f348955 100644
+--- a/Source/Reasoner/Kernel/Cache/Events/CWriteSatisfiableBranchCachedEvent.h
++++ b/Source/Reasoner/Kernel/Cache/Events/CWriteSatisfiableBranchCachedEvent.h
+@@ -23,7 +23,7 @@
+ 
+ // Libraries includes
+ #include <QEvent>
+-#include <QList>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ 
+diff --git a/Source/Reasoner/Kernel/Cache/Events/CWriteSatisfiableCacheEntryEvent.h b/Source/Reasoner/Kernel/Cache/Events/CWriteSatisfiableCacheEntryEvent.h
+index 4d23c663..3abe3f54 100644
+--- a/Source/Reasoner/Kernel/Cache/Events/CWriteSatisfiableCacheEntryEvent.h
++++ b/Source/Reasoner/Kernel/Cache/Events/CWriteSatisfiableCacheEntryEvent.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_CACHE_EVENTS_CWRITESATISFIABLECACHEENTRYEVENT_H
+ 
+ #include <QEvent>
+-#include <QList>
++#include "QtCompat.h"
+ 
+ #include "Concurrent/Events/CCustomEvent.h"
+ 
+diff --git a/Source/Reasoner/Kernel/Cache/Events/CWriteSaturationCacheDataEvent.h b/Source/Reasoner/Kernel/Cache/Events/CWriteSaturationCacheDataEvent.h
+index 4fa33cf4..cc1a2c35 100644
+--- a/Source/Reasoner/Kernel/Cache/Events/CWriteSaturationCacheDataEvent.h
++++ b/Source/Reasoner/Kernel/Cache/Events/CWriteSaturationCacheDataEvent.h
+@@ -23,7 +23,7 @@
+ 
+ // Libraries includes
+ #include <QEvent>
+-#include <QList>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ 
+diff --git a/Source/Reasoner/Kernel/Cache/Events/CWriteUnsatisfiableCacheEntryEvent.h b/Source/Reasoner/Kernel/Cache/Events/CWriteUnsatisfiableCacheEntryEvent.h
+index d96314d1..1fda8696 100644
+--- a/Source/Reasoner/Kernel/Cache/Events/CWriteUnsatisfiableCacheEntryEvent.h
++++ b/Source/Reasoner/Kernel/Cache/Events/CWriteUnsatisfiableCacheEntryEvent.h
+@@ -23,7 +23,7 @@
+ 
+ // Libraries includes
+ #include <QEvent>
+-#include <QList>
++#include "QtCompat.h"
+ 
+ 
+ // Namespace includes
+diff --git a/Source/Reasoner/Kernel/Manager/CAnalyseReasonerManager.h b/Source/Reasoner/Kernel/Manager/CAnalyseReasonerManager.h
+index d3e8700c..22fbbbe5 100644
+--- a/Source/Reasoner/Kernel/Manager/CAnalyseReasonerManager.h
++++ b/Source/Reasoner/Kernel/Manager/CAnalyseReasonerManager.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_MANAGER_CANALYSEREASONERMANAGER_H
+ 
+ // Qt includes
+-#include <QLinkedList>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "CReasonerManagerThread.h"
+diff --git a/Source/Reasoner/Kernel/Manager/CExperimentalReasonerManager.h b/Source/Reasoner/Kernel/Manager/CExperimentalReasonerManager.h
+index 34349060..ababae4a 100644
+--- a/Source/Reasoner/Kernel/Manager/CExperimentalReasonerManager.h
++++ b/Source/Reasoner/Kernel/Manager/CExperimentalReasonerManager.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_MANAGER_CEXPERIMENTALREASONERMANAGER_H
+ 
+ // Libraries includes
+-#include <QLinkedList>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "CReasonerManager.h"
+diff --git a/Source/Reasoner/Kernel/Manager/COntologyRequirementPreparingData.h b/Source/Reasoner/Kernel/Manager/COntologyRequirementPreparingData.h
+index 8b7508d1..73340535 100644
+--- a/Source/Reasoner/Kernel/Manager/COntologyRequirementPreparingData.h
++++ b/Source/Reasoner/Kernel/Manager/COntologyRequirementPreparingData.h
+@@ -23,7 +23,7 @@
+ 
+ // Libraries includes
+ #include <QReadWriteLock>
+-#include <QHash>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "ManagerSettings.h"
+diff --git a/Source/Reasoner/Kernel/Manager/CPrecomputationManager.h b/Source/Reasoner/Kernel/Manager/CPrecomputationManager.h
+index 449eaa8a..663db6a1 100644
+--- a/Source/Reasoner/Kernel/Manager/CPrecomputationManager.h
++++ b/Source/Reasoner/Kernel/Manager/CPrecomputationManager.h
+@@ -23,7 +23,7 @@
+ 
+ // Libraries includes
+ #include <QReadWriteLock>
+-#include <QHash>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "ManagerSettings.h"
+diff --git a/Source/Reasoner/Kernel/Manager/CPreprocessingManager.h b/Source/Reasoner/Kernel/Manager/CPreprocessingManager.h
+index 10688946..f89123a1 100644
+--- a/Source/Reasoner/Kernel/Manager/CPreprocessingManager.h
++++ b/Source/Reasoner/Kernel/Manager/CPreprocessingManager.h
+@@ -23,7 +23,7 @@
+ 
+ // Libraries includes
+ #include <QReadWriteLock>
+-#include <QHash>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "ManagerSettings.h"
+diff --git a/Source/Reasoner/Kernel/Manager/CRealizationManager.h b/Source/Reasoner/Kernel/Manager/CRealizationManager.h
+index fe6bcc18..856d2f72 100644
+--- a/Source/Reasoner/Kernel/Manager/CRealizationManager.h
++++ b/Source/Reasoner/Kernel/Manager/CRealizationManager.h
+@@ -23,7 +23,7 @@
+ 
+ // Libraries includes
+ #include <QReadWriteLock>
+-#include <QHash>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "ManagerSettings.h"
+diff --git a/Source/Reasoner/Kernel/Manager/CReasonerManagerThread.h b/Source/Reasoner/Kernel/Manager/CReasonerManagerThread.h
+index 05bc7ad2..0a952908 100644
+--- a/Source/Reasoner/Kernel/Manager/CReasonerManagerThread.h
++++ b/Source/Reasoner/Kernel/Manager/CReasonerManagerThread.h
+@@ -22,8 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_MANAGER_CREASONERMANAGERTHREAD_H
+ 
+ // Qt includes
+-#include <QLinkedList>
+-#include <QSet>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "CReasonerManager.h"
+diff --git a/Source/Reasoner/Kernel/Manager/CReasoningTaskData.h b/Source/Reasoner/Kernel/Manager/CReasoningTaskData.h
+index 24b0c26a..c1f19eee 100644
+--- a/Source/Reasoner/Kernel/Manager/CReasoningTaskData.h
++++ b/Source/Reasoner/Kernel/Manager/CReasoningTaskData.h
+@@ -23,7 +23,7 @@
+ 
+ // Libraries includes
+ #include <QTime>
+-#include <QString>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "ManagerSettings.h"
+diff --git a/Source/Reasoner/Kernel/Manager/CRequirementPreparingData.h b/Source/Reasoner/Kernel/Manager/CRequirementPreparingData.h
+index cc701bfe..9043cb11 100644
+--- a/Source/Reasoner/Kernel/Manager/CRequirementPreparingData.h
++++ b/Source/Reasoner/Kernel/Manager/CRequirementPreparingData.h
+@@ -23,7 +23,7 @@
+ 
+ // Libraries includes
+ #include <QReadWriteLock>
+-#include <QHash>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "ManagerSettings.h"
+diff --git a/Source/Reasoner/Kernel/Manager/Events/CCalcedQueryEvent.h b/Source/Reasoner/Kernel/Manager/Events/CCalcedQueryEvent.h
+index c8e17824..44acd8a5 100644
+--- a/Source/Reasoner/Kernel/Manager/Events/CCalcedQueryEvent.h
++++ b/Source/Reasoner/Kernel/Manager/Events/CCalcedQueryEvent.h
+@@ -24,7 +24,7 @@
+ 
+ 
+ // Libraries includes
+-#include <QString>
++#include "QtCompat.h"
+ 
+ 
+ // Namespace includes
+diff --git a/Source/Reasoner/Kernel/Manager/Events/CQueriedTaxonomyComputedCallbackEvent.h b/Source/Reasoner/Kernel/Manager/Events/CQueriedTaxonomyComputedCallbackEvent.h
+index 476d5a96..f2a2919a 100644
+--- a/Source/Reasoner/Kernel/Manager/Events/CQueriedTaxonomyComputedCallbackEvent.h
++++ b/Source/Reasoner/Kernel/Manager/Events/CQueriedTaxonomyComputedCallbackEvent.h
+@@ -24,7 +24,7 @@
+ 
+ 
+ // Libraries includes
+-#include <QString>
++#include "QtCompat.h"
+ 
+ 
+ // Namespace includes
+diff --git a/Source/Reasoner/Kernel/Manager/Events/CRequirementProcessedCallbackEvent.h b/Source/Reasoner/Kernel/Manager/Events/CRequirementProcessedCallbackEvent.h
+index 6c861963..82efc050 100644
+--- a/Source/Reasoner/Kernel/Manager/Events/CRequirementProcessedCallbackEvent.h
++++ b/Source/Reasoner/Kernel/Manager/Events/CRequirementProcessedCallbackEvent.h
+@@ -24,7 +24,7 @@
+ 
+ 
+ // Libraries includes
+-#include <QString>
++#include "QtCompat.h"
+ 
+ 
+ // Namespace includes
+diff --git a/Source/Reasoner/Kernel/Process/CClashedConceptDescriptor.h b/Source/Reasoner/Kernel/Process/CClashedConceptDescriptor.h
+index d4f17319..361d0ff9 100644
+--- a/Source/Reasoner/Kernel/Process/CClashedConceptDescriptor.h
++++ b/Source/Reasoner/Kernel/Process/CClashedConceptDescriptor.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_PROCESS_CCLASHEDCONCEPTDESCRIPTOR_H
+ 
+ // Libraries includes
+-#include <QPair>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "ProcessSettings.h"
+diff --git a/Source/Reasoner/Kernel/Process/CClashedDependencyDescriptor.h b/Source/Reasoner/Kernel/Process/CClashedDependencyDescriptor.h
+index 15f4a51a..0d57f4df 100644
+--- a/Source/Reasoner/Kernel/Process/CClashedDependencyDescriptor.h
++++ b/Source/Reasoner/Kernel/Process/CClashedDependencyDescriptor.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_PROCESS_CCLASHEDDEPENDENCYDESCRIPTOR_H
+ 
+ // Libraries includes
+-#include <QPair>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "ProcessSettings.h"
+diff --git a/Source/Reasoner/Kernel/Process/CClashedIndividualDistinctDescriptor.h b/Source/Reasoner/Kernel/Process/CClashedIndividualDistinctDescriptor.h
+index 15ef550f..f6857eb8 100644
+--- a/Source/Reasoner/Kernel/Process/CClashedIndividualDistinctDescriptor.h
++++ b/Source/Reasoner/Kernel/Process/CClashedIndividualDistinctDescriptor.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_PROCESS_CCLASHEDINDIVIDUALDISTINCTDESCRIPTOR_H
+ 
+ // Libraries includes
+-#include <QPair>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "ProcessSettings.h"
+diff --git a/Source/Reasoner/Kernel/Process/CClashedIndividualLinkDescriptor.h b/Source/Reasoner/Kernel/Process/CClashedIndividualLinkDescriptor.h
+index b9d6208f..bfe8123e 100644
+--- a/Source/Reasoner/Kernel/Process/CClashedIndividualLinkDescriptor.h
++++ b/Source/Reasoner/Kernel/Process/CClashedIndividualLinkDescriptor.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_PROCESS_CCLASHEDINDIVIDUALLINKDESCRIPTOR_H
+ 
+ // Libraries includes
+-#include <QPair>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "ProcessSettings.h"
+diff --git a/Source/Reasoner/Kernel/Process/CClashedNegationDisjointLinkDescriptor.h b/Source/Reasoner/Kernel/Process/CClashedNegationDisjointLinkDescriptor.h
+index 32e081af..3cb8fa0a 100644
+--- a/Source/Reasoner/Kernel/Process/CClashedNegationDisjointLinkDescriptor.h
++++ b/Source/Reasoner/Kernel/Process/CClashedNegationDisjointLinkDescriptor.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_PROCESS_CCLASHEDNEGATIONDISJOINTLINKDESCRIPTOR_H
+ 
+ // Libraries includes
+-#include <QPair>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "ProcessSettings.h"
+diff --git a/Source/Reasoner/Kernel/Process/CConceptDescriptor.h b/Source/Reasoner/Kernel/Process/CConceptDescriptor.h
+index 021d0e48..48b3a132 100644
+--- a/Source/Reasoner/Kernel/Process/CConceptDescriptor.h
++++ b/Source/Reasoner/Kernel/Process/CConceptDescriptor.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_PROCESS_CCONCEPTDESCRIPTOR_H
+ 
+ // Libraries includes
+-#include <QPair>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "ProcessSettings.h"
+diff --git a/Source/Reasoner/Kernel/Process/CCoreConceptDescriptor.h b/Source/Reasoner/Kernel/Process/CCoreConceptDescriptor.h
+index 70ba47e5..6c909dfc 100644
+--- a/Source/Reasoner/Kernel/Process/CCoreConceptDescriptor.h
++++ b/Source/Reasoner/Kernel/Process/CCoreConceptDescriptor.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_PROCESS_CCORECONCEPTDESCRIPTOR_H
+ 
+ // Libraries includes
+-#include <QPair>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "ProcessSettings.h"
+diff --git a/Source/Reasoner/Kernel/Process/CProcessSetHasher.h b/Source/Reasoner/Kernel/Process/CProcessSetHasher.h
+index 87789d21..f31d3896 100644
+--- a/Source/Reasoner/Kernel/Process/CProcessSetHasher.h
++++ b/Source/Reasoner/Kernel/Process/CProcessSetHasher.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_KERNEL_PROCESS_CPROCESSSETHASHER_H
+ 
+ // Libraries includes
+-#include <QHash>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "ProcessSettings.h"
+diff --git a/Source/Reasoner/Kernel/Process/CProcessingStatistics.h b/Source/Reasoner/Kernel/Process/CProcessingStatistics.h
+index c8fcb4aa..dcc06637 100644
+--- a/Source/Reasoner/Kernel/Process/CProcessingStatistics.h
++++ b/Source/Reasoner/Kernel/Process/CProcessingStatistics.h
+@@ -24,9 +24,7 @@
+ // Libraries includes
+ #include <QMutexLocker>
+ #include <QMutex>
+-#include <QVector>
+-#include <QList>
+-#include <QHash>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "ProcessSettings.h"
+diff --git a/Source/Reasoner/Ontology/CAbbreviatedIRIName.h b/Source/Reasoner/Ontology/CAbbreviatedIRIName.h
+index b7fa0ab6..3ffb1949 100644
+--- a/Source/Reasoner/Ontology/CAbbreviatedIRIName.h
++++ b/Source/Reasoner/Ontology/CAbbreviatedIRIName.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_ONTOLOGY_CAbbreviatedIRIName_H
+ 
+ // Libraries includes
+-#include <QPair>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "OntologySettings.h"
+diff --git a/Source/Reasoner/Ontology/CConcept.h b/Source/Reasoner/Ontology/CConcept.h
+index 08053e0d..89eb48c6 100644
+--- a/Source/Reasoner/Ontology/CConcept.h
++++ b/Source/Reasoner/Ontology/CConcept.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_ONTOLOGY_CCONCEPT_H
+ 
+ // Libraries includes
+-#include <QPair>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "OntologySettings.h"
+diff --git a/Source/Reasoner/Ontology/CConceptCycleData.h b/Source/Reasoner/Ontology/CConceptCycleData.h
+index 0b45e295..15961b8c 100644
+--- a/Source/Reasoner/Ontology/CConceptCycleData.h
++++ b/Source/Reasoner/Ontology/CConceptCycleData.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_ONTOLOGY_CCONCEPTCYCLEDATA_H
+ 
+ // Libraries includes
+-#include <QSet>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "OntologySettings.h"
+diff --git a/Source/Reasoner/Ontology/CConceptDependence.h b/Source/Reasoner/Ontology/CConceptDependence.h
+index 70c56852..c93ab0aa 100644
+--- a/Source/Reasoner/Ontology/CConceptDependence.h
++++ b/Source/Reasoner/Ontology/CConceptDependence.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_ONTOLOGY_CCONCEPTDEPENDENCE_H
+ 
+ // Libraries includes
+-#include <QPair>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "OntologySettings.h"
+diff --git a/Source/Reasoner/Ontology/CConceptTextFormater.h b/Source/Reasoner/Ontology/CConceptTextFormater.h
+index d874c441..50475acf 100644
+--- a/Source/Reasoner/Ontology/CConceptTextFormater.h
++++ b/Source/Reasoner/Ontology/CConceptTextFormater.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_ONTOLOGY_CCONCEPTTEXTFORMATER_H
+ 
+ // Libraries includes
+-#include <QPair>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "OntologySettings.h"
+diff --git a/Source/Reasoner/Ontology/CDataLiteral.h b/Source/Reasoner/Ontology/CDataLiteral.h
+index 7b124753..3cb582e5 100644
+--- a/Source/Reasoner/Ontology/CDataLiteral.h
++++ b/Source/Reasoner/Ontology/CDataLiteral.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_ONTOLOGY_CDATALITERAL_H
+ 
+ // Libraries includes
+-#include <QString>
++#include "QtCompat.h"
+ 
+ 
+ // Namespace includes
+diff --git a/Source/Reasoner/Ontology/CDataLiteralBinaryBase64DataValue.h b/Source/Reasoner/Ontology/CDataLiteralBinaryBase64DataValue.h
+index e73f89fe..ae065caa 100644
+--- a/Source/Reasoner/Ontology/CDataLiteralBinaryBase64DataValue.h
++++ b/Source/Reasoner/Ontology/CDataLiteralBinaryBase64DataValue.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_ONTOLOGY_CDATALITERALBINARYBASE64DATAVALUE_H
+ 
+ // Libraries includes
+-#include <QString>
++#include "QtCompat.h"
+ 
+ 
+ // Namespace includes
+diff --git a/Source/Reasoner/Ontology/CDataLiteralBinaryDataValue.h b/Source/Reasoner/Ontology/CDataLiteralBinaryDataValue.h
+index 866c8909..3bf3f155 100644
+--- a/Source/Reasoner/Ontology/CDataLiteralBinaryDataValue.h
++++ b/Source/Reasoner/Ontology/CDataLiteralBinaryDataValue.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_ONTOLOGY_CDATALITERALBINARYDATAVALUE_H
+ 
+ // Libraries includes
+-#include <QString>
++#include "QtCompat.h"
+ 
+ 
+ // Namespace includes
+diff --git a/Source/Reasoner/Ontology/CDataLiteralBinaryHexDataValue.h b/Source/Reasoner/Ontology/CDataLiteralBinaryHexDataValue.h
+index f6862cab..4c813df4 100644
+--- a/Source/Reasoner/Ontology/CDataLiteralBinaryHexDataValue.h
++++ b/Source/Reasoner/Ontology/CDataLiteralBinaryHexDataValue.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_ONTOLOGY_CDATALITERALBINARYHEXDATAVALUE_H
+ 
+ // Libraries includes
+-#include <QString>
++#include "QtCompat.h"
+ 
+ 
+ // Namespace includes
+diff --git a/Source/Reasoner/Ontology/CDataLiteralBooleanValue.h b/Source/Reasoner/Ontology/CDataLiteralBooleanValue.h
+index 1c562cfe..f02e46e2 100644
+--- a/Source/Reasoner/Ontology/CDataLiteralBooleanValue.h
++++ b/Source/Reasoner/Ontology/CDataLiteralBooleanValue.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_ONTOLOGY_CDATALITERALBOOLEANVALUE_H
+ 
+ // Libraries includes
+-#include <QString>
++#include "QtCompat.h"
+ 
+ 
+ // Namespace includes
+diff --git a/Source/Reasoner/Ontology/CDataLiteralDateTimeValue.h b/Source/Reasoner/Ontology/CDataLiteralDateTimeValue.h
+index d8f49621..df0e24d7 100644
+--- a/Source/Reasoner/Ontology/CDataLiteralDateTimeValue.h
++++ b/Source/Reasoner/Ontology/CDataLiteralDateTimeValue.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_ONTOLOGY_CDATALITERALDATETIMEVALUE_H
+ 
+ // Libraries includes
+-#include <QString>
++#include "QtCompat.h"
+ 
+ 
+ // Namespace includes
+diff --git a/Source/Reasoner/Ontology/CDataLiteralDoubleValue.h b/Source/Reasoner/Ontology/CDataLiteralDoubleValue.h
+index 84e307fa..0625e620 100644
+--- a/Source/Reasoner/Ontology/CDataLiteralDoubleValue.h
++++ b/Source/Reasoner/Ontology/CDataLiteralDoubleValue.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_ONTOLOGY_CDATALITERALDOUBLEVALUE_H
+ 
+ // Libraries includes
+-#include <QString>
++#include "QtCompat.h"
+ 
+ 
+ // Namespace includes
+diff --git a/Source/Reasoner/Ontology/CDataLiteralFloatValue.h b/Source/Reasoner/Ontology/CDataLiteralFloatValue.h
+index 89031074..6e56a3ff 100644
+--- a/Source/Reasoner/Ontology/CDataLiteralFloatValue.h
++++ b/Source/Reasoner/Ontology/CDataLiteralFloatValue.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_ONTOLOGY_CDATALITERALFLOATVALUE_H
+ 
+ // Libraries includes
+-#include <QString>
++#include "QtCompat.h"
+ 
+ 
+ // Namespace includes
+diff --git a/Source/Reasoner/Ontology/CDataLiteralIRIValue.h b/Source/Reasoner/Ontology/CDataLiteralIRIValue.h
+index e00b89c1..2599ec0b 100644
+--- a/Source/Reasoner/Ontology/CDataLiteralIRIValue.h
++++ b/Source/Reasoner/Ontology/CDataLiteralIRIValue.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_ONTOLOGY_CDATALITERALIRIVALUE_H
+ 
+ // Libraries includes
+-#include <QString>
++#include "QtCompat.h"
+ 
+ 
+ // Namespace includes
+diff --git a/Source/Reasoner/Ontology/CDataLiteralRealValue.h b/Source/Reasoner/Ontology/CDataLiteralRealValue.h
+index c5e61032..a2807cfc 100644
+--- a/Source/Reasoner/Ontology/CDataLiteralRealValue.h
++++ b/Source/Reasoner/Ontology/CDataLiteralRealValue.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_ONTOLOGY_CDATALITERALREALVALUE_H
+ 
+ // Libraries includes
+-#include <QString>
++#include "QtCompat.h"
+ 
+ 
+ // Namespace includes
+diff --git a/Source/Reasoner/Ontology/CDataLiteralStringValue.h b/Source/Reasoner/Ontology/CDataLiteralStringValue.h
+index acd1aeb7..c7716230 100644
+--- a/Source/Reasoner/Ontology/CDataLiteralStringValue.h
++++ b/Source/Reasoner/Ontology/CDataLiteralStringValue.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_ONTOLOGY_CDATALITERALSTRINGVALUE_H
+ 
+ // Libraries includes
+-#include <QString>
++#include "QtCompat.h"
+ 
+ 
+ // Namespace includes
+diff --git a/Source/Reasoner/Ontology/CDataLiteralXMLValue.h b/Source/Reasoner/Ontology/CDataLiteralXMLValue.h
+index 3620ed46..45c90c48 100644
+--- a/Source/Reasoner/Ontology/CDataLiteralXMLValue.h
++++ b/Source/Reasoner/Ontology/CDataLiteralXMLValue.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_ONTOLOGY_CDATALITERALXMLVALUE_H
+ 
+ // Libraries includes
+-#include <QString>
++#include "QtCompat.h"
+ 
+ 
+ // Namespace includes
+diff --git a/Source/Reasoner/Ontology/CDatatype.h b/Source/Reasoner/Ontology/CDatatype.h
+index 74358e26..053609fe 100644
+--- a/Source/Reasoner/Ontology/CDatatype.h
++++ b/Source/Reasoner/Ontology/CDatatype.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_ONTOLOGY_CDATATYPE_H
+ 
+ // Libraries includes
+-#include <QString>
++#include "QtCompat.h"
+ 
+ 
+ // Namespace includes
+diff --git a/Source/Reasoner/Ontology/CDatatypeValueSpaceBooleanType.h b/Source/Reasoner/Ontology/CDatatypeValueSpaceBooleanType.h
+index dd69dcd0..78958a9b 100644
+--- a/Source/Reasoner/Ontology/CDatatypeValueSpaceBooleanType.h
++++ b/Source/Reasoner/Ontology/CDatatypeValueSpaceBooleanType.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_ONTOLOGY_CDATATYPEVALUESPACEBOOLEANTYPE_H
+ 
+ // Libraries includes
+-#include <QString>
++#include "QtCompat.h"
+ 
+ 
+ // Namespace includes
+diff --git a/Source/Reasoner/Ontology/CDatatypeValueSpaceCompareType.h b/Source/Reasoner/Ontology/CDatatypeValueSpaceCompareType.h
+index 054b1b77..5e017c3b 100644
+--- a/Source/Reasoner/Ontology/CDatatypeValueSpaceCompareType.h
++++ b/Source/Reasoner/Ontology/CDatatypeValueSpaceCompareType.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_ONTOLOGY_CDATATYPEVALUESPACECOMPARETYPE_H
+ 
+ // Libraries includes
+-#include <QString>
++#include "QtCompat.h"
+ 
+ 
+ // Namespace includes
+diff --git a/Source/Reasoner/Ontology/CDatatypeValueSpaceDoubleType.h b/Source/Reasoner/Ontology/CDatatypeValueSpaceDoubleType.h
+index 48f9ea25..abbf3976 100644
+--- a/Source/Reasoner/Ontology/CDatatypeValueSpaceDoubleType.h
++++ b/Source/Reasoner/Ontology/CDatatypeValueSpaceDoubleType.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_ONTOLOGY_CDATATYPEVALUESPACEDOUBLETYPE_H
+ 
+ // Libraries includes
+-#include <QString>
++#include "QtCompat.h"
+ 
+ 
+ // Namespace includes
+diff --git a/Source/Reasoner/Ontology/CDatatypeValueSpaceFloatType.h b/Source/Reasoner/Ontology/CDatatypeValueSpaceFloatType.h
+index 56e7f1e6..f16721b1 100644
+--- a/Source/Reasoner/Ontology/CDatatypeValueSpaceFloatType.h
++++ b/Source/Reasoner/Ontology/CDatatypeValueSpaceFloatType.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_ONTOLOGY_CDATATYPEVALUESPACEFLOATTYPE_H
+ 
+ // Libraries includes
+-#include <QString>
++#include "QtCompat.h"
+ 
+ 
+ // Namespace includes
+diff --git a/Source/Reasoner/Ontology/CDatatypeValueSpaceIRIType.h b/Source/Reasoner/Ontology/CDatatypeValueSpaceIRIType.h
+index 26bae4c2..d4e51206 100644
+--- a/Source/Reasoner/Ontology/CDatatypeValueSpaceIRIType.h
++++ b/Source/Reasoner/Ontology/CDatatypeValueSpaceIRIType.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_ONTOLOGY_CDATATYPEVALUESPACEIRITYPE_H
+ 
+ // Libraries includes
+-#include <QString>
++#include "QtCompat.h"
+ 
+ 
+ // Namespace includes
+diff --git a/Source/Reasoner/Ontology/CDatatypeValueSpaceRealType.h b/Source/Reasoner/Ontology/CDatatypeValueSpaceRealType.h
+index 76c33d91..2cb9792c 100644
+--- a/Source/Reasoner/Ontology/CDatatypeValueSpaceRealType.h
++++ b/Source/Reasoner/Ontology/CDatatypeValueSpaceRealType.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_ONTOLOGY_CDATATYPEVALUESPACEREALTYPE_H
+ 
+ // Libraries includes
+-#include <QString>
++#include "QtCompat.h"
+ 
+ 
+ // Namespace includes
+diff --git a/Source/Reasoner/Ontology/CDatatypeValueSpaceStringType.h b/Source/Reasoner/Ontology/CDatatypeValueSpaceStringType.h
+index 2fec928d..df0b4324 100644
+--- a/Source/Reasoner/Ontology/CDatatypeValueSpaceStringType.h
++++ b/Source/Reasoner/Ontology/CDatatypeValueSpaceStringType.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_ONTOLOGY_CDATATYPEVALUESPACESTRINGTYPE_H
+ 
+ // Libraries includes
+-#include <QString>
++#include "QtCompat.h"
+ 
+ 
+ // Namespace includes
+diff --git a/Source/Reasoner/Ontology/CDatatypeValueSpaceUnknownType.h b/Source/Reasoner/Ontology/CDatatypeValueSpaceUnknownType.h
+index 3674818b..35e83a2c 100644
+--- a/Source/Reasoner/Ontology/CDatatypeValueSpaceUnknownType.h
++++ b/Source/Reasoner/Ontology/CDatatypeValueSpaceUnknownType.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_ONTOLOGY_CDATATYPEVALUESPACEUNKNOWNTYPE_H
+ 
+ // Libraries includes
+-#include <QString>
++#include "QtCompat.h"
+ 
+ 
+ // Namespace includes
+diff --git a/Source/Reasoner/Ontology/CDatatypeValueSpaceXMLType.h b/Source/Reasoner/Ontology/CDatatypeValueSpaceXMLType.h
+index 3eb1109e..43869225 100644
+--- a/Source/Reasoner/Ontology/CDatatypeValueSpaceXMLType.h
++++ b/Source/Reasoner/Ontology/CDatatypeValueSpaceXMLType.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_ONTOLOGY_CDATATYPEVALUESPACEXMLTYPE_H
+ 
+ // Libraries includes
+-#include <QString>
++#include "QtCompat.h"
+ 
+ 
+ // Namespace includes
+diff --git a/Source/Reasoner/Ontology/CIRIName.h b/Source/Reasoner/Ontology/CIRIName.h
+index 09457223..0f4ec9e9 100644
+--- a/Source/Reasoner/Ontology/CIRIName.h
++++ b/Source/Reasoner/Ontology/CIRIName.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_ONTOLOGY_CIRINAME_H
+ 
+ // Libraries includes
+-#include <QPair>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "OntologySettings.h"
+diff --git a/Source/Reasoner/Ontology/CIndividual.h b/Source/Reasoner/Ontology/CIndividual.h
+index 7d5dea9a..30f3f2cf 100644
+--- a/Source/Reasoner/Ontology/CIndividual.h
++++ b/Source/Reasoner/Ontology/CIndividual.h
+@@ -22,8 +22,7 @@
+ #define KONCLUDE_REASONER_ONTOLOGY_CINDIVIDUAL_H
+ 
+ // Libraries includes
+-#include <QSet>
+-#include <QHash>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "OntologySettings.h"
+diff --git a/Source/Reasoner/Ontology/CIndividualDependence.h b/Source/Reasoner/Ontology/CIndividualDependence.h
+index a2171c27..6d7c9ab1 100644
+--- a/Source/Reasoner/Ontology/CIndividualDependence.h
++++ b/Source/Reasoner/Ontology/CIndividualDependence.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_ONTOLOGY_CINDIVIDUALDEPENDENCE_H
+ 
+ // Libraries includes
+-#include <QPair>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "OntologySettings.h"
+diff --git a/Source/Reasoner/Ontology/CName.h b/Source/Reasoner/Ontology/CName.h
+index 196ddc3f..481d75ac 100644
+--- a/Source/Reasoner/Ontology/CName.h
++++ b/Source/Reasoner/Ontology/CName.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_ONTOLOGY_CNAME_H
+ 
+ // Libraries includes
+-#include <QPair>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "OntologySettings.h"
+diff --git a/Source/Reasoner/Ontology/CNamePrefix.h b/Source/Reasoner/Ontology/CNamePrefix.h
+index 0ff43edc..31a8f814 100644
+--- a/Source/Reasoner/Ontology/CNamePrefix.h
++++ b/Source/Reasoner/Ontology/CNamePrefix.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_ONTOLOGY_CNAMEPREFIX_H
+ 
+ // Libraries includes
+-#include <QPair>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "OntologySettings.h"
+diff --git a/Source/Reasoner/Ontology/COntologyImportData.h b/Source/Reasoner/Ontology/COntologyImportData.h
+index db48111f..28ce7697 100644
+--- a/Source/Reasoner/Ontology/COntologyImportData.h
++++ b/Source/Reasoner/Ontology/COntologyImportData.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_ONTOLOGY_CONTOLOGYIMPORTDATA_H
+ 
+ // Libraries includes
+-#include <QString>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "OntologySettings.h"
+diff --git a/Source/Reasoner/Ontology/COntologyProcessingStepVector.h b/Source/Reasoner/Ontology/COntologyProcessingStepVector.h
+index bacb9a34..9e3a7b4a 100644
+--- a/Source/Reasoner/Ontology/COntologyProcessingStepVector.h
++++ b/Source/Reasoner/Ontology/COntologyProcessingStepVector.h
+@@ -23,7 +23,7 @@
+ 
+ // Libraries includes
+ #include <QMutex>
+-#include <QVector>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "OntologySettings.h"
+diff --git a/Source/Reasoner/Ontology/COntologyTextFormater.h b/Source/Reasoner/Ontology/COntologyTextFormater.h
+index 2828fb7b..c60128f0 100644
+--- a/Source/Reasoner/Ontology/COntologyTextFormater.h
++++ b/Source/Reasoner/Ontology/COntologyTextFormater.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_ONTOLOGY_CONTOLOGYTEXTFORMATER_H
+ 
+ // Libraries includes
+-#include <QPair>
++#include "QtCompat.h"
+ #include <QDir>
+ 
+ // Namespace includes
+diff --git a/Source/Reasoner/Preprocess/CConceptUnambiguousHasher.h b/Source/Reasoner/Preprocess/CConceptUnambiguousHasher.h
+index 47d6eea5..c0408ec0 100644
+--- a/Source/Reasoner/Preprocess/CConceptUnambiguousHasher.h
++++ b/Source/Reasoner/Preprocess/CConceptUnambiguousHasher.h
+@@ -23,7 +23,7 @@
+ 
+ 
+ // Libraries includes
+-#include <QHash>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ 
+diff --git a/Source/Reasoner/Preprocess/CDataLiteralNormalizerPreProcess.h b/Source/Reasoner/Preprocess/CDataLiteralNormalizerPreProcess.h
+index 9813b8b0..82e1371d 100644
+--- a/Source/Reasoner/Preprocess/CDataLiteralNormalizerPreProcess.h
++++ b/Source/Reasoner/Preprocess/CDataLiteralNormalizerPreProcess.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_PREPROCESS_CDATALITERALNORMALIZERPREPROCESS_H
+ 
+ // Libraries includes
+-#include <QSet>
++#include "QtCompat.h"
+ #include <QDomDocument>
+ 
+ // Namespace includes
+diff --git a/Source/Reasoner/Preprocess/CDatatypeNormalizerPreProcess.h b/Source/Reasoner/Preprocess/CDatatypeNormalizerPreProcess.h
+index b241d4d1..d415b7d0 100644
+--- a/Source/Reasoner/Preprocess/CDatatypeNormalizerPreProcess.h
++++ b/Source/Reasoner/Preprocess/CDatatypeNormalizerPreProcess.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_PREPROCESS_CDATATYPENORMALIZERPREPROCESS_H
+ 
+ // Libraries includes
+-#include <QSet>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "CConcreteOntologyContinuablePreProcess.h"
+diff --git a/Source/Reasoner/Preprocess/CFullNominalSchemaGroundingPreProcess.h b/Source/Reasoner/Preprocess/CFullNominalSchemaGroundingPreProcess.h
+index dee6e000..e2f6d0ff 100644
+--- a/Source/Reasoner/Preprocess/CFullNominalSchemaGroundingPreProcess.h
++++ b/Source/Reasoner/Preprocess/CFullNominalSchemaGroundingPreProcess.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_PREPROCESS_CFULLNOMINALSCHEMAGROUNDINGPREPROCESS_H
+ 
+ // Libraries includes
+-#include <QSet>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "CConcreteOntologyPreProcess.h"
+diff --git a/Source/Reasoner/Preprocess/CMappingUpdaterPreProcess.h b/Source/Reasoner/Preprocess/CMappingUpdaterPreProcess.h
+index aa49b6a1..ee1b75a3 100644
+--- a/Source/Reasoner/Preprocess/CMappingUpdaterPreProcess.h
++++ b/Source/Reasoner/Preprocess/CMappingUpdaterPreProcess.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_PREPROCESS_CMAPPINGUPDATERPREPROCESS_H
+ 
+ // Libraries includes
+-#include <QSet>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "CConcreteOntologyPreProcess.h"
+diff --git a/Source/Reasoner/Preprocess/CNominalSchemaTemplateExtractionPreProcess.h b/Source/Reasoner/Preprocess/CNominalSchemaTemplateExtractionPreProcess.h
+index 38a74f65..2f2d386f 100644
+--- a/Source/Reasoner/Preprocess/CNominalSchemaTemplateExtractionPreProcess.h
++++ b/Source/Reasoner/Preprocess/CNominalSchemaTemplateExtractionPreProcess.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_PREPROCESS_CNominalSchemaTemplateExtractionPreProcess_H
+ 
+ // Libraries includes
+-#include <QSet>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "CConcreteOntologyPreProcess.h"
+diff --git a/Source/Reasoner/Preprocess/COntologyAssignmentTransformationPreProcess.h b/Source/Reasoner/Preprocess/COntologyAssignmentTransformationPreProcess.h
+index 62e1dab1..136331ce 100644
+--- a/Source/Reasoner/Preprocess/COntologyAssignmentTransformationPreProcess.h
++++ b/Source/Reasoner/Preprocess/COntologyAssignmentTransformationPreProcess.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_PREPROCESS_CONTOLOGYASSIGNMENTTRANSFORMATIONPREPROCESS_H
+ 
+ // Libraries includes
+-#include <QSet>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "CConcreteOntologyPreProcess.h"
+diff --git a/Source/Reasoner/Preprocess/CRoleChainAutomataTransformationPreProcess.h b/Source/Reasoner/Preprocess/CRoleChainAutomataTransformationPreProcess.h
+index ccaf541c..1f525dc3 100644
+--- a/Source/Reasoner/Preprocess/CRoleChainAutomataTransformationPreProcess.h
++++ b/Source/Reasoner/Preprocess/CRoleChainAutomataTransformationPreProcess.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_PREPROCESS_CROLECHAINAUTOMATATRANSFORMATIONPREPROCESS_H
+ 
+ // Libraries includes
+-#include <QSet>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "CConcreteOntologyContinuablePreProcess.h"
+diff --git a/Source/Reasoner/Preprocess/CSubroleTransformationPreProcess.h b/Source/Reasoner/Preprocess/CSubroleTransformationPreProcess.h
+index fd28a187..74d29bf6 100644
+--- a/Source/Reasoner/Preprocess/CSubroleTransformationPreProcess.h
++++ b/Source/Reasoner/Preprocess/CSubroleTransformationPreProcess.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_PREPROCESS_CSUBROLETRANSFORMATIONPREPROCESS_H
+ 
+ // Libraries includes
+-#include <QSet>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "CConcreteOntologyContinuablePreProcess.h"
+diff --git a/Source/Reasoner/Preprocess/CTriggeredImplicationBinaryAbsorberPreProcess.h b/Source/Reasoner/Preprocess/CTriggeredImplicationBinaryAbsorberPreProcess.h
+index 656f2b08..3ca50e03 100644
+--- a/Source/Reasoner/Preprocess/CTriggeredImplicationBinaryAbsorberPreProcess.h
++++ b/Source/Reasoner/Preprocess/CTriggeredImplicationBinaryAbsorberPreProcess.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_PREPROCESS_CTRIGGEREDIMPLICATIONBINARYABSORBERPREPROCESS_H
+ 
+ // Libraries includes
+-#include <QSet>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "CConcreteOntologyContinuablePreProcess.h"
+diff --git a/Source/Reasoner/Preprocess/CTriggeredImplicationGCIAbsorberPreProcess.h b/Source/Reasoner/Preprocess/CTriggeredImplicationGCIAbsorberPreProcess.h
+index 74f63513..5f29d28c 100644
+--- a/Source/Reasoner/Preprocess/CTriggeredImplicationGCIAbsorberPreProcess.h
++++ b/Source/Reasoner/Preprocess/CTriggeredImplicationGCIAbsorberPreProcess.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_PREPROCESS_CTRIGGEREDIMPLICATIONGCIABSORBERPREPROCESS_H
+ 
+ // Libraries includes
+-#include <QSet>
++#include "QtCompat.h"
+ 
+ // Namespace includes
+ #include "CConcreteOntologyPreProcess.h"
+diff --git a/Source/Scheduler/CTaskProcessingStatistics.h b/Source/Scheduler/CTaskProcessingStatistics.h
+index f8585679..fe297b11 100644
+--- a/Source/Scheduler/CTaskProcessingStatistics.h
++++ b/Source/Scheduler/CTaskProcessingStatistics.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_SCHEDULER_CTASKPROCESSINGSTATISTICS_H
+ 
+ // Libraries includes
+-#include <QVector>
++#include "QtCompat.h"
+ 
+ 
+ // Namespace includes
+diff --git a/Source/Scheduler/CTaskReserveArrayQueue.h b/Source/Scheduler/CTaskReserveArrayQueue.h
+index fe47c66c..0154d071 100644
+--- a/Source/Scheduler/CTaskReserveArrayQueue.h
++++ b/Source/Scheduler/CTaskReserveArrayQueue.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_SCHEDULER_CTASKRESERVEARRAYQUEUE_H
+ 
+ // Libraries includes
+-#include <QVector>
++#include "QtCompat.h"
+ #include <QMutex>
+ 
+ // Namespace includes
+diff --git a/Source/Scheduler/CTaskReserveMultiArrayQueue.h b/Source/Scheduler/CTaskReserveMultiArrayQueue.h
+index 430a291b..d06fdbb7 100644
+--- a/Source/Scheduler/CTaskReserveMultiArrayQueue.h
++++ b/Source/Scheduler/CTaskReserveMultiArrayQueue.h
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_SCHEDULER_CTASKRESERVEMULTIARRAYQUEUE_H
+ 
+ // Libraries includes
+-#include <QVector>
++#include "QtCompat.h"
+ #include <QMutex>
+ 
+ // Namespace includes

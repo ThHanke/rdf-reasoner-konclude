@@ -1,0 +1,22 @@
+services:
+  build:
+    build: .
+    volumes:
+      - .:/src
+    working_dir: /src
+    command: >
+      bash -c "
+        scripts/apply-patches.sh &&
+        scripts/build-raptor-wasm.sh &&
+        emcmake cmake -B build -DCMAKE_BUILD_TYPE=Release . &&
+        emmake make -C build -j$(nproc)
+      "
+
+  shell:
+    build: .
+    volumes:
+      - .:/src
+    working_dir: /src
+    stdin_open: true
+    tty: true
+    command: bash
