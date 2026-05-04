@@ -1,0 +1,18 @@
+# Inconsistent micro-ontology — NTriples
+# A is subClassOf B and also subClassOf NotB (= complementOf B).
+# Any OWL-DL reasoner must report this ontology as inconsistent.
+
+# Ontology declaration
+<http://example.org/inc> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .
+
+# Class declarations
+<http://example.org/A> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<http://example.org/B> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<http://example.org/NotB> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+
+# NotB is defined as the complement of B
+<http://example.org/NotB> <http://www.w3.org/2002/07/owl#complementOf> <http://example.org/B> .
+
+# A is subclass of both B and NotB → contradiction
+<http://example.org/A> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/B> .
+<http://example.org/A> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/NotB> .

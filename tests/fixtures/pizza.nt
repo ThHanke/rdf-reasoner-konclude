@@ -1,0 +1,31 @@
+# Pizza ontology fragment — NTriples
+# Simplified representative subset for integration testing.
+# Namespaces used:
+#   pizza: http://example.org/pizza#
+#   rdf:   http://www.w3.org/1999/02/22-rdf-syntax-ns#
+#   rdfs:  http://www.w3.org/2000/01/rdf-schema#
+#   owl:   http://www.w3.org/2002/07/owl#
+
+# Ontology declaration
+<http://example.org/pizza> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .
+
+# Class declarations
+<http://example.org/pizza#Food> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<http://example.org/pizza#Pizza> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<http://example.org/pizza#VegetarianPizza> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<http://example.org/pizza#MeatyPizza> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<http://example.org/pizza#IceCream> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<http://example.org/pizza#Topping> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<http://example.org/pizza#VegetableTopping> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<http://example.org/pizza#MeatTopping> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+
+# subClassOf hierarchy
+<http://example.org/pizza#Pizza> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/pizza#Food> .
+<http://example.org/pizza#IceCream> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/pizza#Food> .
+<http://example.org/pizza#VegetarianPizza> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/pizza#Pizza> .
+<http://example.org/pizza#MeatyPizza> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/pizza#Pizza> .
+<http://example.org/pizza#VegetableTopping> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/pizza#Topping> .
+<http://example.org/pizza#MeatTopping> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/pizza#Topping> .
+
+# Disjointness — VegetarianPizza and MeatyPizza are disjoint
+<http://example.org/pizza#VegetarianPizza> <http://www.w3.org/2002/07/owl#disjointWith> <http://example.org/pizza#MeatyPizza> .
