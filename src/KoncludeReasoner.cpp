@@ -37,6 +37,10 @@
 #include "Reasoner/Classification/CClassConceptClassification.h"
 #include "Reasoner/Consistence/CConsistence.h"
 
+// Processing step data
+#include "Reasoner/Ontology/COntologyProcessingStepDataVector.h"
+#include "Reasoner/Ontology/COntologyProcessingStepData.h"
+
 // Config
 #include "Config/CGlobalConfigurationBase.h"
 #include "Config/CConfigurationGroup.h"
@@ -280,8 +284,16 @@ bool KoncludeReasoner::classify() {
     }
 
     // Check whether classification actually completed.
-    CClassification* classif = mImpl->mOntology->getClassification();
-    mImpl->mClassified = (classif != nullptr) && classif->isOntologyClassified();
+    // CClassification::isOntologyClassified() is never set to true in this codebase,
+    // so we check the processing step status directly.
+    COntologyProcessingStepDataVector* stepDataVec =
+        mImpl->mOntology->getProcessingSteps()->getOntologyProcessingStepDataVector();
+    COntologyProcessingStepData* classifyStepData =
+        stepDataVec->getProcessingStepData(COntologyProcessingStep::OPSCLASSCLASSIFY);
+    bool classified = classifyStepData &&
+        classifyStepData->getProcessingStatus()->hasPartialProcessingFlags(
+            COntologyProcessingStatus::PSCOMPLETELYYPROCESSED);
+    mImpl->mClassified = classified;
     return mImpl->mClassified;
 }
 
