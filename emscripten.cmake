@@ -13,5 +13,6 @@ set(KONCLUDE_EMSCRIPTEN_LINK_FLAGS
     "-s ALLOW_MEMORY_GROWTH=1"
     "-s NO_EXIT_RUNTIME=1"
     "--bind"
-    "--oformat=esm"
+    "--oformat=mjs"
+    "-Wl,--error-limit=0"
 )
