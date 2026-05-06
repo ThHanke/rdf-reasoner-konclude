@@ -338,7 +338,7 @@ std::string KoncludeReasoner::getInferredNTriples() {
     }
 
     for (auto& kv : *nodeHash) {
-        CHierarchyNode* childNode = kv.second;
+        CHierarchyNode* childNode = kv;  // QHash range-for yields values directly
         if (!childNode || !childNode->isActive()) {
             continue;
         }

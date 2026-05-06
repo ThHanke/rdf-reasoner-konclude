@@ -3,14 +3,15 @@ services:
     build: .
     volumes:
       - .:/src
+      - konclude-ccache:/ccache
     working_dir: /src
     command: >
       bash -c "
         mkdir -p dist &&
         scripts/apply-patches.sh &&
         scripts/build-raptor-wasm.sh &&
-        emcmake cmake -B build -DCMAKE_BUILD_TYPE=Release . &&
-        emmake make -C build -j$(nproc)
+        emcmake cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache . &&
+        emmake make -C build -j4
       "
 
   smoke-test:
@@ -24,7 +25,11 @@ services:
     build: .
     volumes:
       - .:/src
+      - konclude-ccache:/ccache
     working_dir: /src
     stdin_open: true
     tty: true
     command: bash
+
+volumes:
+  konclude-ccache:
