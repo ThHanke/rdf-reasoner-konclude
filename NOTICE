@@ -1,0 +1,44 @@
+rdf-reasoner-konclude
+=====================
+
+TypeScript wrapper and build scripts: GNU Lesser General Public License v3.
+Copyright (c) 2026 Thomas Hanke. See LICENSE.
+
+-------------------------------------------------------------------------------
+Third-party component: Konclude OWL-DL Reasoning Kernel
+-------------------------------------------------------------------------------
+
+The file dist/konclude.wasm is compiled from the Konclude reasoning kernel,
+which is copyright (c) University of Ulm and released under the GNU Lesser
+General Public License v3.0 (LGPLv3).
+
+  Liebig, T., Jaeger, M., Möller, R., & Möller, B. (2014).
+  Konclude: System Description.
+  Web Semantics, 27–28, 78–85. doi:10.1016/j.websem.2014.06.003
+
+As required by LGPLv3 §4, the complete Konclude source with all applied
+modifications is available at:
+
+  https://github.com/ThHanke/rdf-reasoner-konclude
+
+Clone with --recurse-submodules to obtain vendor/konclude/ (the Konclude source)
+and patches/ (every modification applied to it). To recompile the WASM binary:
+
+  git clone --recurse-submodules https://github.com/ThHanke/rdf-reasoner-konclude
+  docker compose run --rm build
+
+The full text of the LGPLv3 is available at:
+  https://www.gnu.org/licenses/lgpl-3.0.txt
+
+-------------------------------------------------------------------------------
+Development acknowledgement: Claude (Anthropic)
+-------------------------------------------------------------------------------
+
+This WebAssembly port — including the Qt-elimination shim layer, Emscripten
+build pipeline, threading architecture, TypeScript API, and test suite — was
+developed with substantial AI assistance from Claude, an AI assistant made by
+Anthropic (https://www.anthropic.com).
+
+The reasoning algorithm, correctness, and all intellectual property of the
+Konclude OWL-DL reasoner belong entirely to its original authors at the
+University of Ulm.

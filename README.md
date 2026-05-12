@@ -1,182 +1,253 @@
 # rdf-reasoner-konclude
 
-WebAssembly port of the [Konclude](https://github.com/konclude/Konclude) OWL-DL tableau reasoning kernel, published as an npm package with a TypeScript/RDF.js API.
+[![npm version](https://img.shields.io/npm/v/rdf-reasoner-konclude)](https://www.npmjs.com/package/rdf-reasoner-konclude)
+[![license](https://img.shields.io/badge/license-LGPL--3.0--or--later-blue)](LICENSE)
 
-**Status:** Phase 1 (Qt elimination) and Phase 2 (WASM build pipeline) complete. Phase 3 (TypeScript npm package) in progress.
+OWL-DL tableau reasoning via [Konclude](https://github.com/konclude/Konclude) compiled to WebAssembly, with an async TypeScript API using RDF.js Quad types.
 
-## What it does
-
-Brings OWL-DL reasoning (nominals, inverse roles, complex cardinality) to the browser. The package accepts `Iterable<Quad>` input and returns inferred `Quad[]` — fully typed with `@rdfjs/types`.
-
-```typescript
-const reasoner = new RdfReasoner()
-await reasoner.ready
-const inferred = await reasoner.reason(quads)  // Promise<Quad[]>
-```
-
-The reasoning runs in a Web Worker backed by a WebAssembly binary compiled from Konclude's C++ tableau engine.
-
-## Build
-
-Requires Docker. On a cold cache the full build (Raptor2 + librdf cross-compile + kernel compile) takes roughly 20–30 minutes. Subsequent runs use `ccache` and skip already-built Raptor/librdf, so they are much faster.
-
-### First-time build
+## Installation
 
 ```bash
-# 1. Populate the submodule and pre-apply Qt-removal patches on the host.
-#    (Docker runs as root; pre-patching on the host avoids a git safe.directory
-#    error inside the container.)
+npm install rdf-reasoner-konclude n3
+```
+
+`n3` is a required peer dependency (used for NTriples serialization/deserialization).
+
+## Node.js quick-start
+
+```typescript
+import { RdfReasoner, INFERRED_GRAPH_IRI } from 'rdf-reasoner-konclude';
+import { Store, Parser } from 'n3';
+
+// Load your ontology into an N3 Store
+const store = new Store();
+const parser = new Parser({ format: 'Turtle' });
+parser.parse(`
+  @prefix owl: <http://www.w3.org/2002/07/owl#> .
+  @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+  :A rdfs:subClassOf :B .
+  :B rdfs:subClassOf :C .
+`, (err, quad) => { if (quad) store.addQuad(quad); });
+
+const reasoner = new RdfReasoner();
+await reasoner.ready;
+
+await reasoner.reason(store);
+
+// Inferred triples are written into the INFERRED_GRAPH_IRI named graph
+const inferred = store.getQuads(null, null, null, INFERRED_GRAPH_IRI);
+console.log(inferred.map(q => `${q.subject.value} → ${q.object.value}`));
+// e.g. [ ':A → :C' ]  (transitive subClassOf)
+
+reasoner.terminate();
+```
+
+No Worker setup needed — Node.js 18+ picks up the `"node"` export condition which installs a `worker_threads` shim automatically.
+
+## Browser / Vite quick-start
+
+```typescript
+import { RdfReasoner, INFERRED_GRAPH_IRI } from 'rdf-reasoner-konclude';
+import { Store } from 'n3';
+
+const store = new Store(/* ... your quads ... */);
+const reasoner = new RdfReasoner();
+await reasoner.ready;
+
+await reasoner.reason(store);
+
+const inferred = store.getQuads(null, null, null, INFERRED_GRAPH_IRI);
+```
+
+The browser build requires COOP/COEP HTTP headers for `SharedArrayBuffer` (used by pthreads). See [Browser Deployment](#browser-deployment) for server configuration.
+
+## API reference
+
+### `RdfReasoner`
+
+```typescript
+const reasoner = new RdfReasoner();
+await reasoner.ready;              // resolves when WASM module is loaded
+
+await reasoner.reason(store);      // classify + write inferred triples into store
+await reasoner.classify(store);    // alias for reason(store)
+const ok = await reasoner.checkConsistency(store); // returns boolean
+
+reasoner.terminate();              // shut down the Worker
+```
+
+`reason(store)` and `classify(store)` write inferred triples into the
+`INFERRED_GRAPH_IRI` named graph inside the store. The graph is cleared before
+each call — do not store ontology triples there.
+
+Named graphs in the input are dropped at the WASM boundary (NTriples wire
+format is triple-only). Reasoning runs over the union of all graphs.
+
+Options for `reason(store, opts)` and `classify(store, opts)`:
+
+```typescript
+interface StoreReasoningOptions {
+  inferredGraph?: string; // IRI of the named graph for inferred triples
+                          // default: INFERRED_GRAPH_IRI
+}
+```
+
+### `INFERRED_GRAPH_IRI`
+
+```typescript
+import { INFERRED_GRAPH_IRI } from 'rdf-reasoner-konclude';
+// "urn:konclude:inferred"
+```
+
+The default named graph where inferred triples are written by `reason(store)`.
+
+### Deprecated overloads
+
+`reason(quads: Iterable<Quad>)` and `classify(quads)` / `checkConsistency(quads)` accept a raw `Iterable<Quad>` and return `Promise<Quad[]>` / `Promise<boolean>`. These overloads are deprecated — use the `Store`-based API instead.
+
+## Browser deployment
+
+The WASM binary uses pthreads, which requires `SharedArrayBuffer`. Browsers
+block `SharedArrayBuffer` unless the page is cross-origin isolated:
+
+```http
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+### Vite dev server
+
+```js
+// vite.config.js
+export default {
+  server: {
+    headers: {
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'require-corp',
+    },
+  },
+}
+```
+
+### nginx (production)
+
+```nginx
+add_header Cross-Origin-Opener-Policy same-origin;
+add_header Cross-Origin-Embedder-Policy require-corp;
+```
+
+### Caddy (production)
+
+```caddyfile
+header {
+    Cross-Origin-Opener-Policy same-origin
+    Cross-Origin-Embedder-Policy require-corp
+}
+```
+
+### webpack 5
+
+```js
+// webpack.config.js
+module.exports = { experiments: { asyncWebAssembly: true } }
+```
+
+## Performance
+
+Benchmarked on an 8-core Linux host. Native = Konclude v0.7.0 binary; TS = Node.js 20 via this package. Threads: 8 (both native and WASM pthreads).
+
+| Ontology | Expressivity | NTriples | Native classify | TS total | Ratio |
+| --- | --- | --- | --- | --- | --- |
+| LUBM schema | SHI | 307 | 35 ms | 266 ms | ~7.3× |
+| GALEN | SHIF | 30 817 | 225 ms | 941 ms | ~4.2× |
+| Roberts family | SROIQ | 3 866 | 1 801 ms | 2 603 ms | ~1.4× |
+| LUBM schema + data | SHI | 100 850 | 160 ms | 2 104 ms | ~13× |
+
+TS total includes NTriples serialization/deserialization (the main JS overhead).
+The WASM classify step alone is within 1.4×–7.3× of native. Run `npm run bench`
+to reproduce (requires a built WASM binary — see [Build from source](#build-from-source)).
+
+## How it works
+
+```text
+main thread
+  RdfReasoner.reason(store)
+    → serialize Store quads to NTriples (n3.js Writer)
+    → postMessage to Worker
+
+Worker (pthreads WASM)
+  → KoncludeReasoner::loadNTriples()     // NTriples → librdf model (Raptor2)
+  → mapTriples()                         // librdf → OWL expression model
+  → KoncludeReasoner::classify()         // OWL-DL tableau (KPSet, parallel)
+  → KoncludeReasoner::getInferredNTriples()
+    → postMessage result back
+
+main thread
+  → parse NTriples → Quad[] (n3.js Parser)
+  → write into store[INFERRED_GRAPH_IRI]
+```
+
+The WASM binary is compiled from Konclude's C++ tableau engine with Qt removed
+(replaced by `std::` shims) and pthreads enabled. The KPSet classifier requires
+real threads — cooperative dispatch deadlocks.
+
+## Build from source
+
+Requires Docker. First build (Raptor2 + librdf cross-compile + kernel) takes
+roughly 20–30 minutes. Subsequent runs use ccache and skip already-built libs.
+
+```bash
+# 1. Populate submodule and pre-apply Qt-removal patches
 git submodule update --init
 bash scripts/apply-patches.sh
 
-# 2. Cross-compile Raptor2/librdf for WASM and build the kernel.
+# 2. Cross-compile Raptor2/librdf for WASM and build the kernel
 docker compose run --rm build
 
-# 3. Verify: smoke-test a 3-class ontology (A⊑B + B⊑C → A⊑C)
+# 3. Verify
 docker compose run --rm smoke-test
+
+# 4. Compile TypeScript
+npm run build
 ```
 
-### Incremental builds
+Incremental rebuild (Raptor/librdf already built):
 
 ```bash
-# Re-run only the kernel compile (Raptor/librdf already built in wasm-libs/).
 docker compose run --rm build
+```
 
-# Interactive shell inside the build container
+Interactive shell:
+
+```bash
 docker compose run --rm shell
 ```
 
-`docker compose run build` runs in sequence:
-1. `scripts/apply-patches.sh` — idempotent; skips if sentinel `vendor/konclude/.patches-applied` exists
-2. `scripts/build-raptor-wasm.sh` — cross-compiles Raptor2 2.0.16 + librdf 1.0.17 to WASM (skips if `wasm-libs/lib/libraptor2.a` exists)
-3. `emcmake cmake -B build` + `emmake make` — compiles the kernel to `dist/konclude.mjs` + `dist/konclude.wasm`
+## Licence
 
-Build output: `dist/konclude.mjs` (ES module, `EXPORT_NAME=createKoncludeModule`) and `dist/konclude.wasm`.
+The TypeScript wrapper and build scripts in this repository are licensed under
+**LGPL-3.0-or-later**. See [LICENSE](LICENSE).
 
-### Patching notes
+The WASM binary (`dist/konclude.wasm`) contains the Konclude reasoning kernel,
+which is © University of Ulm and also released under **LGPLv3**.
 
-The vendor/konclude submodule source files have CRLF line endings (upstream Windows repository). Patches are applied with `git apply --ignore-whitespace` to handle this. Two of the three patches overlap on six header files; `patches/001-qt-compat-header.patch` excludes those files and `patches/002-cthread-sync.patch` handles them with a full Qt-include replacement.
+As required by LGPLv3 §4, complete Konclude source with all applied
+modifications is available at:
 
-## Integration Test Results
+<https://github.com/ThHanke/rdf-reasoner-konclude>
 
-Run `npm run bench` to reproduce (requires Docker + a built WASM binary — run `docker compose run build` first).
+Clone with `--recurse-submodules` to obtain `vendor/konclude/` (Konclude source)
+and `patches/` (every modification). To recompile: `docker compose run --rm build`.
 
-```text
-Native:  Konclude v0.7.0-1138 - 500e11d9 (konclude/konclude:latest)
-Ported:  vendor/konclude @ 056334ad (submodule)
-Threads: 8 (native -w AUTO / WASM pthreads)
-Date:    2026-05-12
-```
-
-| Ontology | Exp. | NTriples | Native parse ¹ | Native preprocess+precompute+classify ² | WASM load ¹ | WASM classify ² | WASM total | Ratio ² |
-|---|---|---|---|---|---|---|---|---|
-| LUBM schema | SHI | 307 | 6 ms | 34 ms | 6 ms | 241 ms | 249 ms | ~7.1× |
-| GALEN | SHIF | 30817 | 64 ms | 225 ms | 427 ms | 517 ms | 961 ms | ~2.3× |
-| Roberts family | SROIQ | 3866 | 27 ms | 1761 ms | 53 ms | 2528 ms | 2584 ms | ~1.4× |
-| LUBM schema + data | SHI | 100850 | 877 ms | 147 ms | 1358 ms | 783 ms | 2144 ms | ~5.3× |
-
-¹ Native parse (OWL 2 XML or RDF/XML) and WASM load (NTriples/Raptor2) use different input formats — **not comparable**.
-² "Native preprocess+precompute+classify" and "WASM classify" perform the same logical work (in-memory OWL model → class hierarchy) and are **directly comparable**.
-- Native: 3 runs per ontology, median reported. WASM: 1 warm-up discarded, median of 3 measured runs (fresh WASM heap per run).
-- WASM runtime: Node.js v20.20.2 with Emscripten pthreads build.
-- LUBM+data native input: NTriples fixtures merged to RDF/XML via rdflib (generated by `npm run bench`, .gitignored).
-- LUBM and Roberts output: exact match with native. Galen: same triple count (3 287), 14 synonym-representative differences (loading-order dependent, semantically identical).
-
-## Architecture
-
-### End-to-end pipeline
-
-```text
-JS (main thread)
-  RdfReasoner.reason(quads)
-    → serialize Quad[] to NTriples (n3.js Writer)
-    → postMessage to Worker
-
-Worker
-  → KoncludeReasoner::loadNTriples(ntriplesStr)       // C++ via Embind
-      → CRDFRedlandRaptorParser::parseTriples()        // NTriples → librdf model
-      → CConcreteOntologyRedlandTriplesDataExpressionMapper::mapTriples()
-  → KoncludeReasoner::classify()                      // synchronous tableau
-      → CPreprocessingThread::start()  → run()
-      → CPrecomputationThread::start() → run()
-      → COptimizedKPSetClassSubsumptionClassifierThread::start() → run()
-  → KoncludeReasoner::getInferredNTriples()           // taxonomy → NTriples string
-    → postMessage result back
-
-JS (main thread)
-  → parse NTriples → Quad[] (n3.js Parser)
-  → return Quad[]
-```
-
-NTriples is the wire format at the JS↔WASM boundary. Named graphs are dropped (NTriples is triple-only); v1 reasons over the union of all graphs.
-
-### Qt removal strategy
-
-Konclude's C++ source uses Qt throughout. Four layers are removed:
-
-| Layer | Qt usage | Removal |
-| --- | --- | --- |
-| Containers | `QHash`, `QList`, `QSet`, `QString`, … | `src/compat/QtCompat.h` — typedef shim to `std::` equivalents |
-| Threading spine | `CThread : public QThread`, `QSemaphore`, `QMutex` | `patches/002-cthread-sync.patch` — `start()` calls `run()` directly; primitives stubbed to no-ops |
-| I/O | `QIODevice` in Raptor parser | `patches/003-raptor-istream.patch` — replaced with `raptor_new_iostream_from_string()` |
-| Network | `Source/Network/HTTP/CQt*` | Excluded from build entirely |
-
-All changes to `vendor/konclude/` are captured as `.patch` files and applied at build time. The submodule itself stays clean.
-
-### Repository structure
-
-```text
-vendor/konclude/          git submodule — upstream Konclude source (LGPLv3)
-patches/
-  001-qt-compat-header.patch   adds #include "QtCompat.h" to 141 kernel headers
-  002-cthread-sync.patch       replaces Qt threading spine (25 files)
-  003-raptor-istream.patch     replaces QIODevice with raptor_new_iostream_from_string
-src/
-  compat/QtCompat.h            Qt→std:: type shim (containers, QMutex, QSemaphore, …)
-  KoncludeReasoner.h/.cpp      C++ wrapper: loadNTriples / classify / getInferredNTriples
-  bindings.cpp                 Emscripten Embind bindings
-  CMakeLists.txt               kernel sources + WASM target
-scripts/
-  apply-patches.sh             idempotent patch applicator
-  build-raptor-wasm.sh         cross-compiles Raptor2 + librdf for WASM
-  generate-patches.sh          regenerates patches/* from vendor/ diffs
-tests/smoke/
-  smoke.mjs                    ESM smoke test (requires dist/ to be built)
-  raptor-smoke.c               standalone Raptor2 link verification
-CMakeLists.txt                 top-level CMake (conditionally includes emscripten.cmake)
-emscripten.cmake               Emscripten flags: ENVIRONMENT=worker, MODULARIZE=1, …
-Dockerfile                     emscripten/emsdk:3.1.73 + build deps
-docker-compose.yml             build / smoke-test / shell services
-```
-
-### Emscripten flags
-
-`ENVIRONMENT=node,worker` · `MODULARIZE=1` · `EXPORT_ES6=1` · `EXPORT_NAME=createKoncludeModule` · `NO_EXIT_RUNTIME=1` · `--bind` · `USE_PTHREADS=1` · `PTHREAD_POOL_SIZE=8` · `MALLOC=mimalloc` · `ASSERTIONS=0` · `DEMANGLE_SUPPORT=0` · `-flto`
-
-Pthreads are required — the KPSet classifier spins parallel saturation tasks; cooperative single-thread dispatch deadlocks (see `docs/solutions/architecture-patterns/`).
-
-### Patching workflow
-
-```bash
-# Apply patches to vendor/konclude/ before building (done automatically by docker compose run build)
-scripts/apply-patches.sh
-
-# Regenerate patches after editing vendor/konclude/ sources
-cd vendor/konclude
-# ... make changes ...
-git diff > ../../patches/NNN-description.patch
-git checkout -- .
-```
-
-## LGPL notice
-
-The WASM binary (`dist/konclude.wasm`) contains the Konclude reasoning kernel, which is © University of Ulm and released under **LGPLv3**. The TypeScript wrapper and build scripts in this repository are MIT-licensed.
-
-As required by LGPLv3 §4, the complete Konclude source with all applied modifications is available at `vendor/konclude/` (git submodule) together with `patches/` containing every change. To recompile: clone this repository with `--recurse-submodules` and run `docker compose run build`.
+See [NOTICE](NOTICE) for full third-party notices.
 
 > Liebig, T., Jaeger, M., Möller, R., & Möller, B. (2014). *Konclude: System Description.*
 > Web Semantics, 27–28, 78–85. doi:10.1016/j.websem.2014.06.003
 
 ## Acknowledgements
 
-Konclude was developed at the Institute of Artificial Intelligence, University of Ulm, by Thorsten Liebig, Murat Özcep, Stefan Wandelt, and others. All credit for the reasoning algorithm belongs to the Konclude authors. This package is an independent WebAssembly port.
+Konclude was developed at the Institute of Artificial Intelligence, University
+of Ulm, by Thorsten Liebig, Murat Özcep, Stefan Wandelt, and others. All
+credit for the reasoning algorithm belongs to the Konclude authors. This
+package is an independent WebAssembly port developed with AI assistance from
+[Claude](https://anthropic.com) (Anthropic).
