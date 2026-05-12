@@ -1,0 +1,515 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Ontology xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns="http://www.w3.org/2002/07/owl#" xmlns:xml="http://www.w3.org/XML/1998/namespace" xmlns:xsd="http://www.w3.org/2001/XMLSchema#">
+    <Prefix name="" IRI="http://www.w3.org/2002/07/owl#"/>
+    <Prefix name="owl" IRI="http://www.w3.org/2002/07/owl#"/>
+    <Prefix name="rdf" IRI="http://www.w3.org/1999/02/22-rdf-syntax-ns#"/>
+    <Prefix name="xml" IRI="http://www.w3.org/XML/1998/namespace"/>
+    <Prefix name="xsd" IRI="http://www.w3.org/2001/XMLSchema#"/>
+    <Prefix name="rdfs" IRI="http://www.w3.org/2000/01/rdf-schema#"/>
+    <Declaration>
+        <Class IRI="http://www.w3.org/2002/07/owl#Nothing"/>
+    </Declaration>
+    <Declaration>
+        <Class IRI="http://www.w3.org/2002/07/owl#Thing"/>
+    </Declaration>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#DomainEntity"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#DomainEntity"/>
+        <Class IRI="http://www.w3.org/2002/07/owl#Thing"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Person"/>
+    </Declaration>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#BloodRelation"/>
+    </Declaration>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Descendent"/>
+    </Declaration>
+    <EquivalentClasses>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Person"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#BloodRelation"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Descendent"/>
+    </EquivalentClasses>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Person"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#DomainEntity"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Sex"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Sex"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#DomainEntity"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Marriage"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Marriage"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#DomainEntity"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Ancestor"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Ancestor"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Person"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#PersonWithManySibling"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#PersonWithManySibling"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Person"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#InLaw"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#InLaw"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Person"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Man"/>
+    </Declaration>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#MaleDescendent"/>
+    </Declaration>
+    <EquivalentClasses>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Man"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#MaleDescendent"/>
+    </EquivalentClasses>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Man"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Person"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Woman"/>
+    </Declaration>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#FemaleDescendent"/>
+    </Declaration>
+    <EquivalentClasses>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Woman"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#FemaleDescendent"/>
+    </EquivalentClasses>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Woman"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Person"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Cousin"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Cousin"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Person"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Male"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Male"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Sex"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Female"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Female"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Sex"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#AncestorOfRobert"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#AncestorOfRobert"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Ancestor"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#MaleAncestor"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#MaleAncestor"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Ancestor"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Parent"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Parent"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Ancestor"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#FemaleAncestor"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#FemaleAncestor"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Ancestor"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#ParentInLaw"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#ParentInLaw"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#InLaw"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Spouse"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Spouse"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#InLaw"/>
+    </SubClassOf>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#MaleAncestor"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Man"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Husband"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Husband"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Man"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Uncle"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Uncle"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Man"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Son"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Son"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Man"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Daughter"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Daughter"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Woman"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#GreatAuntOfRobert"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#GreatAuntOfRobert"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Woman"/>
+    </SubClassOf>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#FemaleAncestor"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Woman"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Wife"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Wife"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Woman"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Aunt"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Aunt"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Woman"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#FirstCousin"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#FirstCousin"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Cousin"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#ThirdCousin"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#ThirdCousin"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Cousin"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#SecondCousin"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#SecondCousin"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Cousin"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#ForefatherOfRobert"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#ForefatherOfRobert"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#AncestorOfRobert"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#GreatGreatGrandparentOfRobert"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#GreatGreatGrandparentOfRobert"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#AncestorOfRobert"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#ForemotherOfRobert"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#ForemotherOfRobert"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#AncestorOfRobert"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#GrandparentOfRobert"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#GrandparentOfRobert"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#AncestorOfRobert"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#GreatGrandparentOfRobert"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#GreatGrandparentOfRobert"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#AncestorOfRobert"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Forefather"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Forefather"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#MaleAncestor"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Mother"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Mother"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Parent"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Grandparent"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Grandparent"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Parent"/>
+    </SubClassOf>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#ParentInLaw"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Parent"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Father"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Father"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Parent"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#ParentOfLargeFamily"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#ParentOfLargeFamily"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Parent"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#ParentOfSmallFamily"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#ParentOfSmallFamily"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Parent"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Foremother"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Foremother"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#FemaleAncestor"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#FatherInLaw"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#FatherInLaw"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#ParentInLaw"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#MotherInLaw"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#MotherInLaw"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#ParentInLaw"/>
+    </SubClassOf>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Husband"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Spouse"/>
+    </SubClassOf>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Wife"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Spouse"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#GreatUncle"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#GreatUncle"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Uncle"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#UncleOfRichard"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#UncleOfRichard"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Uncle"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#UncleOfRobert"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#UncleOfRobert"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Uncle"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#AuntOfRobert"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#AuntOfRobert"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Aunt"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#FirstCousinOfRobert"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#FirstCousinOfRobert"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#FirstCousin"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#FirstCousinOnceRemovedOfRobert"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#FirstCousinOnceRemovedOfRobert"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#FirstCousin"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#SecondCousinOfRobert"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#SecondCousinOfRobert"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#SecondCousin"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#GrandmotherOfRobert"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#GrandmotherOfRobert"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#GrandparentOfRobert"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#GrandfatherOfRobert"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#GrandfatherOfRobert"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#GrandparentOfRobert"/>
+    </SubClassOf>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#ForefatherOfRobert"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Forefather"/>
+    </SubClassOf>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Father"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Forefather"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#ForefatherOfRichard"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#ForefatherOfRichard"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Forefather"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Grandmother"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Grandmother"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Mother"/>
+    </SubClassOf>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#MotherInLaw"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Mother"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#GreatGrandparent"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#GreatGrandparent"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Grandparent"/>
+    </SubClassOf>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Grandmother"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Grandparent"/>
+    </SubClassOf>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#GrandparentOfRobert"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Grandparent"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Grandfather"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Grandfather"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Grandparent"/>
+    </SubClassOf>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#FatherInLaw"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Father"/>
+    </SubClassOf>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Grandfather"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Father"/>
+    </SubClassOf>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Mother"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Foremother"/>
+    </SubClassOf>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#ForemotherOfRobert"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Foremother"/>
+    </SubClassOf>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#GrandmotherOfRobert"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Grandmother"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#GreatGrandfather"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#GreatGrandfather"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#GreatGrandparent"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#GreatGreatGrandparent"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#GreatGreatGrandparent"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#GreatGrandparent"/>
+    </SubClassOf>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#GreatGrandparentOfRobert"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#GreatGrandparent"/>
+    </SubClassOf>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#GreatGrandfather"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Grandfather"/>
+    </SubClassOf>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#GrandfatherOfRobert"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#Grandfather"/>
+    </SubClassOf>
+    <SubClassOf>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#GreatGreatGrandparentOfRobert"/>
+        <Class IRI="http://www.co-ode.org/roberts/family-tree.owl#GreatGreatGrandparent"/>
+    </SubClassOf>
+</Ontology>
