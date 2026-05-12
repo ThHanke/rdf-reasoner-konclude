@@ -14,10 +14,12 @@
  */
 
 import type { Quad } from "@rdfjs/types";
-import { Writer, Parser } from "n3";
+import { Writer, Parser, Store, DataFactory } from "n3";
 
-export type { ReasoningOptions, ReasoningResult } from "./types.js";
-import type { ReasoningOptions } from "./types.js";
+export type { ReasoningOptions, ReasoningResult, StoreReasoningOptions } from "./types.js";
+export { INFERRED_GRAPH_IRI } from "./types.js";
+import type { ReasoningOptions, StoreReasoningOptions } from "./types.js";
+import { INFERRED_GRAPH_IRI } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Internal message types (mirroring ts/worker.ts)
@@ -179,15 +181,18 @@ export class RdfReasoner {
     });
   }
 
+  // -------------------------------------------------------------------------
+  // reason()
+  // -------------------------------------------------------------------------
+
+  /** Run OWL-DL reasoning over a Store. Inferred triples are written into
+   *  `opts.inferredGraph` (default `INFERRED_GRAPH_IRI`). The graph is cleared
+   *  before each call. Concurrent calls are serialized. */
+  reason(store: Store, opts?: StoreReasoningOptions): Promise<void>;
   /**
-   * Run OWL-DL reasoning over the provided quads.
+   * @deprecated Use `reason(store)` instead.
    *
-   * Mode behaviour:
-   *   - `"classify"` (default) — classify → return inferred quads
-   *   - `"consistency"` — classify → return [] (use `checkConsistency` for the
-   *     boolean result; `reason` is not the right method for this mode)
-   *   - `"full"` — classify → return inferred quads (same as "classify" for the
-   *     returned array; consistency information is not surfaced here)
+   * Run OWL-DL reasoning over the provided quads.
    *
    * Named graphs in the input are dropped (NTriples wire format is
    * triple-only). All returned quads are in the DefaultGraph.
@@ -195,7 +200,47 @@ export class RdfReasoner {
    * Concurrent calls are serialized: each call waits for the previous one to
    * complete before sending its first Worker message.
    */
-  reason(quads: Iterable<Quad>, opts?: ReasoningOptions): Promise<Quad[]> {
+  reason(quads: Iterable<Quad>, opts?: ReasoningOptions): Promise<Quad[]>;
+  reason(
+    input: Store | Iterable<Quad>,
+    opts?: StoreReasoningOptions | ReasoningOptions,
+  ): Promise<void> | Promise<Quad[]> {
+    if (input instanceof Store) {
+      return this._reasonOnStore(input, opts as StoreReasoningOptions | undefined);
+    }
+    return this._reasonOnQuads(input as Iterable<Quad>, opts as ReasoningOptions | undefined);
+  }
+
+  private _reasonOnStore(store: Store, opts?: StoreReasoningOptions): Promise<void> {
+    const result = this._queue.then(async () => {
+      const inferredGraphNode = DataFactory.namedNode(
+        opts?.inferredGraph ?? INFERRED_GRAPH_IRI,
+      );
+      store.removeQuads(store.getQuads(null, null, null, inferredGraphNode));
+
+      const allQuads = store.getQuads(null, null, null, null);
+      const ntriplesStr = await serializeToNTriples(allQuads);
+
+      await this._call("loadNTriples", ntriplesStr);
+      await this._call("classify");
+
+      const resultStr = (await this._call("getInferredNTriples")) as string;
+      const inferredQuads = await parseNTriples(resultStr);
+
+      for (const q of inferredQuads) {
+        store.addQuad(
+          DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode),
+        );
+      }
+    });
+    this._queue = result.then(
+      () => {},
+      () => {},
+    );
+    return result;
+  }
+
+  private _reasonOnQuads(quads: Iterable<Quad>, opts?: ReasoningOptions): Promise<Quad[]> {
     const result = this._queue.then(async () => {
       const mode = opts?.mode ?? "classify";
 
@@ -223,16 +268,39 @@ export class RdfReasoner {
     return result;
   }
 
+  // -------------------------------------------------------------------------
+  // classify()
+  // -------------------------------------------------------------------------
+
+  /** Classify a Store (alias for `reason(store)`). */
+  classify(store: Store, opts?: StoreReasoningOptions): Promise<void>;
   /**
+   * @deprecated Use `classify(store)` instead.
+   *
    * Classify the given quads (alias for `reason(quads, { mode: 'classify' })`).
    *
    * Returns the inferred rdfs:subClassOf quads in the default graph.
    */
-  classify(quads: Iterable<Quad>): Promise<Quad[]> {
-    return this.reason(quads, { mode: "classify" });
+  classify(quads: Iterable<Quad>): Promise<Quad[]>;
+  classify(
+    input: Store | Iterable<Quad>,
+    opts?: StoreReasoningOptions,
+  ): Promise<void> | Promise<Quad[]> {
+    if (input instanceof Store) {
+      return this.reason(input, opts);
+    }
+    return this.reason(input as Iterable<Quad>, { mode: "classify" });
   }
 
+  // -------------------------------------------------------------------------
+  // checkConsistency()
+  // -------------------------------------------------------------------------
+
+  /** Check consistency of a Store. Does not write inferred triples. */
+  checkConsistency(store: Store): Promise<boolean>;
   /**
+   * @deprecated Use `checkConsistency(store)` instead.
+   *
    * Check whether the given quads form a consistent ontology.
    *
    * Internally: loadNTriples → classify → isConsistent.
@@ -240,7 +308,11 @@ export class RdfReasoner {
    * Concurrent calls are serialized: each call waits for the previous one to
    * complete before sending its first Worker message.
    */
-  checkConsistency(quads: Iterable<Quad>): Promise<boolean> {
+  checkConsistency(quads: Iterable<Quad>): Promise<boolean>;
+  checkConsistency(input: Store | Iterable<Quad>): Promise<boolean> {
+    const quads = input instanceof Store
+      ? input.getQuads(null, null, null, null)
+      : input;
     const result = this._queue.then(async () => {
       const ntriplesStr = await serializeToNTriples(quads);
       await this._call("loadNTriples", ntriplesStr);
