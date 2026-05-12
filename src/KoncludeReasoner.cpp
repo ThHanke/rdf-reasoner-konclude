@@ -382,7 +382,7 @@ bool KoncludeReasoner::classify() {
 bool KoncludeReasoner::isConsistent() {
     CConsistence* cons = mImpl->mOntology->getConsistence();
     if (!cons) {
-        return true; // no consistency result yet — optimistically assume consistent
+        return true;
     }
     return cons->isOntologyConsistent();
 }

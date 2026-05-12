@@ -387,6 +387,78 @@ No tests required.
 
 ---
 
+### Unit 8 — Fix `checkConsistency()` (C++ + WASM rebuild required)
+
+**Status:** Blocking publish. Currently `checkConsistency()` silently returns `true`
+for any ontology, including inconsistent ones.
+
+**Root cause (diagnosed):**
+`classify()` requests `OPSCONSISTENCY` in the `prepareOntology` chain, but
+`mOntology->getConsistence()` is null after the step completes. `isConsistent()`
+falls back to `return true`. Likely cause: the consistency reasoner component
+is not wired into our `WasmReasonerManagerThread` / classifier factory, so the
+OPSCONSISTENCY step completes without populating `CConsistence`.
+
+**Files to change:**
+- `src/KoncludeReasoner.cpp` — diagnose why `getConsistence()` is null; wire in
+  the correct reasoner component or read consistency from processing step status
+
+**Diagnosis steps:**
+1. Add `fprintf(stderr, ...)` after `prepareOntology()` to print whether
+   `mOntology->getConsistence()` is null and what the OPSCONSISTENCY step status is.
+2. Check `COntologyProcessingStepData` for `OPSCONSISTENCY` step — does it have
+   `PSCOMPLETELYYPROCESSED` + `PSSUCESSFULL` set after classify()?
+3. If status shows inconsistency (`PSINCONSITENT` flag), read that flag in
+   `isConsistent()` instead of relying on `CConsistence`.
+
+**Alternative read path (if CConsistence stays null):**
+Read the processing step status directly instead of `CConsistence`:
+
+```cpp
+bool KoncludeReasoner::isConsistent() {
+    // Try CConsistence first (populated when full consistency reasoning ran).
+    CConsistence* cons = mImpl->mOntology->getConsistence();
+    if (cons) {
+        return cons->isOntologyConsistent();
+    }
+    // Fall back to processing step status flags.
+    COntologyProcessingStepDataVector* stepDataVec =
+        mImpl->mOntology->getProcessingSteps()->getOntologyProcessingStepDataVector();
+    COntologyProcessingStepData* stepData =
+        stepDataVec->getProcessingStepData(COntologyProcessingStep::OPSCONSISTENCY);
+    if (!stepData) return true;
+    auto* status = stepData->getProcessingStatus();
+    // PSINCONSITENT flag is set when Konclude detected an inconsistency.
+    if (status->hasPartialProcessingFlags(COntologyProcessingStatus::PSINCONSITENT)) {
+        return false;
+    }
+    if (status->hasPartialProcessingFlags(COntologyProcessingStatus::PSCOMPLETELYYPROCESSED)) {
+        return true;
+    }
+    return true; // not yet processed — optimistic
+}
+```
+
+**After C++ fix:**
+- `docker compose run --rm build` (full WASM rebuild, ~20–30 min cold, faster with ccache)
+- `sudo chown -R $USER dist/`
+- `npm run build`
+- Remove `it.skip` from 2 consistency tests in `tests/integration/consistency.test.ts`
+- `npm test` — all 73 tests must pass (0 skipped)
+- Re-run Unit 6 verification (pack --dry-run)
+- Then proceed to Unit 7 (publish)
+
+**Test scenarios:**
+
+| Scenario | Expected |
+| --- | --- |
+| `checkConsistency(inconsistentFixture)` | `false` |
+| `checkConsistency(consistentChain)` | `true` |
+| `checkConsistency(emptyOntology)` | `true` |
+| Concurrent calls serialized | both results correct |
+
+---
+
 ## Test Scenarios
 
 | Unit | Scenario | Mechanism |
@@ -398,6 +470,7 @@ No tests required.
 | 6 | `dist/` tarball includes all required files | `npm pack --dry-run` |
 | 6 | Repository URL resolves | `curl -I` check |
 | 7 | `npm info rdf-reasoner-konclude` returns `0.1.0` | Post-publish check |
+| 8 | `checkConsistency(inconsistentFixture)` returns `false` | Integration test |
 
 ---
 
@@ -405,11 +478,13 @@ No tests required.
 
 ```
 Unit 1 (cleanup) → Unit 2 (LICENSE/NOTICE) → Unit 3 (Node compat) →
-Unit 4 (README) → Unit 5 (package.json) → Unit 6 (verify) → Unit 7 (publish)
+Unit 4 (README) → Unit 5 (package.json) → Unit 8 (consistency fix + WASM rebuild) →
+Unit 6 (verify) → Unit 7 (publish)
 ```
 
 Units 2–5 have no dependencies on each other and can be done in any order after
-Unit 1. Unit 6 must follow all of 2–5. Unit 7 requires Unit 6 to pass.
+Unit 1. Unit 8 must precede Unit 6 and Unit 7. Unit 6 must follow all of 2–5 and 8.
+Unit 7 requires Unit 6 to pass.
 
 ---
 
