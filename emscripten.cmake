@@ -6,13 +6,21 @@
 set(KONCLUDE_WASM_OUTPUT_DIR "${CMAKE_SOURCE_DIR}/dist")
 
 set(KONCLUDE_EMSCRIPTEN_LINK_FLAGS
-    "-s ENVIRONMENT=worker"
-    "-s MODULARIZE=1"
-    "-s EXPORT_ES6=1"
-    "-s EXPORT_NAME=createKoncludeModule"
-    "-s ALLOW_MEMORY_GROWTH=1"
-    "-s NO_EXIT_RUNTIME=1"
+    "-fexceptions"
+    "-pthread"
+    "-sENVIRONMENT=node,worker"
+    "-sMODULARIZE=1"
+    "-sEXPORT_ES6=1"
+    "-sEXPORT_NAME=createKoncludeModule"
+    "-sINITIAL_MEMORY=1073741824"
+    "-sNO_EXIT_RUNTIME=1"
     "--bind"
-    "--oformat=mjs"
+    "-sUSE_PTHREADS=1"
+    "-sPTHREAD_POOL_SIZE=8"
+    "-sPTHREAD_POOL_SIZE_STRICT=2"
+    "-sMALLOC=mimalloc"
     "-Wl,--error-limit=0"
+    "-sNO_DISABLE_EXCEPTION_CATCHING"
+    "-sALLOW_BLOCKING_ON_MAIN_THREAD=1"
+    "-flto"
 )
