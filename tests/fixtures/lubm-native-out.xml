@@ -1,0 +1,320 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Ontology xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns="http://www.w3.org/2002/07/owl#" xmlns:xml="http://www.w3.org/XML/1998/namespace" xmlns:xsd="http://www.w3.org/2001/XMLSchema#">
+    <Prefix name="" IRI="http://www.w3.org/2002/07/owl#"/>
+    <Prefix name="owl" IRI="http://www.w3.org/2002/07/owl#"/>
+    <Prefix name="rdf" IRI="http://www.w3.org/1999/02/22-rdf-syntax-ns#"/>
+    <Prefix name="xml" IRI="http://www.w3.org/XML/1998/namespace"/>
+    <Prefix name="xsd" IRI="http://www.w3.org/2001/XMLSchema#"/>
+    <Prefix name="rdfs" IRI="http://www.w3.org/2000/01/rdf-schema#"/>
+    <Declaration>
+        <Class IRI="http://www.w3.org/2002/07/owl#Nothing"/>
+    </Declaration>
+    <Declaration>
+        <Class IRI="http://www.w3.org/2002/07/owl#Thing"/>
+    </Declaration>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Schedule"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Schedule"/>
+        <Class IRI="http://www.w3.org/2002/07/owl#Thing"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Publication"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Publication"/>
+        <Class IRI="http://www.w3.org/2002/07/owl#Thing"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Work"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Work"/>
+        <Class IRI="http://www.w3.org/2002/07/owl#Thing"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Organization"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Organization"/>
+        <Class IRI="http://www.w3.org/2002/07/owl#Thing"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Person"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Person"/>
+        <Class IRI="http://www.w3.org/2002/07/owl#Thing"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Book"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Book"/>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Publication"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Article"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Article"/>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Publication"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#UnofficialPublication"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#UnofficialPublication"/>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Publication"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Software"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Software"/>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Publication"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Manual"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Manual"/>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Publication"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Specification"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Specification"/>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Publication"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Research"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Research"/>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Work"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Course"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Course"/>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Work"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#University"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#University"/>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Organization"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Program"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Program"/>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Organization"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#ResearchGroup"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#ResearchGroup"/>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Organization"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#College"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#College"/>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Organization"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Department"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Department"/>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Organization"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Institute"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Institute"/>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Organization"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Student"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Student"/>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Person"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#TeachingAssistant"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#TeachingAssistant"/>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Person"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Employee"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Employee"/>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Person"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#ConferencePaper"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#ConferencePaper"/>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Article"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#TechnicalReport"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#TechnicalReport"/>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Article"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#JournalArticle"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#JournalArticle"/>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Article"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#GraduateCourse"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#GraduateCourse"/>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Course"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#ResearchAssistant"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#ResearchAssistant"/>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Student"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#UndergraduateStudent"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#UndergraduateStudent"/>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Student"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#GraduateStudent"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#GraduateStudent"/>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Student"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Director"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Director"/>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Employee"/>
+    </SubClassOf>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#ResearchAssistant"/>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Employee"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#AdministrativeStaff"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#AdministrativeStaff"/>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Employee"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Faculty"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Faculty"/>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Employee"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#ClericalStaff"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#ClericalStaff"/>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#AdministrativeStaff"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#SystemsStaff"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#SystemsStaff"/>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#AdministrativeStaff"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Lecturer"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Lecturer"/>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Faculty"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#PostDoc"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#PostDoc"/>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Faculty"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Professor"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Professor"/>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Faculty"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Dean"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Dean"/>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Professor"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#FullProfessor"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#FullProfessor"/>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Professor"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Chair"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Chair"/>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Professor"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#VisitingProfessor"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#VisitingProfessor"/>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Professor"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#AssociateProfessor"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#AssociateProfessor"/>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Professor"/>
+    </SubClassOf>
+    <Declaration>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#AssistantProfessor"/>
+    </Declaration>
+    <SubClassOf>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#AssistantProfessor"/>
+        <Class IRI="http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Professor"/>
+    </SubClassOf>
+</Ontology>
