@@ -15,6 +15,9 @@
 #include "QtCompat.h"
 
 #include <unordered_map>
+#include <unordered_set>
+#include <chrono>
+#include <cstdio>
 
 // ─── Konclude kernel headers ────────────────────────────────────────────────
 
@@ -227,6 +230,7 @@ KoncludeReasoner::~KoncludeReasoner() {
 //   5. Complete the building phase.
 //
 void KoncludeReasoner::loadNTriples(const std::string& ntriples) {
+    auto t0 = std::chrono::steady_clock::now();
     // Create an update builder that accumulates axioms into mOntology.
     CConcreteOntologyUpdateCollectorBuilder* builder =
         new CConcreteOntologyUpdateCollectorBuilder(mImpl->mOntology);
@@ -264,6 +268,10 @@ void KoncludeReasoner::loadNTriples(const std::string& ntriples) {
 
     // Mark as not yet classified (new data has been added).
     mImpl->mClassified = false;
+
+    double loadMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - t0).count();
+    fprintf(stderr, "{info} KoncludeReasoner >> Finished loading NTriples in %.0f ms\n", loadMs);
 }
 
 // classify ─────────────────────────────────────────────────────────────────────
@@ -286,6 +294,8 @@ bool KoncludeReasoner::classify() {
     if (mImpl->mLoadError) {
         return false;
     }
+
+    auto t0 = std::chrono::steady_clock::now();
 
     COntologyProcessingStepVector* stepVec =
         COntologyProcessingStepVector::getProcessingStepVectorInstance();
@@ -359,6 +369,11 @@ bool KoncludeReasoner::classify() {
         classifyStepData->getProcessingStatus()->hasPartialProcessingFlags(
             COntologyProcessingStatus::PSCOMPLETELYYPROCESSED);
     mImpl->mClassified = classified;
+
+    double classifyMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - t0).count();
+    fprintf(stderr, "{info} KoncludeReasoner >> Finished class classification in %.0f ms\n", classifyMs);
+
     return mImpl->mClassified;
 }
 
@@ -371,6 +386,15 @@ bool KoncludeReasoner::isConsistent() {
     }
     return cons->isOntologyConsistent();
 }
+
+// ─── PairHash for unordered dedup in getInferredNTriples ─────────────────────
+struct PairHash {
+    std::size_t operator()(const std::pair<std::string, std::string>& p) const {
+        std::size_t seed = std::hash<std::string>{}(p.first);
+        seed ^= std::hash<std::string>{}(p.second) + 0x9e3779b9u + (seed << 6) + (seed >> 2);
+        return seed;
+    }
+};
 
 // getInferredNTriples ──────────────────────────────────────────────────────────
 //
@@ -409,7 +433,7 @@ std::string KoncludeReasoner::getInferredNTriples() {
         "<http://www.w3.org/2002/07/owl#equivalentClass>";
 
     std::string result;
-    std::set<std::pair<std::string,std::string>> emitted;
+    std::unordered_set<std::pair<std::string,std::string>, PairHash> emitted;
 
     QHash<CConcept*, CHierarchyNode*>* nodeHash = taxonomy->getConceptHierarchyNodeHash();
     if (!nodeHash) {

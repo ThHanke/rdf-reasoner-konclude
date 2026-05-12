@@ -37,7 +37,7 @@ build_raptor2() {
     "--enable-serializers=ntriples" \
     --disable-gtk-doc \
     CC=emcc CXX=em++ AR=emar RANLIB=emranlib \
-    CFLAGS="-D__GLIBC__"
+    CFLAGS="-D__GLIBC__ -matomics -mbulk-memory -pthread -O3 -DNDEBUG -flto"
 
   echo "Building raptor2..."
   emmake make -j$(nproc)
@@ -78,7 +78,7 @@ build_rasqal() {
     --disable-gtk-doc \
     PKG_CONFIG_PATH="$WASM_PREFIX/lib/pkgconfig" \
     CC=emcc CXX=em++ AR=emar RANLIB=emranlib \
-    CFLAGS="-D__GLIBC__"
+    CFLAGS="-D__GLIBC__ -matomics -mbulk-memory -pthread -O3 -DNDEBUG -flto"
 
   echo "Building rasqal..."
   emmake make -j$(nproc)
@@ -126,7 +126,8 @@ build_librdf() {
     --without-bdb \
     --disable-gtk-doc \
     PKG_CONFIG_PATH="$WASM_PREFIX/lib/pkgconfig" \
-    CC=emcc CXX=em++ AR=emar RANLIB=emranlib
+    CC=emcc CXX=em++ AR=emar RANLIB=emranlib \
+    CFLAGS="-matomics -mbulk-memory -pthread -O3 -DNDEBUG -flto"
 
   echo "Building librdf..."
   emmake make -j$(nproc)

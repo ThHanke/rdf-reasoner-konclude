@@ -196,6 +196,42 @@ list(FILTER KERNEL_SOURCES EXCLUDE REGEX ".*/CStringHierarchyResult\\.cpp$")
 list(FILTER KERNEL_SOURCES EXCLUDE REGEX ".*/CStringSubStringsRelationResult\\.cpp$")
 
 # ---------------------------------------------------------------------------
+# 2b. Source overrides: exclude vendor files replaced by src/compat/overrides/
+#
+# Each overridden file has a WASM-specific replacement in src/compat/overrides/.
+# The vendor original is excluded from the glob, then the override is appended.
+# When updating the submodule, diff the vendor file against the override to
+# pick up any upstream fixes that should carry forward.
+# ---------------------------------------------------------------------------
+
+set(OVERRIDE_DIR "${CMAKE_SOURCE_DIR}/src/compat/overrides")
+
+# Concurrent overrides (threading model: synchronous BFS dispatch, no OS threads)
+list(FILTER KERNEL_SOURCES EXCLUDE REGEX ".*/Concurrent/CThread\\.cpp$")
+list(FILTER KERNEL_SOURCES EXCLUDE REGEX ".*/Concurrent/CIntervalThread\\.cpp$")
+list(APPEND KERNEL_SOURCES
+    "${OVERRIDE_DIR}/CThread.cpp"
+    "${OVERRIDE_DIR}/CIntervalThread.cpp"
+)
+
+# Parser overrides (QIODevice → string-based API; concurrent parser removed)
+list(FILTER KERNEL_SOURCES EXCLUDE REGEX ".*/Parser/CRDFRedlandRaptorParser\\.cpp$")
+list(FILTER KERNEL_SOURCES EXCLUDE REGEX ".*/Parser/CRDFRedlandRaptorSimpleConcurrentParser\\.cpp$")
+list(FILTER KERNEL_SOURCES EXCLUDE REGEX ".*/Parser/COntologyMultiAutoParsingLoader\\.cpp$")
+list(APPEND KERNEL_SOURCES
+    "${OVERRIDE_DIR}/CRDFRedlandRaptorParser.cpp"
+    "${OVERRIDE_DIR}/CRDFRedlandRaptorSimpleConcurrentParser.cpp"
+    "${OVERRIDE_DIR}/COntologyMultiAutoParsingLoader.cpp"
+)
+
+# CKoncludeInfo: vendor version requires revision-git.h (absent in WASM); use stub override.
+list(APPEND KERNEL_SOURCES "${OVERRIDE_DIR}/CKoncludeInfo.cpp")
+
+# STPU override: restores original semaphore-based blocking (pthreads build only).
+list(FILTER KERNEL_SOURCES EXCLUDE REGEX ".*/Scheduler/CSingleThreadTaskProcessorUnit\\.cpp$")
+list(APPEND KERNEL_SOURCES "${OVERRIDE_DIR}/CSingleThreadTaskProcessorUnit.cpp")
+
+# ---------------------------------------------------------------------------
 # 3. Static library: konclude_kernel
 # ---------------------------------------------------------------------------
 
@@ -205,6 +241,7 @@ target_compile_definitions(konclude_kernel
     PUBLIC
         KONCLUDE_REDLAND_INTEGRATION
         KONCLUDE_FORCE_ALL_DEBUG_DEACTIVATED
+        KONCLUDE_WASM_PTHREADS
 )
 
 target_include_directories(konclude_kernel
@@ -219,6 +256,9 @@ target_include_directories(konclude_kernel
 # aliases and macros are available without modifying vendor sources.
 target_compile_options(konclude_kernel PRIVATE
     "-include" "${CMAKE_SOURCE_DIR}/src/compat/QtCompat.h"
+    $<$<BOOL:${EMSCRIPTEN}>:-fexceptions>
+    $<$<BOOL:${EMSCRIPTEN}>:-pthread>
+    $<$<BOOL:${EMSCRIPTEN}>:-flto>
 )
 
 # Unit 6: raptor2 and librdf include paths on konclude_kernel
