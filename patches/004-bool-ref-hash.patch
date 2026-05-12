@@ -1,0 +1,16 @@
+diff --git a/Source/Reasoner/Preprocess/CExtractPropagationIntoCreationDirectionPreProcess.cpp b/Source/Reasoner/Preprocess/CExtractPropagationIntoCreationDirectionPreProcess.cpp
+index dc81e557..ed448e19 100644
+--- a/Source/Reasoner/Preprocess/CExtractPropagationIntoCreationDirectionPreProcess.cpp
++++ b/Source/Reasoner/Preprocess/CExtractPropagationIntoCreationDirectionPreProcess.cpp
+@@ -64,9 +64,8 @@ namespace Konclude {
+ 										bool superRoleNegation = superRoleIt->isNegated();
+ 										CRole* superRole = superRoleIt->getData();
+ 										if (!superRoleNegation) {
+-											bool& roleInserted = creationRoleHash[superRole];
+-											if (!roleInserted) {
+-												roleInserted = true;
++											if (!creationRoleHash.value(superRole, false)) {
++												creationRoleHash.insert(superRole, true);
+ 											}
+ 										}
+ 									}

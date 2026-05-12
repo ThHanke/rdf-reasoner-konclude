@@ -108,8 +108,12 @@ export async function handleMessage(
 
     switch (method) {
       case "loadNTriples": {
+        // Destroy the old C++ instance before each load so each reason() call
+        // starts from a fully clean state (manager thread + ontology).
+        destroyReasoner();
+        const freshReasoner = getOrCreateReasoner(mod);
         const ntriples = args[0] as string;
-        reasoner.loadNTriples(ntriples);
+        freshReasoner.loadNTriples(ntriples);
         result = true;
         break;
       }

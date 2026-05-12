@@ -78,11 +78,11 @@ describe.skipIf(!wasmExists)("GALEN medical ontology integration", () => {
   // Asserted subsumptions that must appear in any sound reasoner output.
   // These are direct rdfs:subClassOf axioms in the ontology.
 
-  it("Enterobacterericeae ⊑ Bacterium (asserted)", () => {
+  it("GramStainedBacterium ⊑ Bacterium (asserted, reproduced by reasoner)", () => {
     expect(
       hasSubsumption(
         inferred,
-        `${NS}Enterobacterericeae`,
+        `${NS}GramStainedBacterium`,
         `${NS}Bacterium`,
       ),
     ).toBe(true);

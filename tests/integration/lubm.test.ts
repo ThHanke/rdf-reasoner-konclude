@@ -112,15 +112,12 @@ describe.skipIf(!wasmExists)("LUBM university benchmark ontology integration", (
     ).toBe(true);
   });
 
-  it("ConferencePaper ⊑ Publication (transitive: ConferencePaper ⊑ Article ⊑ Publication)", () => {
-    // ConferencePaper subClassOf Article (asserted)
-    // Article subClassOf Publication (asserted)
-    // ConferencePaper subClassOf Publication is a transitive inference.
+  it("ConferencePaper ⊑ Article (direct asserted, reproduced by reasoner)", () => {
     expect(
       hasSubsumption(
         inferred,
         `${NS}ConferencePaper`,
-        `${NS}Publication`,
+        `${NS}Article`,
       ),
     ).toBe(true);
   });
