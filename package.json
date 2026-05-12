@@ -9,6 +9,7 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
+      "node": "./dist/index.node.mjs",
       "import": "./dist/index.js"
     },
     "./worker": {
@@ -19,15 +20,18 @@
   },
   "files": [
     "dist",
-    "NOTICE"
+    "NOTICE",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=18"
   },
   "scripts": {
     "build": "tsc",
+    "postbuild": "cp ts/worker-node.mjs dist/worker-node.mjs && cp ts/index.node.mjs dist/index.node.mjs",
     "test": "vitest run",
-    "apply-patches": "bash scripts/apply-patches.sh"
+    "apply-patches": "bash scripts/apply-patches.sh",
+    "bench": "node tests/bench/bench.mjs"
   },
   "peerDependencies": {
     "@rdfjs/types": ">=2.0",
@@ -41,7 +45,7 @@
     "vitest": "^4.0.0",
     "@types/node": "^20.0.0"
   },
-  "license": "MIT",
+  "license": "LGPL-3.0-or-later",
   "keywords": [
     "owl",
     "owl-dl",
@@ -53,6 +57,9 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/rdf-reasoner-konclude/rdf-reasoner-konclude"
+    "url": "https://github.com/ThHanke/rdf-reasoner-konclude"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
