@@ -55,10 +55,7 @@ describe.skipIf(!wasmExists)("Consistency checking integration", () => {
     reasoner?.terminate();
   });
 
-  // Known issue: classify() does not trigger Konclude's consistency-checking
-  // pipeline — CConsistence is never populated, so isConsistent() always
-  // returns true. Requires a dedicated C++ consistency entrypoint + WASM rebuild.
-  it.skip("inconsistent ontology (A ⊑ B, A ⊑ ¬B) → checkConsistency() returns false", async () => {
+  it("inconsistent ontology (ex:a rdf:type owl:Nothing) → checkConsistency() returns false", async () => {
     const quads = loadFixture("inconsistent.nt");
     const consistent = await reasoner.checkConsistency(quads);
 
@@ -90,8 +87,7 @@ describe.skipIf(!wasmExists)("Consistency checking integration", () => {
     expect(consistent).toBe(true);
   });
 
-  // Skipped: depends on inconsistency detection working (see above).
-  it.skip("concurrent classify() and checkConsistency() calls are serialized", async () => {
+  it("concurrent classify() and checkConsistency() calls are serialized", async () => {
     // Fire both calls simultaneously — they must not interleave their
     // loadNTriples → classify sequences inside the Worker.
     const consistentNt = `
