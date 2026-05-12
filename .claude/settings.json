@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C /home/hanke/rdf-reasoner-konclude/vendor/konclude checkout HEAD -- .)",
+      "Bash(git -C /home/hanke/rdf-reasoner-konclude/vendor/konclude status --short)"
+    ]
+  }
+}

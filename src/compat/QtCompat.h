@@ -116,98 +116,220 @@ using uint = unsigned int;
 template<typename T>
 uint qHash(const T& key, uint seed = 0);
 
-// QHasherFn: calls qHash(key) via ADL + the generic fallback above.
+// QHasherFn: calls qHash(key) via ADL.
+// Must call 1-arg qHash so ADL resolves custom per-type overloads (e.g.
+// CRedlandNodeHasher) rather than the generic byte-hash 2-arg fallback.
+//
+// Pointer types use std::hash<K> directly to avoid ODR violations: qHash(T*)
+// is defined late in this header, so different TUs may resolve the qHash(k)
+// call to different overloads (pointer vs. generic), causing inconsistent
+// bucket assignment inside std::unordered_set. std::hash<T*> is always
+// available and consistent across all TUs.
 template<typename K>
 struct QHasherFn {
     std::size_t operator()(const K& k) const {
-        return static_cast<std::size_t>(qHash(k, 0u));
+        if constexpr (std::is_pointer_v<K>) {
+            return std::hash<K>{}(k);
+        } else {
+            return static_cast<std::size_t>(qHash(k));
+        }
     }
 };
 
-// QHash non-const iterator wrapper — *it gives value (Qt convention)
-template<typename K, typename V>
-struct QHashIterator {
-    typename std::unordered_map<K,V,QHasherFn<K>>::iterator it;
-    QHashIterator() = default;
-    explicit QHashIterator(typename std::unordered_map<K,V,QHasherFn<K>>::iterator i) : it(i) {}
-    const K& key()   const { return it->first; }
-    V& value()       const { return it->second; }
-    QHashIterator& operator++() { ++it; return *this; }
-    bool operator==(const QHashIterator& o) const { return it == o.it; }
-    bool operator!=(const QHashIterator& o) const { return it != o.it; }
-    V& operator*() const { return it->second; }
-    V* operator->() const { return &it->second; }
-};
-
-// QHash const iterator wrapper — *it gives value (Qt convention)
-template<typename K, typename V>
-struct QHashConstIterator {
-    typename std::unordered_map<K,V,QHasherFn<K>>::const_iterator it;
-    QHashConstIterator() = default;
-    explicit QHashConstIterator(typename std::unordered_map<K,V,QHasherFn<K>>::const_iterator i) : it(i) {}
-    // Allow non-const → const conversion
-    QHashConstIterator(const QHashIterator<K,V>& o) : it(o.it) {}
-    const K& key()   const { return it->first; }
-    const V& value() const { return it->second; }
-    QHashConstIterator& operator++() { ++it; return *this; }
-    bool operator==(const QHashConstIterator& o) const { return it == o.it; }
-    bool operator!=(const QHashConstIterator& o) const { return it != o.it; }
-    const V& operator*() const { return it->second; }
-    const V* operator->() const { return &it->second; }
-};
+// QHash backed by unordered_map<K, vector<V>>.
+//
+// std::unordered_multimap's internal linked-list node management crashes in
+// Emscripten WASM for large ontologies (GALEN, Roberts Family) with "memory
+// access out of bounds".  Using a vector-per-key avoids that STL internals
+// path entirely.
+//
+// Invariant: every key in mData has a non-empty bucket vector.
+// - insert(k,v):      single-value — replaces entire bucket with {v}.
+// - insertMulti(k,v): multi-value  — appends v to the bucket.
+// - values(k):        returns all values for k.
+// - count(k):         number of values stored for k.
+// - operator[]:       get-or-create first element, single-value semantics.
 
 template<typename K, typename V>
-struct QHash : public std::unordered_map<K, V, QHasherFn<K>> {
-    using Base = std::unordered_map<K, V, QHasherFn<K>>;
-    using Base::Base;
-    using const_iterator = QHashConstIterator<K,V>;
-    using iterator       = QHashIterator<K,V>;
-    bool contains(const K& k) const { return Base::count(k) > 0; }
+struct QHash {
+private:
+    using Bucket = std::vector<V>;
+    using Map    = std::unordered_map<K, Bucket, QHasherFn<K>>;
+    Map mData;
+
+public:
+    // ── Flat iterators: each step yields one (key, value) pair ───────────────
+    struct const_iterator {
+        typename Map::const_iterator outerIt, outerEnd;
+        std::size_t idx = 0;
+
+        const_iterator() = default;
+        const_iterator(typename Map::const_iterator o,
+                       typename Map::const_iterator e, std::size_t i = 0)
+            : outerIt(o), outerEnd(e), idx(i) {}
+
+        const K& key() const { return outerIt->first; }
+        // vector<bool> specialisation: operator[] returns a proxy, not bool&.
+        // For bool, return by value to avoid binding a const-ref to a dying
+        // proxy temporary.  For all other V, return by const-ref (cheap, safe).
+        using CRef = std::conditional_t<std::is_same_v<V,bool>, bool, const V&>;
+        CRef value()            const { return outerIt->second[idx]; }
+        CRef operator*()        const { return outerIt->second[idx]; }
+        const V* operator->() const { return &outerIt->second[idx]; }
+
+        const_iterator& operator++() {
+            if (++idx >= outerIt->second.size()) { ++outerIt; idx = 0; }
+            return *this;
+        }
+        bool operator==(const const_iterator& o) const {
+            bool ae = (outerIt == outerEnd), be = (o.outerIt == o.outerEnd);
+            if (ae || be) return ae && be;
+            return outerIt == o.outerIt && idx == o.idx;
+        }
+        bool operator!=(const const_iterator& o) const { return !(*this == o); }
+    };
+
+    struct iterator {
+        typename Map::iterator outerIt, outerEnd;
+        std::size_t idx = 0;
+
+        iterator() = default;
+        iterator(typename Map::iterator o,
+                 typename Map::iterator e, std::size_t i = 0)
+            : outerIt(o), outerEnd(e), idx(i) {}
+
+        const K& key() const { return outerIt->first; }
+        using MRef = std::conditional_t<std::is_same_v<V,bool>, bool, V&>;
+        MRef value()      const { return outerIt->second[idx]; }
+        MRef operator*() const { return outerIt->second[idx]; }
+        V* operator->() const { return &outerIt->second[idx]; }
+
+        iterator& operator++() {
+            if (++idx >= outerIt->second.size()) { ++outerIt; idx = 0; }
+            return *this;
+        }
+        bool operator==(const iterator& o) const {
+            bool ae = (outerIt == outerEnd), be = (o.outerIt == o.outerEnd);
+            if (ae || be) return ae && be;
+            return outerIt == o.outerIt && idx == o.idx;
+        }
+        bool operator!=(const iterator& o) const { return !(*this == o); }
+
+        operator const_iterator() const {
+            return const_iterator(
+                typename Map::const_iterator(outerIt),
+                typename Map::const_iterator(outerEnd),
+                idx);
+        }
+    };
+
+    // ── Core API ─────────────────────────────────────────────────────────────
+
+    bool contains(const K& k) const { return mData.count(k) > 0; }
+    bool isEmpty()            const { return mData.empty(); }
+    void detach()                   {}
+
+    int size() const {
+        int n = 0;
+        for (auto& kv : mData) n += (int)kv.second.size();
+        return n;
+    }
+    int count() const { return size(); }
+    int count(const K& k) const {
+        auto it = mData.find(k);
+        return it == mData.end() ? 0 : (int)it->second.size();
+    }
+
     V value(const K& k, const V& def = V{}) const {
-        auto it = Base::find(k);
-        return it != Base::end() ? it->second : def;
+        auto it = mData.find(k);
+        return (it == mData.end() || it->second.empty()) ? def : it->second[0];
     }
+
     QList<V> values() const {
-        QList<V> r; r.reserve(Base::size());
-        for (auto it = Base::cbegin(); it != Base::cend(); ++it) r.push_back(it->second);
+        QList<V> r;
+        for (auto& kv : mData) for (auto& v : kv.second) r.push_back(v);
         return r;
+    }
+    QList<V> values(const K& k) const {
+        auto it = mData.find(k);
+        if (it == mData.end()) return {};
+        return QList<V>(it->second.begin(), it->second.end());
     }
     QList<K> keys() const {
-        QList<K> r; r.reserve(Base::size());
-        for (auto it = Base::cbegin(); it != Base::cend(); ++it) r.push_back(it->first);
+        QList<K> r;
+        for (auto& kv : mData)
+            for (std::size_t i = 0; i < kv.second.size(); ++i)
+                r.push_back(kv.first);
         return r;
     }
-    void insert(const K& k, const V& v) { Base::insert_or_assign(k, v); }
-    void insertMulti(const K& k, const V& v) { Base::insert_or_assign(k, v); }
-    void remove(const K& k) { Base::erase(k); }
-    int count(const K& k) const { return Base::count(k) > 0 ? 1 : 0; }
-    int count() const { return static_cast<int>(Base::size()); }
-    int size() const { return static_cast<int>(Base::size()); }
-    bool isEmpty() const { return Base::empty(); }
-    void detach() {} // Qt COW no-op
-    // values(key): return list of values for key (single-value hash returns 0 or 1 elements)
-    QList<V> values(const K& k) const {
-        QList<V> r;
-        auto it = Base::find(k);
-        if (it != Base::end()) r.push_back(it->second);
+    QList<K> uniqueKeys() const {
+        QList<K> r; r.reserve(mData.size());
+        for (auto& kv : mData) r.push_back(kv.first);
         return r;
     }
-    const_iterator constBegin() const { return const_iterator(Base::cbegin()); }
-    const_iterator constEnd()   const { return const_iterator(Base::cend()); }
+
+    // Single-value: replace whole bucket with one element.
+    void insert(const K& k, const V& v) { mData[k] = {v}; }
+
+    // Multi-value: append without erasing existing entries.
+    void insertMulti(const K& k, const V& v) { mData[k].push_back(v); }
+
+    void remove(const K& k) { mData.erase(k); }
+    void clear()            { mData.clear(); }
+
+    // decltype(auto) lets vector<bool>'s proxy type pass through so that
+    // hash[key] = value; works even when V is bool.
+    decltype(auto) operator[](const K& k) {
+        auto& b = mData[k];
+        if (b.empty()) b.push_back(V{});
+        return b[0];
+    }
+    const V& operator[](const K& k) const {
+        static const V defVal{};
+        auto it = mData.find(k);
+        return (it == mData.end() || it->second.empty()) ? defVal : it->second[0];
+    }
+
+    // ── Iterators ─────────────────────────────────────────────────────────────
+    const_iterator constBegin() const { return const_iterator(mData.cbegin(), mData.cend()); }
+    const_iterator constEnd()   const { return const_iterator(mData.cend(),  mData.cend()); }
     const_iterator begin()  const { return constBegin(); }
     const_iterator end()    const { return constEnd(); }
-    iterator begin() { return iterator(Base::begin()); }
-    iterator end()   { return iterator(Base::end()); }
-    iterator erase(iterator pos) { return iterator(Base::erase(pos.it)); }
-    // find / constFind returning our iterator type
-    const_iterator find(const K& k) const { return const_iterator(Base::find(k)); }
-    iterator find(const K& k)       { return iterator(Base::find(k)); }
-    const_iterator constFind(const K& k) const { return const_iterator(Base::find(k)); }
-    // uniqueKeys: in this single-value map all keys are already unique
-    QList<K> uniqueKeys() const { return keys(); }
+    iterator begin() { return iterator(mData.begin(), mData.end()); }
+    iterator end()   { return iterator(mData.end(),   mData.end()); }
+
+    const_iterator find(const K& k) const {
+        auto it = mData.find(k);
+        return (it == mData.end()) ? constEnd()
+                                   : const_iterator(it, mData.cend());
+    }
+    iterator find(const K& k) {
+        auto it = mData.find(k);
+        return (it == mData.end()) ? end()
+                                   : iterator(it, mData.end());
+    }
+    const_iterator constFind(const K& k) const { return find(k); }
+
+    // Erase the single (key, value[idx]) entry the iterator points at.
+    // Returns iterator to the next entry.
+    iterator erase(iterator pos) {
+        auto& bucket = pos.outerIt->second;
+        bucket.erase(bucket.begin() + (std::ptrdiff_t)pos.idx);
+        if (bucket.empty()) {
+            auto next = mData.erase(pos.outerIt);
+            return iterator(next, mData.end(), 0);
+        }
+        if (pos.idx < bucket.size()) {
+            return iterator(pos.outerIt, mData.end(), pos.idx);
+        }
+        auto next = pos.outerIt; ++next;
+        return iterator(next, mData.end(), 0);
+    }
+
     void unite(const QHash<K,V>& o) {
-        for (auto it = o.Base::cbegin(); it != o.Base::cend(); ++it)
-            Base::insert_or_assign(it->first, it->second);
+        for (auto& kv : o.mData)
+            for (auto& v : kv.second)
+                mData[kv.first].push_back(v);
     }
 };
 
@@ -1063,20 +1185,31 @@ uint qHash(const T& key, uint seed) {
         return static_cast<uint>(h);
     }
 }
-// Specializations for pointer types
+// Pointer hash matching Qt5's quintptr-based implementation:
+// On 64-bit: fold high 32 bits into low 32 bits (Qt: uint(((v>>31)^v)&~0U)).
+// On 32-bit (WASM): just cast — Qt does the same.
 template<typename T>
 uint qHash(T* key, uint seed = 0) {
-    return static_cast<uint>(std::hash<void*>{}(static_cast<void*>(key)) ^ static_cast<size_t>(seed));
+    uintptr_t v = reinterpret_cast<uintptr_t>(key);
+    uint h;
+    if constexpr (sizeof(uintptr_t) > sizeof(uint)) {
+        h = static_cast<uint>((v ^ (v >> 31)) & static_cast<uintptr_t>(~static_cast<uint>(0)));
+    } else {
+        h = static_cast<uint>(v);
+    }
+    return h ^ seed;
 }
 inline uint qHash(const std::string& key, uint seed = 0) {
     return static_cast<uint>(std::hash<std::string>{}(key) ^ static_cast<size_t>(seed));
 }
-template<typename A, typename B>
-uint qHash(const std::pair<A, B>& p, uint seed = 0) {
-    return qHash(p.first, seed) ^ qHash(p.second, seed + 1);
-}
 inline uint qHash(bool b, uint seed = 0) {
     return static_cast<uint>(b) ^ seed;
+}
+// Pair hashing — more specialized than qHash(const T&, uint) so overload
+// resolution always picks this for std::pair arguments.
+template<typename A, typename B>
+inline uint qHash(const std::pair<A, B>& p, uint seed = 0) {
+    return qHash(p.first, seed) ^ qHash(p.second, seed + 1);
 }
 
 
@@ -1086,9 +1219,12 @@ inline uint qHash(bool b, uint seed = 0) {
 #include <cstdlib>
 #include <cstring>
 inline void* qMallocAligned(std::size_t size, std::size_t alignment) {
+    // alignment==0 means "no alignment requirement" — Qt falls back to malloc.
+    if (alignment == 0) return std::malloc(size);
     return aligned_alloc(alignment, (size + alignment - 1) & ~(alignment - 1));
 }
 inline void* qReallocAligned(void* old_ptr, std::size_t new_size, std::size_t /*old_size*/, std::size_t alignment) {
+    if (alignment == 0) return std::realloc(old_ptr, new_size);
     std::size_t aligned_size = (new_size + alignment - 1) & ~(alignment - 1);
     void* new_ptr = aligned_alloc(alignment, aligned_size);
     if (new_ptr && old_ptr) std::memcpy(new_ptr, old_ptr, new_size);
@@ -1177,32 +1313,38 @@ inline void qt_noop() {}
 #define Q_CLASSINFO(name, value)
 
 // ---------------------------------------------------------------------------
-// QAtomicPointer stub — single-threaded: plain pointer is sufficient.
+// QAtomicPointer — std::atomic<T*> for thread-safe pointer operations.
 // ---------------------------------------------------------------------------
 
+#include <atomic>
+#include <thread>
 template<typename T>
 struct QAtomicPointer {
-    T* ptr = nullptr;
+    std::atomic<T*> ptr{nullptr};
     QAtomicPointer() = default;
     explicit QAtomicPointer(T* p) : ptr(p) {}
-    T* load() const { return ptr; }
-    T* loadAcquire() const { return ptr; }
-    void store(T* p) { ptr = p; }
-    void storeRelaxed(T* p) { ptr = p; }
+    T* load() const               { return ptr.load(std::memory_order_acquire); }
+    T* loadAcquire() const        { return ptr.load(std::memory_order_acquire); }
+    void store(T* p)              { ptr.store(p, std::memory_order_release); }
+    void storeRelaxed(T* p)       { ptr.store(p, std::memory_order_relaxed); }
     bool testAndSetOrdered(T* expected, T* newVal) {
-        if (ptr == expected) { ptr = newVal; return true; }
-        return false;
+        return ptr.compare_exchange_strong(expected, newVal, std::memory_order_seq_cst);
     }
-    bool testAndSetRelaxed(T* expected, T* newVal) { return testAndSetOrdered(expected, newVal); }
-    // fetchAndAddRelaxed(0) is the Qt idiom for an atomic load
-    T* fetchAndAddRelaxed(std::ptrdiff_t) { return ptr; }
-    // fetchAndStoreOrdered: atomically set to newVal and return old value
-    T* fetchAndStoreOrdered(T* newVal) { T* old = ptr; ptr = newVal; return old; }
-    T* fetchAndStoreRelaxed(T* newVal) { return fetchAndStoreOrdered(newVal); }
-    operator T*() const { return ptr; }
-    T* operator->() const { return ptr; }
-    QAtomicPointer& operator=(T* p) { ptr = p; return *this; }
-    QAtomicPointer& operator=(std::nullptr_t) { ptr = nullptr; return *this; }
+    bool testAndSetRelaxed(T* expected, T* newVal) {
+        return ptr.compare_exchange_weak(expected, newVal, std::memory_order_relaxed);
+    }
+    T* fetchAndAddRelaxed(std::ptrdiff_t) { return ptr.load(std::memory_order_relaxed); }
+    T* fetchAndStoreOrdered(T* newVal) { return ptr.exchange(newVal, std::memory_order_seq_cst); }
+    T* fetchAndStoreRelaxed(T* newVal) { return ptr.exchange(newVal, std::memory_order_relaxed); }
+    operator T*() const           { return ptr.load(std::memory_order_acquire); }
+    T* operator->() const         { return ptr.load(std::memory_order_acquire); }
+    QAtomicPointer& operator=(T* p) { store(p); return *this; }
+    QAtomicPointer& operator=(std::nullptr_t) { store(nullptr); return *this; }
+    QAtomicPointer(const QAtomicPointer& o) : ptr(o.ptr.load(std::memory_order_relaxed)) {}
+    QAtomicPointer& operator=(const QAtomicPointer& o) {
+        ptr.store(o.ptr.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        return *this;
+    }
 };
 
 // ---------------------------------------------------------------------------
@@ -1275,37 +1417,101 @@ struct QDateTime {
 };
 
 // ---------------------------------------------------------------------------
-// Threading primitive stubs — no-ops for WASM single-threaded execution.
-// In a Web Worker context there is only one thread; all locking reduces to
-// straight-through execution.
+// Threading primitives — POSIX pthreads implementations.
 // ---------------------------------------------------------------------------
+
+#include <pthread.h>
+#include <time.h>
 
 struct QMutex {
     enum RecursionMode { NonRecursive = 0, Recursive = 1 };
-    explicit QMutex(RecursionMode = NonRecursive) {}
-    void lock() {}
-    void unlock() {}
-    bool tryLock(int = 0) { return true; }
+    pthread_mutex_t m;
+    explicit QMutex(RecursionMode mode = NonRecursive) {
+        pthread_mutexattr_t a;
+        pthread_mutexattr_init(&a);
+        if (mode == Recursive)
+            pthread_mutexattr_settype(&a, PTHREAD_MUTEX_RECURSIVE);
+        pthread_mutex_init(&m, &a);
+        pthread_mutexattr_destroy(&a);
+    }
+    ~QMutex() { pthread_mutex_destroy(&m); }
+    void lock()   { pthread_mutex_lock(&m); }
+    void unlock() { pthread_mutex_unlock(&m); }
+    bool tryLock(int = 0) { return pthread_mutex_trylock(&m) == 0; }
 };
 
 struct QMutexLocker {
-    explicit QMutexLocker(QMutex*) {}
+    QMutex* mMutex;
+    explicit QMutexLocker(QMutex* m) : mMutex(m) { if (m) m->lock(); }
+    ~QMutexLocker() { if (mMutex) mMutex->unlock(); }
 };
 
 struct QSemaphore {
-    explicit QSemaphore(int = 0) {}
-    void acquire(int = 1) {}
-    void release(int = 1) {}
-    bool tryAcquire(int = 1, int = 0) { return true; }
-    int available() const { return 1; }
+    pthread_mutex_t mtx;
+    pthread_cond_t  cv;
+    int count;
+    explicit QSemaphore(int n = 0) : count(n) {
+        pthread_mutex_init(&mtx, nullptr);
+        pthread_cond_init(&cv, nullptr);
+    }
+    ~QSemaphore() {
+        pthread_mutex_destroy(&mtx);
+        pthread_cond_destroy(&cv);
+    }
+    void release(int n = 1) {
+        pthread_mutex_lock(&mtx);
+        count += n;
+        pthread_cond_broadcast(&cv);
+        pthread_mutex_unlock(&mtx);
+    }
+    void acquire(int n = 1) {
+        pthread_mutex_lock(&mtx);
+        while (count < n) pthread_cond_wait(&cv, &mtx);
+        count -= n;
+        pthread_mutex_unlock(&mtx);
+    }
+    bool tryAcquire(int n = 1, int ms = -1) {
+        pthread_mutex_lock(&mtx);
+        if (ms == 0) {
+            // Non-blocking: Qt tryAcquire() with no timeout arg
+            bool ok = count >= n;
+            if (ok) count -= n;
+            pthread_mutex_unlock(&mtx);
+            return ok;
+        } else if (ms < 0) {
+            // Infinite wait: Qt tryAcquire(n, -1) means "wait forever"
+            while (count < n) pthread_cond_wait(&cv, &mtx);
+            count -= n;
+            pthread_mutex_unlock(&mtx);
+            return true;
+        }
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        ts.tv_sec  += ms / 1000;
+        ts.tv_nsec += (long)(ms % 1000) * 1000000L;
+        if (ts.tv_nsec >= 1000000000L) { ts.tv_sec++; ts.tv_nsec -= 1000000000L; }
+        while (count < n) {
+            if (pthread_cond_timedwait(&cv, &mtx, &ts) != 0) {
+                pthread_mutex_unlock(&mtx);
+                return false;
+            }
+        }
+        count -= n;
+        pthread_mutex_unlock(&mtx);
+        return true;
+    }
+    int available() const { return count; }
 };
 
 struct QReadWriteLock {
-    void lockForRead() {}
-    void lockForWrite() {}
-    void unlock() {}
-    bool tryLockForRead(int = 0) { return true; }
-    bool tryLockForWrite(int = 0) { return true; }
+    pthread_rwlock_t rw;
+    QReadWriteLock()  { pthread_rwlock_init(&rw, nullptr); }
+    ~QReadWriteLock() { pthread_rwlock_destroy(&rw); }
+    void lockForRead()  { pthread_rwlock_rdlock(&rw); }
+    void lockForWrite() { pthread_rwlock_wrlock(&rw); }
+    void unlock()       { pthread_rwlock_unlock(&rw); }
+    bool tryLockForRead(int = 0)  { return pthread_rwlock_tryrdlock(&rw) == 0; }
+    bool tryLockForWrite(int = 0) { return pthread_rwlock_trywrlock(&rw) == 0; }
 };
 
 struct QTimer {
@@ -1315,9 +1521,20 @@ struct QTimer {
 };
 
 struct QWaitCondition {
-    void wait(QMutex*, unsigned long = ULONG_MAX) {}
-    void wakeOne() {}
-    void wakeAll() {}
+    pthread_cond_t cv;
+    QWaitCondition()  { pthread_cond_init(&cv, nullptr); }
+    ~QWaitCondition() { pthread_cond_destroy(&cv); }
+    void wait(QMutex* m, unsigned long ms = ULONG_MAX) {
+        if (ms == ULONG_MAX) { pthread_cond_wait(&cv, &m->m); return; }
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        ts.tv_sec  += ms / 1000;
+        ts.tv_nsec += (long)(ms % 1000) * 1000000L;
+        if (ts.tv_nsec >= 1000000000L) { ts.tv_sec++; ts.tv_nsec -= 1000000000L; }
+        pthread_cond_timedwait(&cv, &m->m, &ts);
+    }
+    void wakeOne() { pthread_cond_signal(&cv); }
+    void wakeAll() { pthread_cond_broadcast(&cv); }
 };
 
 // ---------------------------------------------------------------------------
@@ -1426,23 +1643,21 @@ struct QThreadPool {
 };
 
 // ---------------------------------------------------------------------------
-// QtConcurrent stub — synchronous execution (WASM is single-threaded).
-// The return value of run() is discarded at all current call-sites, so a
-// void return is sufficient.  If a QFuture<T> is ever needed, add a minimal
-// QFuture<T> struct and adjust the return type accordingly.
+// QtConcurrent stub — pthreads build: run() dispatches to a detached thread.
+// blockingMap/blockingMapped remain synchronous (single-threaded saturation).
 // ---------------------------------------------------------------------------
 
 namespace QtConcurrent {
-    // Overload accepting a QThreadPool* as first arg (ignored in WASM)
+    // Overload accepting a QThreadPool* as first arg (ignored)
     template<typename F, typename... Args>
     void run(QThreadPool*, F&& f, Args&&... args) {
-        f(std::forward<Args>(args)...);
+        std::thread(std::forward<F>(f), std::forward<Args>(args)...).detach();
     }
 
     // Plain overload without pool
     template<typename F, typename... Args>
     void run(F&& f, Args&&... args) {
-        f(std::forward<Args>(args)...);
+        std::thread(std::forward<F>(f), std::forward<Args>(args)...).detach();
     }
 
     // blockingMap: synchronous iteration (WASM is single-threaded)
@@ -1711,35 +1926,42 @@ struct QXmlStreamWriter {
 };
 
 // ---------------------------------------------------------------------------
-// QAtomicInteger / QAtomicInt — single-threaded WASM: plain value suffices
+// QAtomicInteger / QAtomicInt — std::atomic<T> for thread-safe integer ops.
 // ---------------------------------------------------------------------------
 template<typename T>
 struct QAtomicInteger {
-    T val = 0;
+    std::atomic<T> val{0};
     QAtomicInteger() = default;
     QAtomicInteger(T v) : val(v) {}
-    T load() const { return val; }
-    T loadAcquire() const { return val; }
-    T loadRelaxed() const { return val; }
-    void store(T v) { val = v; }
-    void storeRelaxed(T v) { val = v; }
-    void storeRelease(T v) { val = v; }
+    T load() const                { return val.load(std::memory_order_acquire); }
+    T loadAcquire() const         { return val.load(std::memory_order_acquire); }
+    T loadRelaxed() const         { return val.load(std::memory_order_relaxed); }
+    void store(T v)               { val.store(v, std::memory_order_release); }
+    void storeRelaxed(T v)        { val.store(v, std::memory_order_relaxed); }
+    void storeRelease(T v)        { val.store(v, std::memory_order_release); }
     bool testAndSetOrdered(T expected, T newVal) {
-        if (val == expected) { val = newVal; return true; } return false;
+        return val.compare_exchange_strong(expected, newVal, std::memory_order_seq_cst);
     }
-    bool testAndSetRelaxed(T expected, T newVal) { return testAndSetOrdered(expected, newVal); }
-    T fetchAndAddOrdered(T a)  { T old = val; val += a; return old; }
-    T fetchAndAddAcquire(T a)  { return fetchAndAddOrdered(a); }
-    T fetchAndAddRelease(T a)  { return fetchAndAddOrdered(a); }
-    T fetchAndAddRelaxed(T a)  { return fetchAndAddOrdered(a); }
-    T operator++()    { return ++val; }
-    T operator++(int) { return val++; }
-    T operator--()    { return --val; }
-    T operator--(int) { return val--; }
-    operator T() const { return val; }
-    // Qt ref/deref for intrusive reference counting
-    bool ref()  { return ++val != T(0); }
-    bool deref() { return --val != T(0); }
+    bool testAndSetRelaxed(T expected, T newVal) {
+        return val.compare_exchange_weak(expected, newVal, std::memory_order_relaxed);
+    }
+    T fetchAndAddOrdered(T a)  { return val.fetch_add(a, std::memory_order_seq_cst); }
+    T fetchAndAddAcquire(T a)  { return val.fetch_add(a, std::memory_order_acquire); }
+    T fetchAndAddRelease(T a)  { return val.fetch_add(a, std::memory_order_release); }
+    T fetchAndAddRelaxed(T a)  { return val.fetch_add(a, std::memory_order_relaxed); }
+    T operator++()    { return val.fetch_add(1, std::memory_order_acq_rel) + 1; }
+    T operator++(int) { return val.fetch_add(1, std::memory_order_acq_rel); }
+    T operator--()    { return val.fetch_sub(1, std::memory_order_acq_rel) - 1; }
+    T operator--(int) { return val.fetch_sub(1, std::memory_order_acq_rel); }
+    operator T() const { return val.load(std::memory_order_acquire); }
+    bool ref()   { return val.fetch_add(1, std::memory_order_acq_rel) + 1 != T(0); }
+    bool deref() { return val.fetch_sub(1, std::memory_order_acq_rel) - 1 != T(0); }
+    QAtomicInteger& operator=(T v) { val.store(v, std::memory_order_release); return *this; }
+    QAtomicInteger(const QAtomicInteger& o) : val(o.val.load(std::memory_order_relaxed)) {}
+    QAtomicInteger& operator=(const QAtomicInteger& o) {
+        val.store(o.val.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        return *this;
+    }
 };
 using QAtomicInt = QAtomicInteger<int>;
 
@@ -1934,5 +2156,22 @@ struct QNetworkAccessManager : public QObject {
     QNetworkReply* get(const QNetworkRequest&) { return new QNetworkReply(); }
     QNetworkReply* post(const QNetworkRequest&, const QByteArray&) { return new QNetworkReply(); }
 };
+
+// ---------------------------------------------------------------------------
+// qHash lookup fix for Konclude::Reasoner::Kernel::Process namespace.
+//
+// CProcessSetHasher (defined in Process) calls qHash(*it) on CPROCESSSET<T>
+// elements.  Process also defines a custom qHash(CProcessSetHasher<T>) which
+// stops unqualified lookup at the Process namespace level — so the global
+// qHash overloads (including the pair template above) would never be found.
+//
+// "using ::qHash" re-exports all global qHash overloads into the Process
+// namespace, so lookup starting in Process sees both the custom overload and
+// the full global set.  Only Process needs this; Container has no local qHash
+// declarations so its lookup naturally reaches the global scope.
+// ---------------------------------------------------------------------------
+namespace Konclude { namespace Reasoner { namespace Kernel { namespace Process {
+    using ::qHash;
+}}}}
 
 #endif // QTCOMPAT_H

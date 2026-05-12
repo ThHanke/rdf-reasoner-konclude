@@ -1,5 +1,15 @@
 // tests/smoke/smoke.mjs
-import createKoncludeModule from '../../dist/konclude.mjs';
+// Usage: node tests/smoke/smoke.mjs
+
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const FIXTURES = join(__dirname, '../fixtures');
+const modulePath = join(__dirname, '../../dist/konclude.mjs');
+
+const { default: createKoncludeModule } = await import(modulePath);
 
 const NTriples_3class = `
 <http://example.org/A> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
@@ -9,39 +19,47 @@ const NTriples_3class = `
 <http://example.org/B> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/C> .
 `.trim();
 
-async function main() {
-  const Module = await createKoncludeModule();
+async function classify(Module, name, nts) {
+  console.log(`[${name}] creating reasoner...`);
   const reasoner = new Module.KoncludeReasoner();
-
   try {
-    reasoner.loadNTriples(NTriples_3class);
-
+    console.log(`[${name}] loading NTriples...`);
+    for (const nt of nts) reasoner.loadNTriples(nt);
+    console.log(`[${name}] calling classify()...`);
     const ok = reasoner.classify();
-    if (!ok) {
-      console.error('classify() returned false');
-      process.exit(1);
-    }
-
+    console.log(`[${name}] classify() returned: ${ok}`);
+    if (!ok) throw new Error('classify() returned false');
     const inferred = reasoner.getInferredNTriples();
-    console.log('Inferred NTriples:\n' + inferred);
-
-    const hasASubC = inferred.includes('<http://example.org/A>') &&
-                     inferred.includes('<http://example.org/C>') &&
-                     inferred.includes('subClassOf');
-
-    if (!hasASubC) {
-      console.error('FAIL: A subClassOf C not found in inferred triples');
-      console.error('Got:', inferred);
-      process.exit(1);
-    }
-
-    console.log('PASS: A subClassOf C correctly inferred');
+    console.log(`PASS: ${name}`);
+    return inferred;
+  } finally {
     reasoner.delete();
-  } catch (e) {
-    console.error('Error:', e);
-    reasoner.delete();
-    process.exit(1);
   }
 }
 
-main().catch(e => { console.error(e); process.exit(1); });
+async function main() {
+  console.log('Loading WASM module...');
+  const Module = await createKoncludeModule();
+  console.log('Module ready.\n');
+
+  // 3-class transitive subsumption (inline ontology)
+  {
+    const inferred = await classify(Module, '3-class transitivity', [NTriples_3class]);
+    if (!inferred.includes('<http://example.org/A>') ||
+        !inferred.includes('<http://example.org/C>') ||
+        !inferred.includes('subClassOf')) {
+      console.error('FAIL: A subClassOf C not found\nGot:', inferred);
+      process.exit(1);
+    }
+  }
+
+  // LUBM, GALEN, Roberts — all must classify without hanging
+  await classify(Module, 'LUBM', [readFileSync(join(FIXTURES, 'lubm.nt'), 'utf8')]);
+  await classify(Module, 'GALEN', [readFileSync(join(FIXTURES, 'galen.nt'), 'utf8')]);
+  await classify(Module, 'Roberts Family', [readFileSync(join(FIXTURES, 'roberts-family.nt'), 'utf8')]);
+
+  console.log('\nAll smoke tests passed.');
+  process.exit(0);
+}
+
+main().catch(e => { console.error('FAIL:', e); process.exit(1); });

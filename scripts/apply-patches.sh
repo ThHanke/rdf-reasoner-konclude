@@ -1,14 +1,8 @@
 #!/usr/bin/env bash
 # apply-patches.sh — Apply all patches in patches/ to vendor/konclude/
-# Idempotent: skips patches that are already applied.
-#
-# Host workflow (git available):
-#   Run this script directly; uses `git apply` which handles git-generated patches.
-#   Creates vendor/konclude/.patches-applied sentinel when done.
-#
-# Docker workflow (git context unavailable):
-#   Mount the worktree at /src. The sentinel file from the host run is visible.
-#   The script exits early if the sentinel exists, skipping all patching.
+# Idempotent: skips patches that are already applied (sentinel file guards re-runs).
+# Called automatically at CMake configure time via execute_process in CMakeLists.txt.
+# Can also be run manually: bash scripts/apply-patches.sh
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -53,13 +47,13 @@ fi
 for PATCH in "${PATCHES[@]}"; do
     PATCH_NAME="$(basename "${PATCH}")"
     # Check if already applied.
-    if git -C "${VENDOR_DIR}" apply --check --reverse "${PATCH}" 2>/dev/null; then
+    if git -C "${VENDOR_DIR}" apply --check --reverse --ignore-whitespace "${PATCH}" 2>/dev/null; then
         echo "SKIP: ${PATCH_NAME} (already applied)"
         continue
     fi
     # Check if it applies cleanly.
-    if git -C "${VENDOR_DIR}" apply --check "${PATCH}" 2>/dev/null; then
-        if ! git -C "${VENDOR_DIR}" apply "${PATCH}" 2>/tmp/apply_error.log; then
+    if git -C "${VENDOR_DIR}" apply --check --ignore-whitespace "${PATCH}" 2>/dev/null; then
+        if ! git -C "${VENDOR_DIR}" apply --ignore-whitespace "${PATCH}" 2>/tmp/apply_error.log; then
             echo "ERROR: ${PATCH_NAME} failed to apply." >&2
             cat /tmp/apply_error.log >&2
             exit 1

@@ -7,8 +7,8 @@ services:
     working_dir: /src
     command: >
       bash -c "
+        exec > >(tee build.log) 2>&1 &&
         mkdir -p dist &&
-        scripts/apply-patches.sh &&
         scripts/build-raptor-wasm.sh &&
         emcmake cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache . &&
         emmake make -C build -j4

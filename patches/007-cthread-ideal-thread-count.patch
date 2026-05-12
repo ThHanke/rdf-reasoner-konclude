@@ -1,0 +1,16 @@
+--- a/Source/Concurrent/CThread.h
++++ b/Source/Concurrent/CThread.h
+@@ -112,7 +112,12 @@
+ 				bool wait(unsigned long /*msecs*/ = ULONG_MAX) { return true; }
+
+ 				// WASM: no real threads; always 1
+-				static int idealThreadCount() { return 1; }
++				static int idealThreadCount() {
++					int n = (int)std::thread::hardware_concurrency();
++					if (n < 2) n = 2;
++					if (n > 8) n = 8;
++					return n;
++				}
+
+
+ 			// protected methods
