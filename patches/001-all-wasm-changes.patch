@@ -555,14 +555,6 @@ diff --git a/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifie
 index b518e242..ba2bfde1 100644
 --- a/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.cpp
 +++ b/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.cpp
-@@ -18,6 +18,7 @@
-  *
-  */
- 
-+#include <cstdio>
- #include "COptimizedKPSetClassSubsumptionClassifierThread.h"
- 
- namespace Konclude {
 @@ -753,8 +754,6 @@ namespace Konclude {
  
  
@@ -663,14 +655,6 @@ diff --git a/Source/Reasoner/Classifier/COptimizedSubClassSubsumptionClassifierT
 index 66cd4808..6f77e2da 100644
 --- a/Source/Reasoner/Classifier/COptimizedSubClassSubsumptionClassifierThread.cpp
 +++ b/Source/Reasoner/Classifier/COptimizedSubClassSubsumptionClassifierThread.cpp
-@@ -18,6 +18,7 @@
-  *
-  */
- 
-+#include <cstdio>
- #include "COptimizedSubClassSubsumptionClassifierThread.h"
- 
- namespace Konclude {
 @@ -146,10 +147,10 @@ namespace Konclude {
  			void COptimizedSubClassSubsumptionClassifierThread::createObviousSubsumptionSatisfiableTestingOrder(COptimizedSubClassOntologyClassificationItem* ontClassItem) {
  				CPrecomputation* precomputation = ontClassItem->getOntology()->getPrecomputation();
@@ -817,18 +801,6 @@ index a0ca9e05..4ac5ef25 100644
  
  
  // Namespace includes
-diff --git a/Source/Reasoner/Classifier/Events/CTestCalculatedCallbackEvent.cpp b/Source/Reasoner/Classifier/Events/CTestCalculatedCallbackEvent.cpp
-index 0fd268fc..5c0dd9aa 100644
---- a/Source/Reasoner/Classifier/Events/CTestCalculatedCallbackEvent.cpp
-+++ b/Source/Reasoner/Classifier/Events/CTestCalculatedCallbackEvent.cpp
-@@ -18,6 +18,7 @@
-  *
-  */
- 
-+#include <cstdio>
- #include "CTestCalculatedCallbackEvent.h"
- 
- 
 diff --git a/Source/Reasoner/Consistiser/CIncrementalPrecomputationThread.h b/Source/Reasoner/Consistiser/CIncrementalPrecomputationThread.h
 index 6fd9e756..7fdfadc5 100644
 --- a/Source/Reasoner/Consistiser/CIncrementalPrecomputationThread.h
@@ -1698,7 +1670,7 @@ diff --git a/Source/Reasoner/Kernel/Manager/CReasonerManagerThread.cpp b/Source/
 index edb47ad7..fef18ac0 100644
 --- a/Source/Reasoner/Kernel/Manager/CReasonerManagerThread.cpp
 +++ b/Source/Reasoner/Kernel/Manager/CReasonerManagerThread.cpp
-@@ -1,1262 +1,1271 @@
+@@ -1,1262 +1,1263 @@
 -/*
 - *		Copyright (C) 2013-2015, 2019 by the Konclude Developer Team.
 - *
@@ -2981,7 +2953,6 @@ index edb47ad7..fef18ac0 100644
 + *
 + */
 +
-+#include <cstdio>
 +#include "CReasonerManagerThread.h"
 +
 +
@@ -3427,7 +3398,6 @@ index edb47ad7..fef18ac0 100644
 +
 +
 +				void CReasonerManagerThread::continueRequirementProcessing(CRequirementPreparingData* reqData, CConcreteOntology* ontology) {
-+					fprintf(stderr, "[DIAG] continueReqProc\n"); fflush(stderr);
 +					COntologyRequirementPreparingData* ontReqPrepData = reqData->getOntologyRequirementPreparingData(ontology);
 +					if (!ontReqPrepData->mCheckingReqList.isEmpty()) {
 +
@@ -3501,7 +3471,6 @@ index edb47ad7..fef18ac0 100644
 +							CConfigurationBase* config = ontology->getConfiguration();
 +							CPreprocessor* preprocessor = mPreprocessingManager->getPreprocessor(ontology,config);
 +							CRequirementProcessedCallbackEvent* reqProcCallbackEvent = new CRequirementProcessedCallbackEvent(this,ontology,reqData, COntologyProcessingStep::OPPREPROCESSOR);
-+							fprintf(stderr, "[DIAG] starting preprocess\n"); fflush(stderr);
 +							preprocessor->preprocess(ontology,config,ontReqPrepData->mPreprocessorReqList,reqProcCallbackEvent);
 +							ontReqPrepData->mCheckingReqList = ontReqPrepData->mPreprocessorReqList;
 +							ontReqPrepData->mPreprocessorReqList.clear();
@@ -3516,7 +3485,6 @@ index edb47ad7..fef18ac0 100644
 +							CConfigurationBase* config = ontology->getConfiguration();
 +							CPrecomputator* precomputer = mPrecomputationManager->getPrecomputator(ontology,config);
 +							CRequirementProcessedCallbackEvent* reqProcCallbackEvent = new CRequirementProcessedCallbackEvent(this,ontology,reqData, COntologyProcessingStep::OPPRECOMPUTER);
-+							fprintf(stderr, "[DIAG] starting precompute\n"); fflush(stderr);
 +							precomputer->precompute(ontology,config,ontReqPrepData->mPrecomputorReqList,reqProcCallbackEvent);
 +							ontReqPrepData->mCheckingReqList = ontReqPrepData->mPrecomputorReqList;
 +							ontReqPrepData->mCheckingProcessorType = COntologyProcessingStep::OPPRECOMPUTER;
@@ -3531,7 +3499,6 @@ index edb47ad7..fef18ac0 100644
 +							CConfigurationBase* config = ontology->getConfiguration();
 +							CSubsumptionClassifier* classClassifier = classificationMan->getClassClassifier(ontology,config);
 +							CRequirementProcessedCallbackEvent* reqProcCallbackEvent = new CRequirementProcessedCallbackEvent(this,ontology,reqData, COntologyProcessingStep::OPCLASSCLASSIFIER);
-+							fprintf(stderr, "[DIAG] starting classify\n"); fflush(stderr);
 +							classClassifier->classify(ontology,config,ontReqPrepData->mClassClassifierReqList,reqProcCallbackEvent);
 +							ontReqPrepData->mCheckingReqList = ontReqPrepData->mClassClassifierReqList;
 +							ontReqPrepData->mCheckingProcessorType = COntologyProcessingStep::OPCLASSCLASSIFIER;
@@ -3611,7 +3578,6 @@ index edb47ad7..fef18ac0 100644
 +					}
 +
 +					if (reqData->mDepCount <= 0) {
-+						fprintf(stderr, "[DIAG] depCount<=0, calling final callback\n"); fflush(stderr);
 +						if (reqData->mQuery) {
 +							initiateQueryReasoning(reqData->mQuery,reqData->mCallback,reqData->mReasoningData,reqData->mFailedReqList);
 +						} else {
@@ -3919,7 +3885,6 @@ index edb47ad7..fef18ac0 100644
 +
 +
 +				void CReasonerManagerThread::prepareSatisfiableBoxReasoning(CReasoningSatisfiableCalculationJobEvent *cbse) {
-+					fprintf(stderr, "[RMT] prepareSatisfiableBoxReasoning\n"); fflush(stderr);
 +
 +					CSatisfiableCalculationJob* calcJob = cbse->getSatisfiableCalculationJob();
 +					CCallbackData* callbackData = cbse->getCallbackData();
@@ -4004,7 +3969,6 @@ index edb47ad7..fef18ac0 100644
 +
 +
 +				void CReasonerManagerThread::finishSatisfiableBoxReasoning(CJobCalculatedSatisfiableCallbackEvent *cbsce) {
-+					fprintf(stderr, "[RMT] finishSatisfiableBoxReasoning\n"); fflush(stderr);
 +					CJobSatisfiableCallbackContextData *contextData = (CJobSatisfiableCallbackContextData *)cbsce->getCallbackDataContext();
 +
 +					CSatisfiableCalculationJob* satCalcJob = contextData->getSatisfiableCalculationJob();
@@ -4285,28 +4249,6 @@ index c8e17824..44acd8a5 100644
  
  
  // Namespace includes
-diff --git a/Source/Reasoner/Kernel/Manager/Events/CJobCalculatedSatisfiableCallbackEvent.cpp b/Source/Reasoner/Kernel/Manager/Events/CJobCalculatedSatisfiableCallbackEvent.cpp
-index 342eb488..fdc8e9d6 100644
---- a/Source/Reasoner/Kernel/Manager/Events/CJobCalculatedSatisfiableCallbackEvent.cpp
-+++ b/Source/Reasoner/Kernel/Manager/Events/CJobCalculatedSatisfiableCallbackEvent.cpp
-@@ -18,6 +18,7 @@
-  *
-  */
- 
-+#include <cstdio>
- #include "CJobCalculatedSatisfiableCallbackEvent.h"
- 
- 
-@@ -44,7 +45,9 @@ namespace Konclude {
- 
- 
- 					void CJobCalculatedSatisfiableCallbackEvent::doCallback() {
-+						fprintf(stderr, "[JCB] CJobCalculatedSatisfiableCallbackEvent::doCallback recThread=%p\n", (void*)recThread); fflush(stderr);
- 						recThread->postEvent(this);
-+						fprintf(stderr, "[JCB] postEvent returned\n"); fflush(stderr);
- 					}
- 
- 
 diff --git a/Source/Reasoner/Kernel/Manager/Events/CQueriedTaxonomyComputedCallbackEvent.h b/Source/Reasoner/Kernel/Manager/Events/CQueriedTaxonomyComputedCallbackEvent.h
 index 476d5a96..f2a2919a 100644
 --- a/Source/Reasoner/Kernel/Manager/Events/CQueriedTaxonomyComputedCallbackEvent.h
@@ -5113,46 +5055,20 @@ diff --git a/Source/Reasoner/Preprocess/CRequirementConfigPreprocessingThread.cp
 index 63646994..54d5233e 100644
 --- a/Source/Reasoner/Preprocess/CRequirementConfigPreprocessingThread.cpp
 +++ b/Source/Reasoner/Preprocess/CRequirementConfigPreprocessingThread.cpp
-@@ -18,6 +18,7 @@
-  *
-  */
- 
-+#include <cstdio>
- #include "CRequirementConfigPreprocessingThread.h"
- 
- 
-@@ -452,9 +453,10 @@ namespace Konclude {
+@@ -452,9 +453,8 @@ namespace Konclude {
  			bool CRequirementConfigPreprocessingThread::createPreprocess(CRequirementConfigPreprocessingItem* reqConfPreCompItem) {
  				CConcreteOntology* ontology = reqConfPreCompItem->getOntology();
  				CConfiguration* config = reqConfPreCompItem->getCalculationConfiguration();
 -
-+				fprintf(stderr, "[DIAG] createPreprocess: starting COntologyConfigDependedPreProcesser\n"); fflush(stderr);
  				COntologyConfigDependedPreProcesser ontConDepPreProcessor;
  				ontConDepPreProcessor.preprocess(ontology,config);
-+				fprintf(stderr, "[DIAG] createPreprocess: finished\n"); fflush(stderr);
  				return false;
  			}
  
-@@ -465,6 +467,7 @@ namespace Konclude {
- 
- 
- 			bool CRequirementConfigPreprocessingThread::finishOntologyPreprocessing(CRequirementConfigPreprocessingItem* reqConfPreCompItem) {
-+				fprintf(stderr, "[DIAG] finishOntologyPreprocessing called, allStepsFinished=%d\n", (int)reqConfPreCompItem->areAllStepFinished()); fflush(stderr);
- 				if (reqConfPreCompItem->areAllStepFinished()) {
- 					reqConfPreCompItem->setPreprocessingFinished(true);
- 					CConcreteOntology* ontology = reqConfPreCompItem->getOntology();
 diff --git a/Source/Reasoner/Preprocess/CRoleChainAutomataTransformationPreProcess.cpp b/Source/Reasoner/Preprocess/CRoleChainAutomataTransformationPreProcess.cpp
 index 4493d847..e88ef767 100644
 --- a/Source/Reasoner/Preprocess/CRoleChainAutomataTransformationPreProcess.cpp
 +++ b/Source/Reasoner/Preprocess/CRoleChainAutomataTransformationPreProcess.cpp
-@@ -18,6 +18,7 @@
-  *
-  */
- 
-+#include <cstdio>
- #include "CRoleChainAutomataTransformationPreProcess.h"
- 
- 
 @@ -972,7 +973,9 @@ namespace Konclude {
  				CRole* chainSuperRole = chainData.mRole;
  				if (chainSuperRole != role) {
@@ -5163,34 +5079,7 @@ index 4493d847..e88ef767 100644
  						if (chainLinkerIt->getData() == chainSuperRole) {
  							return true;
  						}
-@@ -1135,7 +1138,11 @@ namespace Konclude {
- 				//if (CIRIName::getRecentIRIName(role->getPropertyNameLinker()) == "#isInLawOf") {
- 				//	bool debug = true;
- 				//}
-+				fprintf(stderr, "[RCTP] addRecursiveTraversalData role=%p listSize=%d\n", (void*)role, (int)roleSubChainDataList.size());
-+				fflush(stderr);
- 				QList<CRoleSubRoleChainData> relevantChainDataList(getRelevantChainDataList(role,roleSubChainDataList));
-+				fprintf(stderr, "[RCTP] relevantSize=%d\n", (int)relevantChainDataList.size());
-+				fflush(stderr);
- 				CRecTravSubRoleChainDataItem& recTravSubRoleChainData = mRoleRecTravSubRoleChainDataHash[role];
- 				recTravSubRoleChainData.mRole = role;
- 				QHash<CRole*,bool> criticalRoleNegationHash;
-@@ -1144,10 +1151,14 @@ namespace Konclude {
- 					const CRoleSubRoleChainData& chainData(*it);
- 					criticalRecursiveTraversalRoles |= collectRecursiveTraversalCriticalRoles(role,chainData,&criticalRoleNegationHash);
- 				}
-+				fprintf(stderr, "[RCTP] criticalRoles=%d criticalCount=%d\n", (int)criticalRecursiveTraversalRoles, (int)criticalRoleNegationHash.size());
-+				fflush(stderr);
- 				if (!criticalRecursiveTraversalRoles) {
- 					recTravSubRoleChainData.mDirectSubRoleChainDataList = relevantChainDataList;
- 				} else {
- 					QHash<CRole*,bool> relevantCriticalRoleNegationHash(getRelevantRecursiveTraversalCriticalRoles(&criticalRoleNegationHash));
-+					fprintf(stderr, "[RCTP] relevantCriticalCount=%d\n", (int)relevantCriticalRoleNegationHash.size());
-+					fflush(stderr);
- 					for (QList<CRoleSubRoleChainData>::const_iterator it = relevantChainDataList.constBegin(), itEnd = relevantChainDataList.constEnd(); it != itEnd; ++it) {
- 						const CRoleSubRoleChainData& chainData(*it);
- 						if (!requiresRecursiveTraversalForRole(role,chainData,&relevantCriticalRoleNegationHash)) {
-@@ -1157,12 +1168,14 @@ namespace Konclude {
+@@ -1157,12 +1168,12 @@ namespace Konclude {
  					for (QHash<CRole*,bool>::const_iterator it = relevantCriticalRoleNegationHash.constBegin(), itEnd = relevantCriticalRoleNegationHash.constEnd(); it != itEnd; ++it) {
  						CRole* role(it.key());
  						bool inversed(it.value());
@@ -5201,8 +5090,6 @@ index 4493d847..e88ef767 100644
  						recTravSubRoleChainData.mRecTraversalSubRoleList.append(TRoleNegationPair(role,inversed));
  					}
  				}
-+				fprintf(stderr, "[RCTP] addRecursiveTraversalData done\n");
-+				fflush(stderr);
  				return this;
  			}
  

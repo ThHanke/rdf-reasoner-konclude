@@ -18,38 +18,57 @@ The reasoning runs in a Web Worker backed by a WebAssembly binary compiled from 
 
 ## Build
 
-Requires Docker.
+Requires Docker. On a cold cache the full build (Raptor2 + librdf cross-compile + kernel compile) takes roughly 20–30 minutes. Subsequent runs use `ccache` and skip already-built Raptor/librdf, so they are much faster.
+
+### First-time build
 
 ```bash
-# First time: cross-compile Raptor2/librdf for WASM and build the kernel
-docker compose run build
+# 1. Populate the submodule and pre-apply Qt-removal patches on the host.
+#    (Docker runs as root; pre-patching on the host avoids a git safe.directory
+#    error inside the container.)
+git submodule update --init
+bash scripts/apply-patches.sh
 
-# Verify: smoke-test a 3-class ontology (A⊑B + B⊑C → A⊑C)
-docker compose run smoke-test
+# 2. Cross-compile Raptor2/librdf for WASM and build the kernel.
+docker compose run --rm build
+
+# 3. Verify: smoke-test a 3-class ontology (A⊑B + B⊑C → A⊑C)
+docker compose run --rm smoke-test
+```
+
+### Incremental builds
+
+```bash
+# Re-run only the kernel compile (Raptor/librdf already built in wasm-libs/).
+docker compose run --rm build
 
 # Interactive shell inside the build container
-docker compose run shell
+docker compose run --rm shell
 ```
 
 `docker compose run build` runs in sequence:
-1. `scripts/apply-patches.sh` — applies Qt-removal patches over `vendor/konclude/`
-2. `scripts/build-raptor-wasm.sh` — cross-compiles Raptor2 2.0.16 + librdf 1.0.17 to WASM (installs to `wasm-libs/`)
+1. `scripts/apply-patches.sh` — idempotent; skips if sentinel `vendor/konclude/.patches-applied` exists
+2. `scripts/build-raptor-wasm.sh` — cross-compiles Raptor2 2.0.16 + librdf 1.0.17 to WASM (skips if `wasm-libs/lib/libraptor2.a` exists)
 3. `emcmake cmake -B build` + `emmake make` — compiles the kernel to `dist/konclude.mjs` + `dist/konclude.wasm`
 
 Build output: `dist/konclude.mjs` (ES module, `EXPORT_NAME=createKoncludeModule`) and `dist/konclude.wasm`.
 
+### Patching notes
+
+The vendor/konclude submodule source files have CRLF line endings (upstream Windows repository). Patches are applied with `git apply --ignore-whitespace` to handle this. Two of the three patches overlap on six header files; `patches/001-qt-compat-header.patch` excludes those files and `patches/002-cthread-sync.patch` handles them with a full Qt-include replacement.
+
 ## Integration Test Results
 
-| Ontology | Expressiveness | NTriples | Konclude desktop | WASM (after build) |
-|---|---|---|---|---|
-| LUBM schema | SHI | 307 | 7 ms | — |
-| GALEN | SHIF | 30 817 | 164 ms | — |
-| Roberts family | SROIQ | 3 866 | 2 082 ms | — |
-| LUBM data | SHI | TBD | — | — |
+| Ontology | Expressiveness | NTriples | Native classify | WASM classify | WASM total | Ratio |
+|---|---|---|---|---|---|---|
+| LUBM schema | SHI | 307 | 7 ms | 374 ms | 405 ms | ~53× |
+| GALEN | SHIF | 30 817 | 164 ms | 726 ms | 1 340 ms | ~4.4× |
+| Roberts family | SROIQ | 3 866 | 2 082 ms | 3 613 ms | 3 681 ms | ~1.7× |
+| LUBM schema + data | SHI | 100 850 | — | 1 289 ms | 2 897 ms | — |
 
-- Konclude desktop timings = precompute + classify, measured on `konclude/konclude:latest` Docker image (native binary)
-- WASM times measured after `docker compose run build` produces `dist/konclude.wasm`
-- Fixtures converted from `vendor/konclude/Tests/` via `scripts/convert-test-fixtures.sh`
+- Native classify = precompute + classify on `konclude/konclude:latest` Docker image (native Linux binary)
+- WASM classify = `classify()` wall time in Node.js v20 with Emscripten pthreads; WASM total adds `loadNTriples` + `getInferredNTriples`
+- LUBM and Roberts output: exact match with native. Galen: same triple count (3 287), 14 synonym-representative differences (loading-order dependent, semantically identical)
 
 ## Architecture
 
