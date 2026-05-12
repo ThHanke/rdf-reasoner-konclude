@@ -1,5 +1,7 @@
 import type { Quad } from "@rdfjs/types";
 
+export const INFERRED_GRAPH_IRI = "urn:konclude:inferred";
+
 /**
  * Options controlling how the reasoning operation is performed.
  */
@@ -14,6 +16,21 @@ export interface ReasoningOptions {
    * Defaults to `"classify"`.
    */
   mode?: "classify" | "consistency" | "full";
+}
+
+/**
+ * Options for Store-based reasoning operations.
+ *
+ * Extends `ReasoningOptions` with a named-graph IRI for inferred triples.
+ */
+export interface StoreReasoningOptions extends ReasoningOptions {
+  /**
+   * Named graph IRI where inferred triples are written.
+   *
+   * Defaults to `INFERRED_GRAPH_IRI` (`"urn:konclude:inferred"`).
+   * The graph is cleared before each call; do not store ontology triples here.
+   */
+  inferredGraph?: string;
 }
 
 /**
