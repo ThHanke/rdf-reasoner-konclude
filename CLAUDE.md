@@ -91,8 +91,6 @@ No Comlink — custom typed dispatch over raw `postMessage`. `KoncludeReasoner` 
 
 ## Plan Documents
 
-Implementation plan: [docs/plans/2026-05-04-001-feat-konclude-wasm-npm-port-plan.md](docs/plans/2026-05-04-001-feat-konclude-wasm-npm-port-plan.md)
-
 Origin requirements: [2026-05-04-007-rdf-reasoner-konclude-requirements.md](2026-05-04-007-rdf-reasoner-konclude-requirements.md)
 
 Documented solutions: `docs/solutions/` — architecture decisions, solved bugs, and best practices; organized by category with YAML frontmatter (`module`, `tags`, `problem_type`).
