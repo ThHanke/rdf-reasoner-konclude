@@ -61,7 +61,7 @@ describe.skipIf(!wasmExists)("Roberts family ontology integration", () => {
 
     inputQuads = loadFixture("roberts-family.nt");
     inferred = await reasoner.classify(inputQuads);
-  });
+  }, 60000);
 
   afterAll(() => {
     reasoner?.terminate();

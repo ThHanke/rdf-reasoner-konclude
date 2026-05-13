@@ -242,6 +242,7 @@ target_compile_definitions(konclude_kernel
         KONCLUDE_REDLAND_INTEGRATION
         KONCLUDE_FORCE_ALL_DEBUG_DEACTIVATED
         KONCLUDE_WASM_PTHREADS
+        WASM_LOG_LEVEL=1
 )
 
 target_include_directories(konclude_kernel

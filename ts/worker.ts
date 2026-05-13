@@ -154,6 +154,24 @@ export async function handleMessage(
         result = reasoner.getInferredNTriples();
         break;
       }
+      case "getInferredTripleBuffer": {
+        const len = reasoner.buildInferredTripleBuffer();
+        if (len > 0) {
+          const ptr = reasoner.getInferredTripleBufferPtr();
+          // HEAPU8.buffer may be a SharedArrayBuffer — slice() copies to a plain AB
+          // so it can be transferred (postMessage transfer requires non-shared AB).
+          const plain = mod.HEAPU8.slice(ptr, ptr + len);
+          const response: WorkerResponse = { id, result: plain.buffer };
+          self.postMessage(response, [plain.buffer]);
+          return;
+        }
+        // Empty result — 8-byte combined buffer: [strTableLen=4][count=0]
+        const empty = new ArrayBuffer(8);
+        new DataView(empty).setUint32(0, 4, true);
+        const emptyResponse: WorkerResponse = { id, result: empty };
+        self.postMessage(emptyResponse, [empty]);
+        return;
+      }
       case "reset": {
         destroyReasoner();
         result = true;

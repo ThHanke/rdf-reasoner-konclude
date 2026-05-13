@@ -14,8 +14,8 @@
  */
 
 import type { Quad } from "@rdfjs/types";
-import { Parser, Store, DataFactory } from "n3";
-import { encodeToBuffers } from "./intern.js";
+import { Store, DataFactory } from "n3";
+import { encodeToBuffers, decodeBuffers } from "./intern.js";
 
 export type { ReasoningOptions, ReasoningResult, StoreReasoningOptions } from "./types.js";
 export { INFERRED_GRAPH_IRI } from "./types.js";
@@ -51,22 +51,6 @@ type WorkerInboundMessage =
   | WorkerReadyMessage
   | WorkerInitErrorMessage
   | WorkerResponse;
-
-// ---------------------------------------------------------------------------
-// NTriples output parser (input side uses binary protocol via ts/intern.ts)
-// ---------------------------------------------------------------------------
-
-function parseNTriples(ntriplesStr: string): Promise<Quad[]> {
-  return new Promise((resolve, reject) => {
-    const parser = new Parser({ format: "N-Triples" });
-    const quads: Quad[] = [];
-    parser.parse(ntriplesStr, (err, quad) => {
-      if (err) reject(err);
-      else if (quad) quads.push(quad as Quad);
-      else resolve(quads);
-    });
-  });
-}
 
 // ---------------------------------------------------------------------------
 // RdfReasoner
@@ -210,14 +194,13 @@ export class RdfReasoner {
       );
       store.removeQuads(store.getQuads(null, null, null, inferredGraphNode));
 
-      const allQuads = store.getQuads(null, null, null, null);
-      const { tripleBuffer, strTableBuffer } = encodeToBuffers(allQuads);
+      const { tripleBuffer, strTableBuffer } = encodeToBuffers(store.getQuads(null, null, null, null));
 
       await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
       await this._call("classify", []);
 
-      const resultStr = (await this._call("getInferredNTriples", [])) as string;
-      const inferredQuads = await parseNTriples(resultStr);
+      const resultBuf = (await this._call("getInferredTripleBuffer", [])) as ArrayBuffer;
+      const inferredQuads = decodeBuffers(resultBuf);
 
       for (const q of inferredQuads) {
         store.addQuad(
@@ -248,8 +231,8 @@ export class RdfReasoner {
       }
 
       // "classify" and "full" both retrieve inferred triples.
-      const resultStr = (await this._call("getInferredNTriples", [])) as string;
-      return parseNTriples(resultStr);
+      const resultBuf = (await this._call("getInferredTripleBuffer", [])) as ArrayBuffer;
+      return decodeBuffers(resultBuf);
     });
     // Swallow errors so a failed call doesn't stall the queue for subsequent
     // callers; each caller still receives the rejection on their own promise.

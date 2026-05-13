@@ -40,6 +40,8 @@ const mocks = vi.hoisted(() => {
   const getInferredNTriples = vi
     .fn<[], string>()
     .mockReturnValue("<http://a> <http://b> <http://c> .\n");
+  const buildInferredTripleBuffer = vi.fn<[], number>().mockReturnValue(0);
+  const getInferredTripleBufferPtr = vi.fn<[], number>().mockReturnValue(0);
   const reset = vi.fn<[], void>();
   const del = vi.fn<[], void>();
 
@@ -51,6 +53,8 @@ const mocks = vi.hoisted(() => {
     this.classify = classify;
     this.isConsistent = isConsistent;
     this.getInferredNTriples = getInferredNTriples;
+    this.buildInferredTripleBuffer = buildInferredTripleBuffer;
+    this.getInferredTripleBufferPtr = getInferredTripleBufferPtr;
     this.reset = reset;
     this.delete = del;
   });
@@ -74,6 +78,9 @@ const mocks = vi.hoisted(() => {
     classify,
     isConsistent,
     getInferredNTriples,
+    buildInferredTripleBuffer,
+    getInferredTripleBufferPtr,
+    heapu8,
     reset,
     del,
     malloc,
@@ -128,6 +135,8 @@ describe("worker handleMessage", () => {
     mocks.classify.mockClear();
     mocks.isConsistent.mockClear();
     mocks.getInferredNTriples.mockClear();
+    mocks.buildInferredTripleBuffer.mockClear();
+    mocks.getInferredTripleBufferPtr.mockClear();
     mocks.reset.mockClear();
     mocks.del.mockClear();
     mocks.malloc.mockClear();
@@ -181,6 +190,32 @@ describe("worker handleMessage", () => {
 
     expect(mocks.getInferredNTriples).toHaveBeenCalledOnce();
     expect(mocks.postMessage).toHaveBeenCalledWith({ id: 4, result: expected });
+  });
+
+  it("happy path: getInferredTripleBuffer → calls build/ptr, posts {id, result: ArrayBuffer}", async () => {
+    // Write a minimal valid combined buffer into heapu8 at offset 0 (ptr returned by mock).
+    // Combined: [strTableLen=4:u32][count=0:u32]  — 8 bytes total, 0 triples.
+    const len = 8;
+    const tmp = new DataView(mocks.heapu8.buffer, 0, len);
+    tmp.setUint32(0, 4, true);  // strTableLen = 4
+    tmp.setUint32(4, 0, true);  // count = 0
+
+    mocks.buildInferredTripleBuffer.mockReturnValueOnce(len);
+    mocks.getInferredTripleBufferPtr.mockReturnValueOnce(0);
+
+    await handleMessage(makeEvent(11, "getInferredTripleBuffer"));
+
+    expect(mocks.buildInferredTripleBuffer).toHaveBeenCalledOnce();
+    expect(mocks.getInferredTripleBufferPtr).toHaveBeenCalledOnce();
+
+    // postMessage called with transferred ArrayBuffer
+    expect(mocks.postMessage).toHaveBeenCalledOnce();
+    const [msgArg, transferArg] = mocks.postMessage.mock.calls[0] as [unknown, unknown[]];
+    const response = msgArg as { id: number; result: ArrayBuffer };
+    expect(response.id).toBe(11);
+    expect(response.result).toBeInstanceOf(ArrayBuffer);
+    expect(response.result.byteLength).toBe(len);
+    expect(transferArg).toEqual([response.result]);
   });
 
   it("error path: unknown method → posts {id, error: 'Unknown method: X'}", async () => {

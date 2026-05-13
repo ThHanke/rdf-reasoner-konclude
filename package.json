@@ -34,6 +34,7 @@
     "postbuild": "cp ts/worker-node.mjs dist/worker-node.mjs && cp ts/index.node.mjs dist/index.node.mjs && sed -i 's|from \"./index\\.js\"|from \"./index.node.mjs\"|' dist/cli.js && { printf '#!/usr/bin/env node\\n'; cat dist/cli.js; } > dist/cli.js.tmp && mv dist/cli.js.tmp dist/cli.js && chmod +x dist/cli.js",
     "test": "vitest run",
     "apply-patches": "bash scripts/apply-patches.sh",
+    "patch-wasm": "bash scripts/patch-konclude-mjs.sh",
     "bench": "node tests/bench/bench.mjs"
   },
   "dependencies": {

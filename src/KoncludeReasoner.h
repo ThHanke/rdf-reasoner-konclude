@@ -26,6 +26,16 @@ public:
     bool classify();
     bool isConsistent();
     std::string getInferredNTriples();
+
+    // Binary output protocol.
+    // buildInferredTripleBuffer() assembles a combined output buffer:
+    //   [strTableLen:u32][strTable][tripleBuffer]
+    // Returns total byte length (0 if not classified).
+    // getInferredTripleBufferPtr() returns the raw pointer into the internal
+    // buffer — valid until the next call to loadTripleBuffer / reset.
+    int buildInferredTripleBuffer();
+    int getInferredTripleBufferPtr();
+
     void reset();
 
 private:

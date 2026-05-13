@@ -12,6 +12,8 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DataFactory } from "n3";
+import type { Quad } from "@rdfjs/types";
+import { encodeToBuffers } from "../../ts/intern.js";
 
 // ---------------------------------------------------------------------------
 // Step 1: Hoist mock state — must run before vi.mock factories and imports.
@@ -74,6 +76,19 @@ import { RdfReasoner } from "../../ts/index.js";
 
 const { namedNode, quad, defaultGraph } = DataFactory;
 
+// ---------------------------------------------------------------------------
+// Binary-response helpers
+// ---------------------------------------------------------------------------
+
+export function buildCombinedBuffer(quads: Iterable<Quad>): ArrayBuffer {
+  const { tripleBuffer, strTableBuffer } = encodeToBuffers(quads);
+  const combined = new Uint8Array(4 + strTableBuffer.byteLength + tripleBuffer.byteLength);
+  new DataView(combined.buffer).setUint32(0, strTableBuffer.byteLength, true);
+  combined.set(new Uint8Array(strTableBuffer), 4);
+  combined.set(new Uint8Array(tripleBuffer), 4 + strTableBuffer.byteLength);
+  return combined.buffer;
+}
+
 /** Simulate a message arriving from the Worker to the main thread. */
 function simulateWorkerMessage(data: unknown) {
   mocks.dispatchToListeners("message", {
@@ -128,15 +143,16 @@ function decodeStrTableEntries(strTableBuf: ArrayBuffer): string[] {
 }
 
 /** Respond automatically to a sequence of Worker messages in the binary protocol flow. */
-function autoRespond(inferredNTriples = ""): void {
+function autoRespond(inferredQuads: Quad[] = []): void {
+  const buf = buildCombinedBuffer(inferredQuads);
   mocks.workerPostMessage.mockImplementation((msg: unknown) => {
     const req = msg as { id: number; method: string };
     if (req.method === "loadTripleBuffer") {
       simulateWorkerMessage({ id: req.id, result: true });
     } else if (req.method === "classify") {
       simulateWorkerMessage({ id: req.id, result: true });
-    } else if (req.method === "getInferredNTriples") {
-      simulateWorkerMessage({ id: req.id, result: inferredNTriples });
+    } else if (req.method === "getInferredTripleBuffer") {
+      simulateWorkerMessage({ id: req.id, result: buf });
     } else if (req.method === "isConsistent") {
       simulateWorkerMessage({ id: req.id, result: true });
     }
@@ -186,7 +202,7 @@ describe("RdfReasoner", () => {
   // -------------------------------------------------------------------------
 
   describe("reason()", () => {
-    it("happy path: reason() calls loadTripleBuffer → classify → getInferredNTriples and returns Quad[]", async () => {
+    it("happy path: reason() calls loadTripleBuffer → classify → getInferredTripleBuffer and returns Quad[]", async () => {
       const reasoner = await makeReadyReasoner();
 
       const A = namedNode("http://example.org/A");
@@ -196,10 +212,7 @@ describe("RdfReasoner", () => {
         "http://www.w3.org/2000/01/rdf-schema#subClassOf",
       );
 
-      const inferredNTriples =
-        "<http://example.org/A> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/C> .\n";
-
-      autoRespond(inferredNTriples);
+      autoRespond([quad(A, subClassOf, C, defaultGraph())]);
 
       const resultQuads = await reasoner.reason([
         quad(A, subClassOf, B, defaultGraph()),
@@ -211,7 +224,7 @@ describe("RdfReasoner", () => {
       const calls = mocks.workerPostMessage.mock.calls.map(
         (c) => (c[0] as { method: string }).method,
       );
-      expect(calls).toEqual(["loadTripleBuffer", "classify", "getInferredNTriples"]);
+      expect(calls).toEqual(["loadTripleBuffer", "classify", "getInferredTripleBuffer"]);
 
       // Result should contain A subClassOf C
       expect(resultQuads).toHaveLength(1);
@@ -226,7 +239,7 @@ describe("RdfReasoner", () => {
 
     it("edge case: reason([]) → empty array (no inferred triples)", async () => {
       const reasoner = await makeReadyReasoner();
-      autoRespond("");
+      autoRespond([]);
       const result = await reasoner.reason([]);
       expect(result).toEqual([]);
     });
@@ -247,8 +260,8 @@ describe("RdfReasoner", () => {
           simulateWorkerMessage({ id: req.id, result: true });
         } else if (req.method === "classify") {
           simulateWorkerMessage({ id: req.id, result: true });
-        } else if (req.method === "getInferredNTriples") {
-          simulateWorkerMessage({ id: req.id, result: "" });
+        } else if (req.method === "getInferredTripleBuffer") {
+          simulateWorkerMessage({ id: req.id, result: buildCombinedBuffer([]) });
         }
       });
 
@@ -283,7 +296,7 @@ describe("RdfReasoner", () => {
       ).rejects.toThrow("binary decode error");
     });
 
-    it("mode:'consistency' → returns [] without calling getInferredNTriples", async () => {
+    it("mode:'consistency' → returns [] without calling getInferredTripleBuffer", async () => {
       const reasoner = await makeReadyReasoner();
 
       mocks.workerPostMessage.mockImplementation((msg: unknown) => {
@@ -293,7 +306,7 @@ describe("RdfReasoner", () => {
         } else if (req.method === "classify") {
           simulateWorkerMessage({ id: req.id, result: true });
         }
-        // No response for getInferredNTriples — it should not be called.
+        // No response for getInferredTripleBuffer — it should not be called.
       });
 
       const result = await reasoner.reason([], { mode: "consistency" });
@@ -302,15 +315,13 @@ describe("RdfReasoner", () => {
       const methods = mocks.workerPostMessage.mock.calls.map(
         (c) => (c[0] as { method: string }).method,
       );
-      expect(methods).not.toContain("getInferredNTriples");
+      expect(methods).not.toContain("getInferredTripleBuffer");
     });
 
-    it("mode:'full' → calls getInferredNTriples and returns inferred quads", async () => {
+    it("mode:'full' → calls getInferredTripleBuffer and returns inferred quads", async () => {
       const reasoner = await makeReadyReasoner();
 
-      const inferredNTriples =
-        "<http://example.org/A> <http://example.org/P> <http://example.org/B> .\n";
-      autoRespond(inferredNTriples);
+      autoRespond([quad(namedNode("http://example.org/A"), namedNode("http://example.org/P"), namedNode("http://example.org/B"), defaultGraph())]);
 
       const result = await reasoner.reason([], { mode: "full" });
       expect(result).toHaveLength(1);
@@ -326,9 +337,7 @@ describe("RdfReasoner", () => {
     it("is an alias for reason(quads, {mode:'classify'})", async () => {
       const reasoner = await makeReadyReasoner();
 
-      const inferredNTriples =
-        "<http://example.org/A> <http://example.org/P> <http://example.org/B> .\n";
-      autoRespond(inferredNTriples);
+      autoRespond([quad(namedNode("http://example.org/A"), namedNode("http://example.org/P"), namedNode("http://example.org/B"), defaultGraph())]);
 
       const result = await reasoner.classify([]);
       expect(result).toHaveLength(1);
@@ -337,7 +346,7 @@ describe("RdfReasoner", () => {
       const methods = mocks.workerPostMessage.mock.calls.map(
         (c) => (c[0] as { method: string }).method,
       );
-      expect(methods).toEqual(["loadTripleBuffer", "classify", "getInferredNTriples"]);
+      expect(methods).toEqual(["loadTripleBuffer", "classify", "getInferredTripleBuffer"]);
     });
   });
 

@@ -10,6 +10,8 @@ EMSCRIPTEN_BINDINGS(konclude) {
         .function("loadTripleBuffer",    &KoncludeReasoner::loadTripleBuffer)
         .function("classify",            &KoncludeReasoner::classify)
         .function("isConsistent",        &KoncludeReasoner::isConsistent)
-        .function("getInferredNTriples", &KoncludeReasoner::getInferredNTriples)
-        .function("reset",               &KoncludeReasoner::reset);
+        .function("getInferredNTriples",         &KoncludeReasoner::getInferredNTriples)
+        .function("buildInferredTripleBuffer",   &KoncludeReasoner::buildInferredTripleBuffer)
+        .function("getInferredTripleBufferPtr",  &KoncludeReasoner::getInferredTripleBufferPtr)
+        .function("reset",                       &KoncludeReasoner::reset);
 }
