@@ -110,6 +110,39 @@ async function makeReadyReasoner(): Promise<RdfReasoner> {
   return reasoner;
 }
 
+/** Decode the string-table ArrayBuffer from a loadTripleBuffer worker message. */
+function decodeStrTableEntries(strTableBuf: ArrayBuffer): string[] {
+  const dv = new DataView(strTableBuf);
+  const count = dv.getUint32(0, true);
+  const headerBytes = 4 + 4 * count;
+  const strDataLen = strTableBuf.byteLength - headerBytes;
+  const strBytes = new Uint8Array(strTableBuf, headerBytes);
+  const dec = new TextDecoder();
+  const entries: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const start = dv.getUint32(4 + 4 * i, true);
+    const end = i + 1 < count ? dv.getUint32(4 + 4 * (i + 1), true) : strDataLen;
+    entries.push(dec.decode(strBytes.slice(start, end)));
+  }
+  return entries;
+}
+
+/** Respond automatically to a sequence of Worker messages in the binary protocol flow. */
+function autoRespond(inferredNTriples = ""): void {
+  mocks.workerPostMessage.mockImplementation((msg: unknown) => {
+    const req = msg as { id: number; method: string };
+    if (req.method === "loadTripleBuffer") {
+      simulateWorkerMessage({ id: req.id, result: true });
+    } else if (req.method === "classify") {
+      simulateWorkerMessage({ id: req.id, result: true });
+    } else if (req.method === "getInferredNTriples") {
+      simulateWorkerMessage({ id: req.id, result: inferredNTriples });
+    } else if (req.method === "isConsistent") {
+      simulateWorkerMessage({ id: req.id, result: true });
+    }
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -153,7 +186,7 @@ describe("RdfReasoner", () => {
   // -------------------------------------------------------------------------
 
   describe("reason()", () => {
-    it("happy path: reason() calls loadNTriples → classify → getInferredNTriples and returns Quad[]", async () => {
+    it("happy path: reason() calls loadTripleBuffer → classify → getInferredNTriples and returns Quad[]", async () => {
       const reasoner = await makeReadyReasoner();
 
       const A = namedNode("http://example.org/A");
@@ -163,21 +196,10 @@ describe("RdfReasoner", () => {
         "http://www.w3.org/2000/01/rdf-schema#subClassOf",
       );
 
-      // NTriples string that the Worker will return for getInferredNTriples
       const inferredNTriples =
         "<http://example.org/A> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/C> .\n";
 
-      // Respond to Worker messages in order: loadNTriples(id=0), classify(id=1), getInferredNTriples(id=2)
-      mocks.workerPostMessage.mockImplementation((msg: unknown) => {
-        const req = msg as { id: number; method: string };
-        if (req.method === "loadNTriples") {
-          simulateWorkerMessage({ id: req.id, result: true });
-        } else if (req.method === "classify") {
-          simulateWorkerMessage({ id: req.id, result: true });
-        } else if (req.method === "getInferredNTriples") {
-          simulateWorkerMessage({ id: req.id, result: inferredNTriples });
-        }
-      });
+      autoRespond(inferredNTriples);
 
       const resultQuads = await reasoner.reason([
         quad(A, subClassOf, B, defaultGraph()),
@@ -189,7 +211,7 @@ describe("RdfReasoner", () => {
       const calls = mocks.workerPostMessage.mock.calls.map(
         (c) => (c[0] as { method: string }).method,
       );
-      expect(calls).toEqual(["loadNTriples", "classify", "getInferredNTriples"]);
+      expect(calls).toEqual(["loadTripleBuffer", "classify", "getInferredNTriples"]);
 
       // Result should contain A subClassOf C
       expect(resultQuads).toHaveLength(1);
@@ -204,23 +226,12 @@ describe("RdfReasoner", () => {
 
     it("edge case: reason([]) → empty array (no inferred triples)", async () => {
       const reasoner = await makeReadyReasoner();
-
-      mocks.workerPostMessage.mockImplementation((msg: unknown) => {
-        const req = msg as { id: number; method: string };
-        if (req.method === "loadNTriples") {
-          simulateWorkerMessage({ id: req.id, result: true });
-        } else if (req.method === "classify") {
-          simulateWorkerMessage({ id: req.id, result: true });
-        } else if (req.method === "getInferredNTriples") {
-          simulateWorkerMessage({ id: req.id, result: "" });
-        }
-      });
-
+      autoRespond("");
       const result = await reasoner.reason([]);
       expect(result).toEqual([]);
     });
 
-    it("edge case: named graphs in input quads → graph term stripped, ingested as triples", async () => {
+    it("edge case: named graphs in input quads → graph IRI not in string table", async () => {
       const reasoner = await makeReadyReasoner();
 
       const subject = namedNode("http://example.org/S");
@@ -228,11 +239,11 @@ describe("RdfReasoner", () => {
       const object = namedNode("http://example.org/O");
       const graph = namedNode("http://example.org/G");
 
-      let capturedNTriples = "";
+      let strEntries: string[] = [];
       mocks.workerPostMessage.mockImplementation((msg: unknown) => {
         const req = msg as { id: number; method: string; args: unknown[] };
-        if (req.method === "loadNTriples") {
-          capturedNTriples = req.args[0] as string;
+        if (req.method === "loadTripleBuffer") {
+          strEntries = decodeStrTableEntries(req.args[1] as ArrayBuffer);
           simulateWorkerMessage({ id: req.id, result: true });
         } else if (req.method === "classify") {
           simulateWorkerMessage({ id: req.id, result: true });
@@ -243,12 +254,12 @@ describe("RdfReasoner", () => {
 
       await reasoner.reason([quad(subject, predicate, object, graph)]);
 
-      // NTriples must not contain the named graph IRI
-      expect(capturedNTriples).not.toContain("http://example.org/G");
-      // But must contain subject, predicate, object
-      expect(capturedNTriples).toContain("http://example.org/S");
-      expect(capturedNTriples).toContain("http://example.org/P");
-      expect(capturedNTriples).toContain("http://example.org/O");
+      // Graph IRI must not appear as a string-table entry
+      expect(strEntries).not.toContain("http://example.org/G");
+      // Subject, predicate, object IRIs must be present
+      expect(strEntries).toContain("http://example.org/S");
+      expect(strEntries).toContain("http://example.org/P");
+      expect(strEntries).toContain("http://example.org/O");
     });
 
     it("error path: Worker method throws → reason() rejects with error message", async () => {
@@ -256,8 +267,8 @@ describe("RdfReasoner", () => {
 
       mocks.workerPostMessage.mockImplementation((msg: unknown) => {
         const req = msg as { id: number; method: string };
-        if (req.method === "loadNTriples") {
-          simulateWorkerMessage({ id: req.id, error: "parse error in NTriples" });
+        if (req.method === "loadTripleBuffer") {
+          simulateWorkerMessage({ id: req.id, error: "binary decode error" });
         }
       });
 
@@ -269,7 +280,7 @@ describe("RdfReasoner", () => {
             namedNode("http://example.org/B"),
           ),
         ]),
-      ).rejects.toThrow("parse error in NTriples");
+      ).rejects.toThrow("binary decode error");
     });
 
     it("mode:'consistency' → returns [] without calling getInferredNTriples", async () => {
@@ -277,7 +288,7 @@ describe("RdfReasoner", () => {
 
       mocks.workerPostMessage.mockImplementation((msg: unknown) => {
         const req = msg as { id: number; method: string };
-        if (req.method === "loadNTriples") {
+        if (req.method === "loadTripleBuffer") {
           simulateWorkerMessage({ id: req.id, result: true });
         } else if (req.method === "classify") {
           simulateWorkerMessage({ id: req.id, result: true });
@@ -299,17 +310,7 @@ describe("RdfReasoner", () => {
 
       const inferredNTriples =
         "<http://example.org/A> <http://example.org/P> <http://example.org/B> .\n";
-
-      mocks.workerPostMessage.mockImplementation((msg: unknown) => {
-        const req = msg as { id: number; method: string };
-        if (req.method === "loadNTriples") {
-          simulateWorkerMessage({ id: req.id, result: true });
-        } else if (req.method === "classify") {
-          simulateWorkerMessage({ id: req.id, result: true });
-        } else if (req.method === "getInferredNTriples") {
-          simulateWorkerMessage({ id: req.id, result: inferredNTriples });
-        }
-      });
+      autoRespond(inferredNTriples);
 
       const result = await reasoner.reason([], { mode: "full" });
       expect(result).toHaveLength(1);
@@ -327,17 +328,7 @@ describe("RdfReasoner", () => {
 
       const inferredNTriples =
         "<http://example.org/A> <http://example.org/P> <http://example.org/B> .\n";
-
-      mocks.workerPostMessage.mockImplementation((msg: unknown) => {
-        const req = msg as { id: number; method: string };
-        if (req.method === "loadNTriples") {
-          simulateWorkerMessage({ id: req.id, result: true });
-        } else if (req.method === "classify") {
-          simulateWorkerMessage({ id: req.id, result: true });
-        } else if (req.method === "getInferredNTriples") {
-          simulateWorkerMessage({ id: req.id, result: inferredNTriples });
-        }
-      });
+      autoRespond(inferredNTriples);
 
       const result = await reasoner.classify([]);
       expect(result).toHaveLength(1);
@@ -346,7 +337,7 @@ describe("RdfReasoner", () => {
       const methods = mocks.workerPostMessage.mock.calls.map(
         (c) => (c[0] as { method: string }).method,
       );
-      expect(methods).toEqual(["loadNTriples", "classify", "getInferredNTriples"]);
+      expect(methods).toEqual(["loadTripleBuffer", "classify", "getInferredNTriples"]);
     });
   });
 
@@ -360,7 +351,7 @@ describe("RdfReasoner", () => {
 
       mocks.workerPostMessage.mockImplementation((msg: unknown) => {
         const req = msg as { id: number; method: string };
-        if (req.method === "loadNTriples") {
+        if (req.method === "loadTripleBuffer") {
           simulateWorkerMessage({ id: req.id, result: true });
         } else if (req.method === "classify") {
           simulateWorkerMessage({ id: req.id, result: true });
@@ -383,7 +374,7 @@ describe("RdfReasoner", () => {
       const methods = mocks.workerPostMessage.mock.calls.map(
         (c) => (c[0] as { method: string }).method,
       );
-      expect(methods).toEqual(["loadNTriples", "classify", "isConsistent"]);
+      expect(methods).toEqual(["loadTripleBuffer", "classify", "isConsistent"]);
     });
 
     it("returns false for an inconsistent ontology", async () => {
@@ -391,7 +382,7 @@ describe("RdfReasoner", () => {
 
       mocks.workerPostMessage.mockImplementation((msg: unknown) => {
         const req = msg as { id: number; method: string };
-        if (req.method === "loadNTriples") {
+        if (req.method === "loadTripleBuffer") {
           simulateWorkerMessage({ id: req.id, result: true });
         } else if (req.method === "classify") {
           simulateWorkerMessage({ id: req.id, result: false });
@@ -496,8 +487,8 @@ describe("RdfReasoner", () => {
       });
 
       // Fire two calls but don't await (they will hang since no responses)
-      const _p1 = (reasoner as unknown as { _call: (...a: unknown[]) => Promise<unknown> })["_call"]("classify");
-      const _p2 = (reasoner as unknown as { _call: (...a: unknown[]) => Promise<unknown> })["_call"]("classify");
+      const _p1 = (reasoner as unknown as { _call: (...a: unknown[]) => Promise<unknown> })["_call"]("classify", []);
+      const _p2 = (reasoner as unknown as { _call: (...a: unknown[]) => Promise<unknown> })["_call"]("classify", []);
 
       await flushPromises(5);
 

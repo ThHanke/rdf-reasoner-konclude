@@ -34,6 +34,7 @@ const mocks = vi.hoisted(() => {
 
   // --- WASM module mock state ---
   const loadNTriples = vi.fn<[string], void>();
+  const loadTripleBuffer = vi.fn<[number, number, number, number], void>();
   const classify = vi.fn<[], boolean>().mockReturnValue(true);
   const isConsistent = vi.fn<[], boolean>().mockReturnValue(true);
   const getInferredNTriples = vi
@@ -46,6 +47,7 @@ const mocks = vi.hoisted(() => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const KoncludeReasoner = vi.fn(function (this: any) {
     this.loadNTriples = loadNTriples;
+    this.loadTripleBuffer = loadTripleBuffer;
     this.classify = classify;
     this.isConsistent = isConsistent;
     this.getInferredNTriples = getInferredNTriples;
@@ -53,16 +55,29 @@ const mocks = vi.hoisted(() => {
     this.delete = del;
   });
 
-  const createModule = vi.fn().mockResolvedValue({ KoncludeReasoner });
+  // Minimal heap mock: HEAPU8.set() must not throw.
+  const heapu8 = new Uint8Array(4096);
+  const malloc = vi.fn<[number], number>().mockReturnValue(0);
+  const free = vi.fn<[number], void>();
+
+  const createModule = vi.fn().mockResolvedValue({
+    KoncludeReasoner,
+    HEAPU8: heapu8,
+    _malloc: malloc,
+    _free: free,
+  });
 
   return {
     postMessage,
     loadNTriples,
+    loadTripleBuffer,
     classify,
     isConsistent,
     getInferredNTriples,
     reset,
     del,
+    malloc,
+    free,
     KoncludeReasoner,
     createModule,
   };
@@ -109,11 +124,30 @@ describe("worker handleMessage", () => {
   beforeEach(() => {
     mocks.postMessage.mockClear();
     mocks.loadNTriples.mockClear();
+    mocks.loadTripleBuffer.mockClear();
     mocks.classify.mockClear();
     mocks.isConsistent.mockClear();
     mocks.getInferredNTriples.mockClear();
     mocks.reset.mockClear();
     mocks.del.mockClear();
+    mocks.malloc.mockClear();
+    mocks.free.mockClear();
+  });
+
+  it("happy path: loadTripleBuffer → calls C++ loadTripleBuffer with ptr/count", async () => {
+    const tripleBuffer = new ArrayBuffer(36); // 3 triples × 12 bytes each
+    const strTableBuffer = new ArrayBuffer(8);
+    await handleMessage(makeEvent(10, "loadTripleBuffer", [tripleBuffer, strTableBuffer]));
+
+    expect(mocks.loadTripleBuffer).toHaveBeenCalledWith(
+      expect.any(Number), // triplePtr
+      3,                  // tripleCount = 36 / 12
+      expect.any(Number), // strTablePtr
+      8,                  // strTableLen
+    );
+    expect(mocks.malloc).toHaveBeenCalledTimes(2);
+    expect(mocks.free).toHaveBeenCalledTimes(2);
+    expect(mocks.postMessage).toHaveBeenCalledWith({ id: 10, result: true });
   });
 
   it("happy path: loadNTriples → posts {id, result: true}", async () => {
