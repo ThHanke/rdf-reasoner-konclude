@@ -9,6 +9,7 @@
 
 export interface KoncludeReasonerInstance {
   loadNTriples(ntriples: string): void;
+  loadTripleBuffer(triplePtr: number, tripleCount: number, strTablePtr: number, strTableLen: number): void;
   classify(): boolean;
   isConsistent(): boolean;
   getInferredNTriples(): string;
@@ -19,6 +20,9 @@ export interface KoncludeReasonerInstance {
 
 export interface KoncludeModule {
   KoncludeReasoner: new () => KoncludeReasonerInstance;
+  HEAPU8: Uint8Array;
+  _malloc(size: number): number;
+  _free(ptr: number): void;
 }
 
 /** Factory function returned by the Emscripten-generated ES module. */
