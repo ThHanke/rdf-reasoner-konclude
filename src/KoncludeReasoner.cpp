@@ -218,6 +218,204 @@ KoncludeReasoner::~KoncludeReasoner() {
     delete mImpl;
 }
 
+// loadTripleBuffer ─────────────────────────────────────────────────────────────
+//
+// See KoncludeReasoner.h for the wire format comment.
+//
+void KoncludeReasoner::loadTripleBuffer(int triplePtr, int tripleCount, int strTablePtr, int strTableLen) {
+    auto t0 = std::chrono::steady_clock::now();
+
+    if (!strTablePtr || !triplePtr) {
+        fprintf(stderr, "{warn} KoncludeReasoner >> loadTripleBuffer called with null pointer\n");
+        return;
+    }
+
+    // ── Decode the string table ──────────────────────────────────────────────
+    // Layout: [count:u32][offset0:u32 … offsetN:u32][UTF-8 string data...]
+    const uint32_t* hdr  = reinterpret_cast<const uint32_t*>(strTablePtr);
+    uint32_t        count = hdr[0];
+
+    // Pointer to the start of the string-data section (after the header).
+    const char* strData = reinterpret_cast<const char*>(strTablePtr) + 4 + 4 * count;
+    int strDataLen = strTableLen - 4 - static_cast<int>(4 * count);
+
+    // Build O(1) lookup: term index → (char* start, size_t len)
+    struct TermEntry { const char* ptr; size_t len; };
+    std::vector<TermEntry> terms(count);
+    for (uint32_t i = 0; i < count; ++i) {
+        uint32_t off = hdr[1 + i];
+        uint32_t end = (i + 1 < count) ? hdr[2 + i]
+                                        : static_cast<uint32_t>(strDataLen);
+        terms[i] = { strData + off, end - off };
+    }
+
+    // ── Build CRedlandStoredTriplesData (world / storage / model) ────────────
+    // Pattern mirrors CRDFRedlandRaptorParser::getUpdatingTripleData +
+    // parseTriples() in src/compat/overrides/CRDFRedlandRaptorParser.cpp.
+    CConcreteOntologyUpdateCollectorBuilder* builder =
+        new CConcreteOntologyUpdateCollectorBuilder(mImpl->mOntology);
+    builder->initializeBuilding();
+
+    CRedlandStoredTriplesData* tripleData = new CRedlandStoredTriplesData();
+    tripleData->initTriplesData(CTRIPLES_DATA_UPDATE_TYPE::TRIPLES_DATA_ADDITION, nullptr);
+
+    librdf_world* world = librdf_new_world();
+    librdf_world_open(world);
+    tripleData->setRedlandWorldData(world);
+
+    librdf_storage* indexedStorage = librdf_new_storage(world, "hashes", NULL,
+        "hash-type='memory',index-predicates='yes'");
+    tripleData->setRedlandIndexedStorageData(indexedStorage);
+
+    librdf_model* model = librdf_new_model(world, indexedStorage, NULL);
+    tripleData->setRedlandIndexedModelData(model);
+
+    if (!model) {
+        delete tripleData;
+        builder->completeBuilding();
+        delete builder;
+        mImpl->mLoadError = true;
+        return;
+    }
+
+    // ── Helper: build a librdf_node* for a given uint32 intern ID ────────────
+    auto makeNode = [&](uint32_t id) -> librdf_node* {
+        uint32_t typeTag = id >> 30;
+        uint32_t idx     = id & 0x3FFFFFFFu;
+        if (idx >= count) return nullptr;
+
+        const char* data = terms[idx].ptr;
+        size_t       len  = terms[idx].len;
+
+        if (typeTag == 0) {
+            // NamedNode: string is the plain IRI
+            // librdf_new_node_from_uri_string expects a null-terminated string.
+            std::string iri(data, len);
+            return librdf_new_node_from_uri_string(world,
+                reinterpret_cast<const unsigned char*>(iri.c_str()));
+        } else if (typeTag == 1) {
+            // BlankNode: string is the blank-node identifier
+            std::string bname(data, len);
+            return librdf_new_node_from_blank_identifier(world,
+                reinterpret_cast<const unsigned char*>(bname.c_str()));
+        } else {
+            // Literal: "value\0datatype\0language" within [data, data+len)
+            // Split on null bytes.
+            const char* p = data;
+            const char* end = data + len;
+
+            // value: up to first \0
+            const char* valEnd = reinterpret_cast<const char*>(memchr(p, '\0', end - p));
+            if (!valEnd) valEnd = end;
+            std::string value(p, valEnd - p);
+
+            // datatype: next segment
+            std::string datatype;
+            if (valEnd < end) {
+                const char* dtStart = valEnd + 1;
+                const char* dtEnd = reinterpret_cast<const char*>(memchr(dtStart, '\0', end - dtStart));
+                if (!dtEnd) dtEnd = end;
+                datatype = std::string(dtStart, dtEnd - dtStart);
+            }
+
+            // language: remaining segment
+            std::string language;
+            if (!datatype.empty() || (valEnd < end)) {
+                const char* dtEnd2 = (!datatype.empty())
+                    ? (valEnd + 1 + datatype.size() + 1)
+                    : (valEnd + 1 + 1);
+                if (dtEnd2 < end) {
+                    const char* langEnd = reinterpret_cast<const char*>(memchr(dtEnd2, '\0', end - dtEnd2));
+                    if (!langEnd) langEnd = end;
+                    language = std::string(dtEnd2, langEnd - dtEnd2);
+                }
+            }
+
+            if (!datatype.empty()) {
+                librdf_uri* typeUri = librdf_new_uri(world,
+                    reinterpret_cast<const unsigned char*>(datatype.c_str()));
+                librdf_node* n = librdf_new_node_from_typed_literal(world,
+                    reinterpret_cast<const unsigned char*>(value.c_str()),
+                    language.empty() ? nullptr : language.c_str(),
+                    typeUri);
+                librdf_free_uri(typeUri);
+                return n;
+            } else {
+                return librdf_new_node_from_literal(world,
+                    reinterpret_cast<const unsigned char*>(value.c_str()),
+                    language.empty() ? nullptr : language.c_str(),
+                    0);
+            }
+        }
+    };
+
+    // ── Insert triples into model + CXLinker ─────────────────────────────────
+    const uint32_t* triples = reinterpret_cast<const uint32_t*>(triplePtr);
+    CXLinker<librdf_statement*>* statementLinker = tripleData->getRedlandStatementLinker();
+    CXLinker<librdf_statement*>* lastStatementLinker = nullptr;
+    if (statementLinker) {
+        lastStatementLinker = statementLinker->getLastListLink();
+    }
+
+    for (int i = 0; i < tripleCount; ++i) {
+        uint32_t sId = triples[i * 3 + 0];
+        uint32_t pId = triples[i * 3 + 1];
+        uint32_t oId = triples[i * 3 + 2];
+
+        librdf_node* sNode = makeNode(sId);
+        librdf_node* pNode = makeNode(pId);
+        librdf_node* oNode = makeNode(oId);
+
+        if (!sNode || !pNode || !oNode) {
+            if (sNode) librdf_free_node(sNode);
+            if (pNode) librdf_free_node(pNode);
+            if (oNode) librdf_free_node(oNode);
+            continue;
+        }
+
+        // librdf_new_statement_from_nodes takes ownership of sNode/pNode/oNode.
+        librdf_statement* stmt = librdf_new_statement_from_nodes(world, sNode, pNode, oNode);
+        if (!stmt) continue;
+
+        if (!librdf_model_contains_statement(model, stmt)) {
+            // Keep a copy in the linker (mapper walks the linker).
+            librdf_statement* linkerStmt = librdf_new_statement_from_statement(stmt);
+            CXLinker<librdf_statement*>* newLinker = new CXLinker<librdf_statement*>();
+            newLinker->initLinker(linkerStmt, nullptr);
+            if (statementLinker) {
+                lastStatementLinker->setNext(newLinker);
+                lastStatementLinker = newLinker;
+            } else {
+                statementLinker = newLinker;
+                lastStatementLinker = newLinker;
+            }
+            librdf_model_add_statement(model, stmt);
+        }
+        librdf_free_statement(stmt);
+    }
+    tripleData->setRedlandStatementLinker(statementLinker);
+
+    // ── Register data with the builder, then map triples → OWL axioms ────────
+    // addTriplesData MUST be called before mapTriples so getLatestTriplesData(true)
+    // returns this tripleData rather than null.
+    builder->addTriplesData(tripleData);
+
+    CConcreteOntologyRedlandTriplesDataExpressionMapper* mapper =
+        new CConcreteOntologyRedlandTriplesDataExpressionMapper(builder);
+    mapper->mapTriples(mImpl->mOntology, mImpl->mOntology->getOntologyTriplesData());
+    delete mapper;
+
+    builder->completeBuilding();
+    delete builder;
+
+    mImpl->mClassified = false;
+
+    double loadMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - t0).count();
+    fprintf(stderr, "{info} KoncludeReasoner >> loadTripleBuffer: %d triples in %.0f ms\n",
+        tripleCount, loadMs);
+}
+
 // loadNTriples ─────────────────────────────────────────────────────────────────
 //
 // Pipeline:
