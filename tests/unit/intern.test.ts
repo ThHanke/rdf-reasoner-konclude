@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DataFactory } from "n3";
-import { InternTable, encodeToBuffers } from "../../ts/intern.js";
+import { InternTable, encodeToBuffers, decodeBuffers } from "../../ts/intern.js";
 
 const { namedNode, blankNode, literal, quad, defaultGraph } = DataFactory;
 
@@ -191,6 +191,7 @@ describe("encodeToBuffers", () => {
   });
 
   it("multiple quads produce correctly sized triple buffer", () => {
+
     const quads = [
       quad(namedNode("http://a"), namedNode("http://b"), namedNode("http://c"), defaultGraph()),
       quad(namedNode("http://d"), namedNode("http://e"), namedNode("http://f"), defaultGraph()),
@@ -200,3 +201,91 @@ describe("encodeToBuffers", () => {
     expect(tripleBuffer.byteLength).toBe(3 * 3 * 4); // 3 quads × 3 terms × 4 bytes
   });
 });
+
+// ─── decodeBuffers ───────────────────────────────────────────────────────────
+
+// Helper: pack encodeToBuffers output into the C++ combined wire format.
+function combineBuffers(tripleBuffer: ArrayBuffer, strTableBuffer: ArrayBuffer): ArrayBuffer {
+  const combined = new Uint8Array(4 + strTableBuffer.byteLength + tripleBuffer.byteLength);
+  new DataView(combined.buffer).setUint32(0, strTableBuffer.byteLength, true);
+  combined.set(new Uint8Array(strTableBuffer), 4);
+  combined.set(new Uint8Array(tripleBuffer), 4 + strTableBuffer.byteLength);
+  return combined.buffer;
+}
+
+describe("decodeBuffers", () => {
+  it("empty combined buffer returns []", () => {
+    const { tripleBuffer, strTableBuffer } = encodeToBuffers([]);
+    const combined = combineBuffers(tripleBuffer, strTableBuffer);
+    expect(decodeBuffers(combined)).toEqual([]);
+  });
+
+  it("zero-byte input returns []", () => {
+    expect(decodeBuffers(new ArrayBuffer(0))).toEqual([]);
+  });
+
+  it("round-trip NamedNode quad", () => {
+    const q = quad(
+      namedNode("http://s"),
+      namedNode("http://p"),
+      namedNode("http://o"),
+      defaultGraph(),
+    );
+    const { tripleBuffer, strTableBuffer } = encodeToBuffers([q]);
+    const decoded = decodeBuffers(combineBuffers(tripleBuffer, strTableBuffer));
+    expect(decoded).toHaveLength(1);
+    expect(decoded[0].subject.termType).toBe("NamedNode");
+    expect(decoded[0].subject.value).toBe("http://s");
+    expect(decoded[0].predicate.value).toBe("http://p");
+    expect(decoded[0].object.value).toBe("http://o");
+    expect(decoded[0].graph.termType).toBe("DefaultGraph");
+  });
+
+  it("round-trip BlankNode object", () => {
+    const q = quad(namedNode("http://s"), namedNode("http://p"), blankNode("b1"), defaultGraph());
+    const { tripleBuffer, strTableBuffer } = encodeToBuffers([q]);
+    const decoded = decodeBuffers(combineBuffers(tripleBuffer, strTableBuffer));
+    expect(decoded[0].object.termType).toBe("BlankNode");
+    expect(decoded[0].object.value).toBe("b1");
+  });
+
+  it("round-trip language-tagged literal", () => {
+    const q = quad(namedNode("http://s"), namedNode("http://p"), literal("hello", "en"), defaultGraph());
+    const { tripleBuffer, strTableBuffer } = encodeToBuffers([q]);
+    const decoded = decodeBuffers(combineBuffers(tripleBuffer, strTableBuffer));
+    expect(decoded[0].object.termType).toBe("Literal");
+    expect(decoded[0].object.value).toBe("hello");
+    expect((decoded[0].object as ReturnType<typeof literal>).language).toBe("en");
+  });
+
+  it("round-trip typed literal", () => {
+    const q = quad(
+      namedNode("http://s"),
+      namedNode("http://p"),
+      literal("42", namedNode("http://www.w3.org/2001/XMLSchema#integer")),
+      defaultGraph(),
+    );
+    const { tripleBuffer, strTableBuffer } = encodeToBuffers([q]);
+    const decoded = decodeBuffers(combineBuffers(tripleBuffer, strTableBuffer));
+    expect(decoded[0].object.termType).toBe("Literal");
+    expect(decoded[0].object.value).toBe("42");
+    expect((decoded[0].object as ReturnType<typeof literal>).datatype.value).toBe(
+      "http://www.w3.org/2001/XMLSchema#integer",
+    );
+  });
+
+  it("multiple quads decoded in order with shared terms", () => {
+    const s = namedNode("http://s");
+    const p = namedNode("http://p");
+    const q1 = quad(s, p, namedNode("http://o1"), defaultGraph());
+    const q2 = quad(s, p, namedNode("http://o2"), defaultGraph());
+    const { tripleBuffer, strTableBuffer } = encodeToBuffers([q1, q2]);
+    const decoded = decodeBuffers(combineBuffers(tripleBuffer, strTableBuffer));
+    expect(decoded).toHaveLength(2);
+    expect(decoded[0].object.value).toBe("http://o1");
+    expect(decoded[1].object.value).toBe("http://o2");
+    // Subject and predicate shared
+    expect(decoded[0].subject.value).toBe(decoded[1].subject.value);
+  });
+});
+

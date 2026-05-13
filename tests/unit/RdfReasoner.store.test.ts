@@ -8,6 +8,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DataFactory, Store } from "n3";
 import type { Quad } from "@rdfjs/types";
+import { encodeToBuffers } from "../../ts/intern.js";
 
 // ---------------------------------------------------------------------------
 // Step 1: Hoist mock state
@@ -80,16 +81,26 @@ async function makeReadyReasoner(): Promise<RdfReasoner> {
   return reasoner;
 }
 
+function buildCombinedBuffer(quads: Iterable<Quad>): ArrayBuffer {
+  const { tripleBuffer, strTableBuffer } = encodeToBuffers(quads);
+  const combined = new Uint8Array(4 + strTableBuffer.byteLength + tripleBuffer.byteLength);
+  new DataView(combined.buffer).setUint32(0, strTableBuffer.byteLength, true);
+  combined.set(new Uint8Array(strTableBuffer), 4);
+  combined.set(new Uint8Array(tripleBuffer), 4 + strTableBuffer.byteLength);
+  return combined.buffer;
+}
+
 /** Respond to Worker calls in the binary protocol sequence. */
-function mockWorkerSequence(inferredNTriples: string) {
+function mockWorkerSequence(inferredQuads: Quad[]) {
+  const buf = buildCombinedBuffer(inferredQuads);
   mocks.workerPostMessage.mockImplementation((msg: unknown) => {
     const req = msg as { id: number; method: string };
     if (req.method === "loadTripleBuffer") {
       simulateWorkerMessage({ id: req.id, result: true });
     } else if (req.method === "classify") {
       simulateWorkerMessage({ id: req.id, result: true });
-    } else if (req.method === "getInferredNTriples") {
-      simulateWorkerMessage({ id: req.id, result: inferredNTriples });
+    } else if (req.method === "getInferredTripleBuffer") {
+      simulateWorkerMessage({ id: req.id, result: buf });
     }
   });
 }
@@ -127,22 +138,20 @@ describe("RdfReasoner — Store API", () => {
   // -------------------------------------------------------------------------
 
   describe("reason(store)", () => {
-    it("calls loadTripleBuffer → classify → getInferredNTriples in order", async () => {
+    it("calls loadTripleBuffer → classify → getInferredTripleBuffer in order", async () => {
       const reasoner = await makeReadyReasoner();
       const store = new Store();
       store.addQuad(quad(A, subClassOf, B, defaultGraph()));
       store.addQuad(quad(B, subClassOf, C, defaultGraph()));
 
-      const inferredNT =
-        "<http://example.org/A> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/C> .\n";
-      mockWorkerSequence(inferredNT);
+      mockWorkerSequence([quad(A, subClassOf, C, defaultGraph())]);
 
       await reasoner.reason(store);
 
       const methods = mocks.workerPostMessage.mock.calls.map(
         (c) => (c[0] as { method: string }).method,
       );
-      expect(methods).toEqual(["loadTripleBuffer", "classify", "getInferredNTriples"]);
+      expect(methods).toEqual(["loadTripleBuffer", "classify", "getInferredTripleBuffer"]);
     });
 
     it("inferred quad is written to default named graph (urn:konclude:inferred)", async () => {
@@ -150,9 +159,7 @@ describe("RdfReasoner — Store API", () => {
       const store = new Store();
       store.addQuad(quad(A, subClassOf, B, defaultGraph()));
 
-      const inferredNT =
-        "<http://example.org/A> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/C> .\n";
-      mockWorkerSequence(inferredNT);
+      mockWorkerSequence([quad(A, subClassOf, C, defaultGraph())]);
 
       await reasoner.reason(store);
 
@@ -181,8 +188,8 @@ describe("RdfReasoner — Store API", () => {
           simulateWorkerMessage({ id: req.id, result: true });
         } else if (req.method === "classify") {
           simulateWorkerMessage({ id: req.id, result: true });
-        } else if (req.method === "getInferredNTriples") {
-          simulateWorkerMessage({ id: req.id, result: "" });
+        } else if (req.method === "getInferredTripleBuffer") {
+          simulateWorkerMessage({ id: req.id, result: buildCombinedBuffer([]) });
         }
       });
 
@@ -209,9 +216,7 @@ describe("RdfReasoner — Store API", () => {
       );
       store.addQuad(staleQuad);
 
-      const inferredNT =
-        "<http://example.org/A> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/C> .\n";
-      mockWorkerSequence(inferredNT);
+      mockWorkerSequence([quad(A, subClassOf, C, defaultGraph())]);
 
       await reasoner.reason(store);
 
@@ -226,9 +231,7 @@ describe("RdfReasoner — Store API", () => {
       const store = new Store();
       store.addQuad(quad(A, subClassOf, B, defaultGraph()));
 
-      const inferredNT =
-        "<http://example.org/A> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/C> .\n";
-      mockWorkerSequence(inferredNT);
+      mockWorkerSequence([quad(A, subClassOf, C, defaultGraph())]);
 
       const customIRI = "http://example.org/myGraph";
       await reasoner.reason(store, { inferredGraph: customIRI });
@@ -253,8 +256,8 @@ describe("RdfReasoner — Store API", () => {
           simulateWorkerMessage({ id: req.id, result: true });
         } else if (req.method === "classify") {
           simulateWorkerMessage({ id: req.id, result: true });
-        } else if (req.method === "getInferredNTriples") {
-          simulateWorkerMessage({ id: req.id, result: "" });
+        } else if (req.method === "getInferredTripleBuffer") {
+          simulateWorkerMessage({ id: req.id, result: buildCombinedBuffer([]) });
         }
       });
 
@@ -300,16 +303,14 @@ describe("RdfReasoner — Store API", () => {
       const store = new Store();
       store.addQuad(quad(A, subClassOf, B, defaultGraph()));
 
-      const inferredNT =
-        "<http://example.org/A> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/C> .\n";
-      mockWorkerSequence(inferredNT);
+      mockWorkerSequence([quad(A, subClassOf, C, defaultGraph())]);
 
       await reasoner.classify(store);
 
       const methods = mocks.workerPostMessage.mock.calls.map(
         (c) => (c[0] as { method: string }).method,
       );
-      expect(methods).toEqual(["loadTripleBuffer", "classify", "getInferredNTriples"]);
+      expect(methods).toEqual(["loadTripleBuffer", "classify", "getInferredTripleBuffer"]);
 
       const inferredGraphNode = namedNode(INFERRED_GRAPH_IRI);
       const inferred = store.getQuads(null, null, null, inferredGraphNode);
@@ -322,7 +323,7 @@ describe("RdfReasoner — Store API", () => {
   // -------------------------------------------------------------------------
 
   describe("checkConsistency(store)", () => {
-    it("calls loadTripleBuffer → classify → isConsistent; returns boolean; does not call getInferredNTriples", async () => {
+    it("calls loadTripleBuffer → classify → isConsistent; returns boolean; does not call getInferredTripleBuffer", async () => {
       const reasoner = await makeReadyReasoner();
       const store = new Store();
       store.addQuad(quad(A, subClassOf, B, defaultGraph()));
@@ -336,7 +337,7 @@ describe("RdfReasoner — Store API", () => {
         } else if (req.method === "isConsistent") {
           simulateWorkerMessage({ id: req.id, result: true });
         }
-        // No response for getInferredNTriples — must not be called
+        // No response for getInferredTripleBuffer — must not be called
       });
 
       const result = await reasoner.checkConsistency(store);
@@ -346,7 +347,7 @@ describe("RdfReasoner — Store API", () => {
         (c) => (c[0] as { method: string }).method,
       );
       expect(methods).toEqual(["loadTripleBuffer", "classify", "isConsistent"]);
-      expect(methods).not.toContain("getInferredNTriples");
+      expect(methods).not.toContain("getInferredTripleBuffer");
     });
 
     it("does not write any quads to the store", async () => {
@@ -379,9 +380,7 @@ describe("RdfReasoner — Store API", () => {
     it("reason([...quads]) still returns Promise<Quad[]>", async () => {
       const reasoner = await makeReadyReasoner();
 
-      const inferredNT =
-        "<http://example.org/A> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/C> .\n";
-      mockWorkerSequence(inferredNT);
+      mockWorkerSequence([quad(A, subClassOf, C, defaultGraph())]);
 
       const result = await reasoner.reason([quad(A, subClassOf, B, defaultGraph())]);
       expect(Array.isArray(result)).toBe(true);
@@ -392,9 +391,7 @@ describe("RdfReasoner — Store API", () => {
       const reasoner = await makeReadyReasoner();
       const storeControl = new Store();
 
-      const inferredNT =
-        "<http://example.org/A> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/C> .\n";
-      mockWorkerSequence(inferredNT);
+      mockWorkerSequence([quad(A, subClassOf, C, defaultGraph())]);
 
       await reasoner.reason([quad(A, subClassOf, B, defaultGraph())]);
       expect(storeControl.size).toBe(0);
@@ -411,11 +408,6 @@ describe("RdfReasoner — Store API", () => {
       const store1 = new Store([quad(A, subClassOf, B, defaultGraph())]);
       const store2 = new Store([quad(B, subClassOf, C, defaultGraph())]);
 
-      const inferredNT1 =
-        "<http://example.org/A> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/C> .\n";
-      const inferredNT2 =
-        "<http://example.org/B> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/A> .\n";
-
       let callCount = 0;
       mocks.workerPostMessage.mockImplementation((msg: unknown) => {
         const req = msg as { id: number; method: string };
@@ -423,10 +415,12 @@ describe("RdfReasoner — Store API", () => {
           simulateWorkerMessage({ id: req.id, result: true });
         } else if (req.method === "classify") {
           simulateWorkerMessage({ id: req.id, result: true });
-        } else if (req.method === "getInferredNTriples") {
+        } else if (req.method === "getInferredTripleBuffer") {
           callCount++;
-          const nt = callCount === 1 ? inferredNT1 : inferredNT2;
-          simulateWorkerMessage({ id: req.id, result: nt });
+          const buf = callCount === 1
+            ? buildCombinedBuffer([quad(A, subClassOf, C, defaultGraph())])
+            : buildCombinedBuffer([quad(B, subClassOf, A, defaultGraph())]);
+          simulateWorkerMessage({ id: req.id, result: buf });
         }
       });
 

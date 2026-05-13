@@ -78,6 +78,10 @@ function median(arr) {
     : sorted[mid];
 }
 
+function avg(arr) {
+  return Math.round(arr.reduce((a, b) => a + b, 0) / arr.length);
+}
+
 async function benchOne(RdfReasoner, INFERRED_GRAPH_IRI, store) {
   const reasoner = new RdfReasoner();
   await reasoner.ready;
@@ -107,7 +111,7 @@ export const TS_CASES = [
   { name: 'LUBM schema + data', files: ['lubm.nt', 'lubm-data.nt'], expressiveness: 'SHI' },
 ];
 
-export async function benchAll(cases = TS_CASES, opts = { warmup: 1, runs: 3 }) {
+export async function benchAll(cases = TS_CASES, opts = { warmup: 2, runs: 5 }) {
   if (!existsSync(DIST_INDEX)) {
     throw new Error(`dist/index.js not found: ${DIST_INDEX}\nRun 'npm run build' first.`);
   }
@@ -163,13 +167,17 @@ export async function benchAll(cases = TS_CASES, opts = { warmup: 1, runs: 3 }) 
       continue;
     }
 
+    const allMs = runs.map(r => r.totalMs);
     const result = {
       ok: true,
-      totalMs: median(runs.map(r => r.totalMs)),
+      totalMs: avg(allMs),
+      medianMs: median(allMs),
+      minMs: Math.min(...allMs),
+      maxMs: Math.max(...allMs),
       inferredTriples: runs[0].inferredTriples,
     };
 
-    process.stderr.write(`${result.totalMs} ms total (inferred: ${result.inferredTriples})\n`);
+    process.stderr.write(`avg ${result.totalMs} ms, median ${result.medianMs} ms, min ${result.minMs}, max ${result.maxMs} (inferred: ${result.inferredTriples})\n`);
     results.push({ ...c, tripleCount, result });
   }
 
@@ -179,7 +187,7 @@ export async function benchAll(cases = TS_CASES, opts = { warmup: 1, runs: 3 }) 
 // Standalone mode
 if (process.argv[1] === __filename) {
   console.error('Running TypeScript-layer benchmark (standalone)...');
-  benchAll(TS_CASES, { warmup: 1, runs: 3 })
+  benchAll(TS_CASES, { warmup: 2, runs: 5 })
     .then(results => {
       console.log(JSON.stringify(results, null, 2));
     })

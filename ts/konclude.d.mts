@@ -13,6 +13,8 @@ export interface KoncludeReasonerInstance {
   classify(): boolean;
   isConsistent(): boolean;
   getInferredNTriples(): string;
+  buildInferredTripleBuffer(): number;
+  getInferredTripleBufferPtr(): number;
   reset(): void;
   /** Release Embind-managed C++ memory. Must be called when done. */
   delete(): void;

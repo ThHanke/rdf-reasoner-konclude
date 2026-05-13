@@ -66,6 +66,22 @@
 // Concept name (IRI)
 #include "Reasoner/Ontology/CIRIName.h"
 
+// ABox / Realization
+#include "Reasoner/Ontology/CABox.h"
+#include "Reasoner/Ontology/CIndividualReference.h"
+#include "Reasoner/Realization/CRealization.h"
+#include "Reasoner/Realization/CConceptRealization.h"
+#include "Reasoner/Realization/CRoleRealization.h"
+#include "Reasoner/Realization/CConceptRealizationInstantiatedVisitor.h"
+#include "Reasoner/Realization/CConceptRealizationConceptVisitor.h"
+#include "Reasoner/Realization/CRoleRealizationInstantiatedVisitor.h"
+#include "Reasoner/Realization/CRoleRealizationInstanceVisitor.h"
+#include "Reasoner/Realization/CRoleRealizationIndividualVisitor.h"
+#include "Reasoner/Realization/CRoleRealizationRoleVisitor.h"
+
+#include <functional>
+#include <tuple>
+
 // ─── Namespaces ──────────────────────────────────────────────────────────────
 
 using namespace Konclude;
@@ -77,6 +93,7 @@ using namespace Konclude::Reasoner::Consistence;
 using namespace Konclude::Reasoner::Generator;
 using namespace Konclude::Reasoner::Classifier;
 using namespace Konclude::Reasoner::Kernel::Manager;
+using namespace Konclude::Reasoner::Realization;
 using namespace Konclude::Config;
 using namespace Konclude::Control::Command;
 using namespace Konclude::Parser;
@@ -156,6 +173,11 @@ struct KoncludeReasoner::Impl {
     // Result flags
     bool mClassified   = false;
     bool mLoadError    = false;
+    bool mRealized     = false;
+
+    // Buffer for buildInferredTripleBuffer() output
+    std::vector<uint8_t> mResultBuffer;
+    int mResultBufferPtr = 0;
 
     Impl() {
         mConfigProvider = new WasmConfigProvider();
@@ -205,6 +227,9 @@ struct KoncludeReasoner::Impl {
         buildFreshOntology();
         mClassified  = false;
         mLoadError   = false;
+        mRealized    = false;
+        mResultBuffer.clear();
+        mResultBufferPtr = 0;
     }
 };
 
@@ -517,13 +542,31 @@ bool KoncludeReasoner::classify() {
     addReq(COntologyProcessingStep::OPSCONSISTENCY);
     addReq(COntologyProcessingStep::OPSPRECOMPUTESATURATION);
     addReq(COntologyProcessingStep::OPSCLASSCLASSIFY);
+    // Always include realization requirements.  For TBox-only ontologies Konclude
+    // marks Individual-Precomputing as failed and continues — same behaviour that
+    // already occurs for the simpler preprocessing steps on empty ABoxes.
+    addReq(COntologyProcessingStep::OPSOBJECTROPERTYCLASSIFY);
+    addReq(COntologyProcessingStep::OPSDATAROPERTYCLASSIFY);
+    addReq(COntologyProcessingStep::OPSINITREALIZE);
+    addReq(COntologyProcessingStep::OPSCONCEPTREALIZE);
+    addReq(COntologyProcessingStep::OPSROLEREALIZE);
 
-    // Blocking prepareOntology — returns once the last task callback fires.
-    // mCalculationManager is set on the reasoner manager thread in threadStarted(),
-    // which runs before any event is processed, so getStpu() is safe to call here
-    // (after prepareOntology returns, the reasoner manager thread has definitely
-    // initialized — guaranteed by the waitForCallback happens-before relationship).
+    // Single blocking prepareOntology.  mCalculationManager is set on the reasoner
+    // manager thread in threadStarted(), which runs before any event is processed,
+    // so getStpu() is safe to call here (after prepareOntology returns, the reasoner
+    // manager thread has definitely initialized — guaranteed by the waitForCallback
+    // happens-before relationship).
     mImpl->mReasonerManager->prepareOntology(mImpl->mOntology, reqList);
+
+    // Clean up requirement objects.
+    for (auto* r : reqList) delete r;
+    reqList.clear();
+
+    // hasIndividuals must be checked AFTER prepareOntology because OPSBUILD (inside
+    // prepareOntology) is what populates the ABox individual vector.
+    bool hasIndividuals = mImpl->mOntology->getABox() &&
+        mImpl->mOntology->getABox()->getIndividualVector(false) &&
+        mImpl->mOntology->getABox()->getIndividualVector(false)->getItemCount() > 0;
 
     // Shut down the STPU thread before returning.
     //
@@ -551,11 +594,6 @@ bool KoncludeReasoner::classify() {
         }
     }
 
-    // Clean up requirement objects.
-    for (auto* r : reqList) {
-        delete r;
-    }
-
     // Check whether classification actually completed.
     // CClassification::isOntologyClassified() is never set to true in this codebase,
     // so we check the processing step status directly.
@@ -568,9 +606,23 @@ bool KoncludeReasoner::classify() {
             COntologyProcessingStatus::PSCOMPLETELYYPROCESSED);
     mImpl->mClassified = classified;
 
-    double classifyMs = std::chrono::duration<double, std::milli>(
+    bool realized = false;
+    if (hasIndividuals) {
+        COntologyProcessingStepData* realizeStepData =
+            stepDataVec->getProcessingStepData(COntologyProcessingStep::OPSCONCEPTREALIZE);
+        realized = realizeStepData &&
+            realizeStepData->getProcessingStatus()->hasPartialProcessingFlags(
+                COntologyProcessingStatus::PSCOMPLETELYYPROCESSED);
+    }
+    mImpl->mRealized = realized;
+
+    double totalMs = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - t0).count();
-    fprintf(stderr, "{info} KoncludeReasoner >> Finished class classification in %.0f ms\n", classifyMs);
+    if (mImpl->mRealized) {
+        fprintf(stderr, "{info} KoncludeReasoner >> Finished classification+realization in %.0f ms\n", totalMs);
+    } else {
+        fprintf(stderr, "{info} KoncludeReasoner >> Finished class classification in %.0f ms\n", totalMs);
+    }
 
     return mImpl->mClassified;
 }
@@ -737,4 +789,391 @@ std::string KoncludeReasoner::getInferredNTriples() {
 
 void KoncludeReasoner::reset() {
     mImpl->reset();
+}
+
+// ─── Binary output buffer helpers ────────────────────────────────────────────
+
+namespace {
+
+// Intern table for building a string-table + triple-ID output buffer.
+// Stores strings deduped; assigns sequential uint32 IDs (top 2 bits = type tag).
+struct InternTable {
+    std::unordered_map<std::string, uint32_t> index;
+    std::vector<std::string> strings;
+
+    // typeTag: 0=NamedNode, 1=BlankNode, 2=Literal
+    uint32_t intern(const std::string& s, uint32_t typeTag = 0) {
+        auto key = std::to_string(typeTag) + "\x01" + s;
+        auto it = index.find(key);
+        if (it != index.end()) return it->second;
+        uint32_t id = static_cast<uint32_t>(strings.size()) | (typeTag << 30);
+        index[key] = id;
+        strings.push_back(s);
+        return id;
+    }
+
+    // Build [count:u32][offset0..N-1:u32][UTF-8 data...]
+    std::vector<uint8_t> build() const {
+        std::vector<uint8_t> out;
+        uint32_t n = static_cast<uint32_t>(strings.size());
+        auto pu32 = [&](uint32_t v) {
+            out.push_back(v & 0xff);
+            out.push_back((v >> 8) & 0xff);
+            out.push_back((v >> 16) & 0xff);
+            out.push_back((v >> 24) & 0xff);
+        };
+        pu32(n);
+        uint32_t off = 0;
+        for (auto& s : strings) { pu32(off); off += static_cast<uint32_t>(s.size()); }
+        for (auto& s : strings) out.insert(out.end(), s.begin(), s.end());
+        return out;
+    }
+};
+
+struct TupleHash3 {
+    std::size_t operator()(const std::tuple<uint32_t,uint32_t,uint32_t>& t) const {
+        auto h = std::hash<uint32_t>{};
+        std::size_t seed = h(std::get<0>(t));
+        seed ^= h(std::get<1>(t)) + 0x9e3779b9u + (seed << 6) + (seed >> 2);
+        seed ^= h(std::get<2>(t)) + 0x9e3779b9u + (seed << 6) + (seed >> 2);
+        return seed;
+    }
+};
+
+} // anonymous namespace
+
+// buildInferredTripleBuffer ────────────────────────────────────────────────────
+//
+// Assembles a combined output buffer:
+//   [strTableLen:u32][strTable...][tripleBuffer...]
+// where strTable = InternTable::build() and tripleBuffer = [s:u32,p:u32,o:u32,...].
+//
+// Returns total byte length; 0 if not classified.
+// The buffer is stored in mImpl->mResultBuffer; the raw pointer is mImpl->mResultBufferPtr.
+//
+int KoncludeReasoner::buildInferredTripleBuffer() {
+    if (!mImpl->mClassified) {
+        return 0;
+    }
+
+    InternTable intern;
+    std::vector<uint32_t> tripleIds;
+    std::unordered_set<std::tuple<uint32_t,uint32_t,uint32_t>, TupleHash3> emittedTriples;
+
+    auto emitTriple = [&](uint32_t s, uint32_t p, uint32_t o) {
+        auto key = std::make_tuple(s, p, o);
+        if (emittedTriples.insert(key).second) {
+            tripleIds.push_back(s);
+            tripleIds.push_back(p);
+            tripleIds.push_back(o);
+        }
+    };
+
+    // ── TBox: subClassOf + equivalentClass ────────────────────────────────────
+
+    CTaxonomy* taxonomy = mImpl->mOntology->getConceptTaxonomy();
+    if (taxonomy) {
+        const std::string rdfsSubClassOf =
+            "http://www.w3.org/2000/01/rdf-schema#subClassOf";
+        const std::string owlEquivClass =
+            "http://www.w3.org/2002/07/owl#equivalentClass";
+        static const std::string owlThing =
+            "http://www.w3.org/2002/07/owl#Thing";
+        static const std::string owlNothing =
+            "http://www.w3.org/2002/07/owl#Nothing";
+
+        uint32_t pSubClass = intern.intern(rdfsSubClassOf);
+        uint32_t pEquiv    = intern.intern(owlEquivClass);
+
+        auto conceptIri = [](CConcept* c) -> std::string {
+            if (!c) return "";
+            QString q = CIRIName::getRecentIRIName(c->getClassNameLinker());
+            return q.empty() ? "" : std::string(q);
+        };
+
+        QHash<CConcept*, CHierarchyNode*>* nodeHash = taxonomy->getConceptHierarchyNodeHash();
+        if (nodeHash) {
+            std::unordered_map<CHierarchyNode*, std::vector<std::string>> nodeToIris;
+            for (auto it = nodeHash->constBegin(), itEnd = nodeHash->constEnd(); it != itEnd; ++it) {
+                CHierarchyNode* node = it.value();
+                if (!node || !node->isActive()) continue;
+                std::string iri = conceptIri(it.key());
+                if (!iri.empty() && iri != owlNothing) {
+                    nodeToIris[node].push_back(iri);
+                }
+            }
+
+            // equivalentClass
+            for (auto& [node, iris] : nodeToIris) {
+                if (iris.size() < 2) continue;
+                for (size_t i = 0; i < iris.size(); ++i) {
+                    for (size_t j = 0; j < iris.size(); ++j) {
+                        if (i == j) continue;
+                        emitTriple(intern.intern(iris[i]), pEquiv, intern.intern(iris[j]));
+                    }
+                }
+            }
+
+            // pick node representative: lowest concept tag
+            auto nodeRep = [&](CHierarchyNode* node) -> std::string {
+                if (!node) return "";
+                QList<CConcept*>* list = node->getEquivalentConceptList();
+                if (!list) return "";
+                CConcept* best = nullptr;
+                qint64 bestTag = std::numeric_limits<qint64>::max();
+                for (CConcept* c : *list) {
+                    if (!c) continue;
+                    std::string iri = conceptIri(c);
+                    if (iri.empty()) continue;
+                    qint64 tag = c->getConceptTag();
+                    if (tag < bestTag) { bestTag = tag; best = c; }
+                }
+                return best ? conceptIri(best) : "";
+            };
+
+            // subClassOf
+            for (auto& [node, iris] : nodeToIris) {
+                std::string childIri = nodeRep(node);
+                if (childIri.empty() || childIri == owlNothing || childIri == owlThing) continue;
+                QSet<CHierarchyNode*>* parents = node->getParentNodeSet();
+                if (!parents) continue;
+                for (CHierarchyNode* parentNode : *parents) {
+                    if (nodeToIris.count(parentNode) == 0) continue;
+                    std::string parentIri = nodeRep(parentNode);
+                    if (parentIri.empty() || parentIri == owlNothing) continue;
+                    emitTriple(intern.intern(childIri), pSubClass, intern.intern(parentIri));
+                }
+            }
+        }
+    }
+
+    // ── ABox: rdf:type + object property assertions ───────────────────────────
+
+    if (mImpl->mRealized) {
+        CRealization* real = mImpl->mOntology->getRealization();
+        if (real) {
+            CConceptRealization* conReal = real->getConceptRealization();
+            CRoleRealization*    roleReal = real->getRoleRealization();
+
+            static const std::string rdfType =
+                "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+            static const std::string owlTopObjProp =
+                "http://www.w3.org/2002/07/owl#topObjectProperty";
+            static const std::string owlBottomObjProp =
+                "http://www.w3.org/2002/07/owl#bottomObjectProperty";
+            static const std::string owlThing2 =
+                "http://www.w3.org/2002/07/owl#Thing";
+            static const std::string owlNothing2 =
+                "http://www.w3.org/2002/07/owl#Nothing";
+
+            uint32_t pRdfType = intern.intern(rdfType);
+
+            CIndividualVector* indiVec =
+                mImpl->mOntology->getABox()->getIndividualVector(false);
+            qint64 indiCount = indiVec ? indiVec->getItemCount() : 0;
+
+            if (conReal) {
+                // Concept type visitor structs
+                struct ConceptNameVisitor : CConceptRealizationConceptVisitor {
+                    std::string iri;
+                    bool visitConcept(CConcept* c, CConceptRealization*) override {
+                        if (!c) return true;
+                        QString q = CIRIName::getRecentIRIName(c->getClassNameLinker());
+                        if (!q.empty()) { iri = std::string(q); return false; }
+                        return true;
+                    }
+                };
+
+                struct TypeVisitor : CConceptRealizationInstantiatedVisitor {
+                    InternTable* intern;
+                    uint32_t pRdfType;
+                    uint32_t indiId;
+                    std::vector<uint32_t>* tripleIds;
+                    std::unordered_set<std::tuple<uint32_t,uint32_t,uint32_t>, TupleHash3>* emitted;
+                    const std::string* owlThing;
+                    const std::string* owlNothing;
+
+                    bool visitType(CConceptInstantiatedItem* item, CConceptRealization* cr) override {
+                        ConceptNameVisitor cv;
+                        cr->visitConcepts(item, &cv);
+                        if (cv.iri.empty() || cv.iri == *owlThing || cv.iri == *owlNothing)
+                            return true;
+                        uint32_t cId = intern->intern(cv.iri);
+                        auto key = std::make_tuple(indiId, pRdfType, cId);
+                        if (emitted->insert(key).second) {
+                            tripleIds->push_back(indiId);
+                            tripleIds->push_back(pRdfType);
+                            tripleIds->push_back(cId);
+                        }
+                        return true;
+                    }
+                };
+
+                TypeVisitor tv;
+                tv.intern      = &intern;
+                tv.pRdfType    = pRdfType;
+                tv.tripleIds   = &tripleIds;
+                tv.emitted     = &emittedTriples;
+                tv.owlThing    = &owlThing2;
+                tv.owlNothing  = &owlNothing2;
+
+                for (qint64 i = 0; i < indiCount; ++i) {
+                    CIndividual* indi = indiVec->getData(i);
+                    if (!indi) continue;
+                    QString indiQ = CIRIName::getRecentIRIName(indi->getIndividualNameLinker());
+                    if (indiQ.empty()) continue;
+                    std::string indiIri(indiQ);
+                    tv.indiId = intern.intern(indiIri);
+                    conReal->visitAllTypes(indi, &tv);
+                }
+            }
+
+            if (roleReal) {
+                // Role assertion visitor structs
+                struct RoleNameVisitor : CRoleRealizationRoleVisitor {
+                    std::string iri;
+                    bool visitRole(CRole* role, CRoleRealization*) override {
+                        if (!role) return true;
+                        QString q = CIRIName::getRecentIRIName(role->getPropertyNameLinker());
+                        if (!q.empty()) { iri = std::string(q); return false; }
+                        return true;
+                    }
+                };
+
+                struct TargetIndiVisitor : CRoleRealizationIndividualVisitor {
+                    InternTable* intern;
+                    uint32_t srcId;
+                    uint32_t roleId;
+                    std::vector<uint32_t>* tripleIds;
+                    std::unordered_set<std::tuple<uint32_t,uint32_t,uint32_t>, TupleHash3>* emitted;
+
+                    bool visitIndividual(const CIndividualReference& indiRef, CRoleRealization*) override {
+                        CIndividual* tgt = indiRef.getIndividual();
+                        if (!tgt) return true;
+                        QString q = CIRIName::getRecentIRIName(tgt->getIndividualNameLinker());
+                        if (q.empty()) return true;
+                        uint32_t tgtId = intern->intern(std::string(q));
+                        auto key = std::make_tuple(srcId, roleId, tgtId);
+                        if (emitted->insert(key).second) {
+                            tripleIds->push_back(srcId);
+                            tripleIds->push_back(roleId);
+                            tripleIds->push_back(tgtId);
+                        }
+                        return true;
+                    }
+                };
+
+                struct TargetInstVisitor : CRoleRealizationInstanceVisitor {
+                    CRoleRealization* roleReal;
+                    TargetIndiVisitor* indiVisitor;
+
+                    bool visitRoleInstance(const CRealizationIndividualInstanceItemReference& ref,
+                                           CRoleRealization* rr) override {
+                        rr->visitIndividuals(ref, indiVisitor);
+                        return true;
+                    }
+                };
+
+                struct RoleInstVisitor : CRoleRealizationInstantiatedVisitor {
+                    CRoleRealization* roleReal;
+                    InternTable* intern;
+                    uint32_t srcId;
+                    std::vector<uint32_t>* tripleIds;
+                    std::unordered_set<std::tuple<uint32_t,uint32_t,uint32_t>, TupleHash3>* emitted;
+                    const std::string* owlTopObjProp;
+                    const std::string* owlBottomObjProp;
+                    CIndividual* srcIndi;
+
+                    bool visitRoleInstantiated(CRoleInstantiatedItem* roleItem, CRoleRealization* rr) override {
+                        RoleNameVisitor rv;
+                        rr->visitRoles(roleItem, &rv);
+                        if (rv.iri.empty() || rv.iri == *owlTopObjProp || rv.iri == *owlBottomObjProp)
+                            return true;
+                        uint32_t roleId = intern->intern(rv.iri);
+
+                        TargetIndiVisitor tiv;
+                        tiv.intern    = intern;
+                        tiv.srcId     = srcId;
+                        tiv.roleId    = roleId;
+                        tiv.tripleIds = tripleIds;
+                        tiv.emitted   = emitted;
+
+                        TargetInstVisitor tinstv;
+                        tinstv.roleReal    = rr;
+                        tinstv.indiVisitor = &tiv;
+
+                        CRealizationIndividualInstanceItemReference srcRef =
+                            rr->getRoleInstanceItemReference(srcIndi);
+                        rr->visitTargetIndividuals(srcRef, roleItem, &tinstv);
+                        return true;
+                    }
+                };
+
+                for (qint64 i = 0; i < indiCount; ++i) {
+                    CIndividual* indi = indiVec->getData(i);
+                    if (!indi) continue;
+                    QString indiQ = CIRIName::getRecentIRIName(indi->getIndividualNameLinker());
+                    if (indiQ.empty()) continue;
+                    std::string indiIri(indiQ);
+                    uint32_t srcId = intern.intern(indiIri);
+
+                    RoleInstVisitor riv;
+                    riv.roleReal         = roleReal;
+                    riv.intern           = &intern;
+                    riv.srcId            = srcId;
+                    riv.tripleIds        = &tripleIds;
+                    riv.emitted          = &emittedTriples;
+                    riv.owlTopObjProp    = &owlTopObjProp;
+                    riv.owlBottomObjProp = &owlBottomObjProp;
+                    riv.srcIndi          = indi;
+
+                    CRealizationIndividualInstanceItemReference srcRef =
+                        roleReal->getRoleInstanceItemReference(indi);
+                    roleReal->visitSourceIndividualRoles(srcRef, &riv);
+                }
+            }
+        }
+    }
+
+    // ── Assemble combined buffer [strTableLen:u32][strTable][tripleBuffer] ────
+
+    std::vector<uint8_t> strTable = intern.build();
+    uint32_t strTableLen = static_cast<uint32_t>(strTable.size());
+
+    size_t totalLen = 4 + strTableLen + tripleIds.size() * 4;
+    mImpl->mResultBuffer.resize(totalLen);
+    uint8_t* p = mImpl->mResultBuffer.data();
+
+    // Write strTableLen as little-endian u32
+    p[0] = strTableLen & 0xff;
+    p[1] = (strTableLen >> 8) & 0xff;
+    p[2] = (strTableLen >> 16) & 0xff;
+    p[3] = (strTableLen >> 24) & 0xff;
+    p += 4;
+
+    // Write strTable
+    std::memcpy(p, strTable.data(), strTableLen);
+    p += strTableLen;
+
+    // Write triple IDs
+    for (uint32_t id : tripleIds) {
+        p[0] = id & 0xff;
+        p[1] = (id >> 8) & 0xff;
+        p[2] = (id >> 16) & 0xff;
+        p[3] = (id >> 24) & 0xff;
+        p += 4;
+    }
+
+    mImpl->mResultBufferPtr = reinterpret_cast<int>(mImpl->mResultBuffer.data());
+
+    fprintf(stderr, "{info} KoncludeReasoner >> buildInferredTripleBuffer: %zu triples, %zu bytes\n",
+        tripleIds.size() / 3, totalLen);
+
+    return static_cast<int>(totalLen);
+}
+
+// getInferredTripleBufferPtr ───────────────────────────────────────────────────
+
+int KoncludeReasoner::getInferredTripleBufferPtr() {
+    return mImpl->mResultBufferPtr;
 }

@@ -44,6 +44,10 @@ function median(arr) {
   return s.length % 2 === 0 ? Math.round((s[m - 1] + s[m]) / 2) : s[m];
 }
 
+function avg(arr) {
+  return Math.round(arr.reduce((a, b) => a + b, 0) / arr.length);
+}
+
 export const BINARY_CASES = [
   { name: 'LUBM schema',    files: ['lubm.nt'] },
   { name: 'GALEN',          files: ['galen.nt'] },
@@ -98,11 +102,13 @@ export async function benchAll(cases = BINARY_CASES, opts = { warmup: 2, runs: 5
       writerRuns.push(Math.round(performance.now() - t0));
     }
 
-    const binaryMs = median(binaryRuns);
-    const writerMs = median(writerRuns);
+    const binaryMs = avg(binaryRuns);
+    const binaryMed = median(binaryRuns);
+    const writerMs = avg(writerRuns);
+    const writerMed = median(writerRuns);
 
-    process.stderr.write(`binary ${binaryMs} ms, writer ${writerMs} ms\n`);
-    results.push({ ...c, tripleCount, result: { ok: true, binaryMs, writerMs } });
+    process.stderr.write(`binary avg ${binaryMs} ms (med ${binaryMed}), writer avg ${writerMs} ms (med ${writerMed})\n`);
+    results.push({ ...c, tripleCount, result: { ok: true, binaryMs, binaryMed, writerMs, writerMed } });
   }
 
   return results;
@@ -119,14 +125,14 @@ if (process.argv[1] === __filename) {
   benchAll(BINARY_CASES, { warmup: 2, runs: 5 }).then(results => {
     console.log('## Binary Encoding Micro-benchmark\n');
     console.log('Compares `encodeToBuffers` (binary protocol) vs `n3.Writer` (old NTriples path).');
-    console.log('JS-only — no WASM. Median of 5 runs after 2 warm-up rounds.\n');
-    console.log('| Ontology | Triples | Binary encode | n3.Writer (ref) |');
+    console.log('JS-only — no WASM. Average of 5 runs after 2 warm-up rounds.\n');
+    console.log('| Ontology | Triples | Binary avg (med) | n3.Writer avg (med) |');
     console.log('|---|---|---|---|');
     for (const r of results) {
       if (r.result?.error) {
         console.log(`| ${r.name} | — | SKIP | SKIP |`);
       } else {
-        console.log(`| ${r.name} | ${r.tripleCount} | ${fmtMs(r.result.binaryMs)} | ${fmtMs(r.result.writerMs)} |`);
+        console.log(`| ${r.name} | ${r.tripleCount} | ${fmtMs(r.result.binaryMs)} (${fmtMs(r.result.binaryMed)}) | ${fmtMs(r.result.writerMs)} (${fmtMs(r.result.writerMed)}) |`);
       }
     }
     console.log('');

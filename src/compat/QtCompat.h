@@ -2174,4 +2174,82 @@ namespace Konclude { namespace Reasoner { namespace Kernel { namespace Process {
     using ::qHash;
 }}}}
 
+// ---------------------------------------------------------------------------
+// Konclude LOG → stderr intercept.
+//
+// QtCompat.h is force-included before every vendor .cpp via CMake -include,
+// so these definitions are seen first. The patch to CLogger.h wraps its own
+// LOG*LEVEL definitions in #ifndef WASM_LOG_OVERRIDE, so ours win.
+//
+// WASM_LOG_LEVEL (compile definition, default 1):
+//   1 = INFO from key domains + WARN/ERROR from all
+//   2 = INFO from all domains + WARN/ERROR from all
+// ---------------------------------------------------------------------------
+#ifndef WASM_LOG_OVERRIDE
+#define WASM_LOG_OVERRIDE
+
+#include <cstdio>
+#include <cstring>
+#include <time.h>
+
+#ifndef WASM_LOG_MS_DEFINED
+#define WASM_LOG_MS_DEFINED
+inline static long long _wasmLogMs() {
+    static long long _t0 = []() -> long long {
+        struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
+        return (long long)ts.tv_sec * 1000LL + ts.tv_nsec / 1000000LL;
+    }();
+    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (long long)ts.tv_sec * 1000LL + ts.tv_nsec / 1000000LL - _t0;
+}
+#endif
+
+#ifndef WASM_LOG_LEVEL
+#  define WASM_LOG_LEVEL 1
+#endif
+
+inline static bool _wasmInfoDomain(const char* domain) {
+#if WASM_LOG_LEVEL >= 2
+    (void)domain;
+    return true;
+#else
+    return strstr(domain, "BackendCache") ||
+           strstr(domain, "Realizer")     ||
+           strstr(domain, "Classifier")   ||
+           strstr(domain, "Precomputer");
+#endif
+}
+
+#define LOGNOTICELEVEL(domain, message, object)
+
+#define LOGINFOLEVEL(domain, message, object)                                   \
+    do {                                                                         \
+        QString _qdomain(domain); const char* _d = _qdomain.c_str();            \
+        if (_wasmInfoDomain(_d)) {                                               \
+            QString _qmsg(message);                                              \
+            fprintf(stderr, "{info} [%s @%lldms] %s\n",                         \
+                    _d, _wasmLogMs(), _qmsg.c_str());                           \
+        }                                                                        \
+    } while(0)
+
+#define LOGWARNINGLEVEL(domain, message, object)                                 \
+    do {                                                                         \
+        QString _qwd(domain); QString _qwm(message);                            \
+        fprintf(stderr, "{warn} [%s @%lldms] %s\n",                             \
+                _qwd.c_str(), _wasmLogMs(), _qwm.c_str());                      \
+    } while(0)
+
+#define LOGERRORLEVEL(domain, message, object)                                   \
+    do {                                                                         \
+        QString _qed(domain); QString _qem(message);                            \
+        fprintf(stderr, "{error} [%s @%lldms] %s\n",                            \
+                _qed.c_str(), _wasmLogMs(), _qem.c_str());                      \
+    } while(0)
+
+#define LOGEXCEPTIONLEVEL(domain, message, object) LOGERRORLEVEL(domain, message, object)
+#define LOGCATASTROPHICLEVEL(domain, message, object) LOGERRORLEVEL(domain, message, object)
+#define LOGCUSTOMLEVEL(level, domain, message, object) LOGINFOLEVEL(domain, message, object)
+
+#endif // WASM_LOG_OVERRIDE
+
 #endif // QTCOMPAT_H
