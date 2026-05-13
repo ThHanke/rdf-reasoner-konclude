@@ -11,6 +11,7 @@ import { dirname, join } from 'node:path';
 import { benchAll as nativeBenchAll, NATIVE_CASES } from './native-runner.mjs';
 import { benchAll as wasmBenchAll, WASM_CASES } from './wasm-runner.mjs';
 import { benchAll as tsBenchAll, TS_CASES } from './ts-runner.mjs';
+import { benchAll as binaryBenchAll, BINARY_CASES } from './binary-runner.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, '../..');
@@ -53,6 +54,15 @@ async function main() {
     tsResults = [];
   }
 
+  console.error('\nRunning binary encoding micro-benchmark...');
+  let binaryResults;
+  try {
+    binaryResults = await binaryBenchAll(BINARY_CASES, { warmup: 2, runs: 5 });
+  } catch (e) {
+    console.error(`Binary benchmark failed: ${e.message}`);
+    binaryResults = [];
+  }
+
   const nativeVersionRow = nativeResults.find(r => r.result?.nativeVersion);
   const nativeVersion = nativeVersionRow?.result?.nativeVersion ?? 'unknown';
   const nativeThreads = nativeVersionRow?.result?.threads ?? 'unknown';
@@ -71,9 +81,10 @@ async function main() {
   const nativeByName = Object.fromEntries(nativeResults.map(r => [r.name, r]));
   const wasmByName   = Object.fromEntries(wasmResults.map(r => [r.name, r]));
   const tsByName     = Object.fromEntries(tsResults.map(r => [r.name, r]));
+  const binaryByName = Object.fromEntries(binaryResults.map(r => [r.name, r]));
 
-  const header = '| Ontology | Exp. | NTriples | Native parse ¹ | Native preprocess+precompute+classify ² | WASM load ¹ | WASM classify ² | WASM total | TS total ³ | Ratio ² |';
-  const sep    = '|---|---|---|---|---|---|---|---|---|---|';
+  const header = '| Ontology | Exp. | NTriples | Native parse ¹ | Native preprocess+precompute+classify ² | WASM load ¹ | WASM classify ² | WASM total | TS total ³ | Enc (binary) ⁴ | Ratio ² |';
+  const sep    = '|---|---|---|---|---|---|---|---|---|---|---|';
   console.log(header);
   console.log(sep);
 
@@ -81,6 +92,7 @@ async function main() {
     const nc = nativeByName[c.name];
     const wc = wasmByName[c.name];
     const tc = tsByName[c.name];
+    const bc = binaryByName[c.name];
 
     const nt  = wc?.tripleCount ?? '—';
     const exp = c.expressiveness;
@@ -119,14 +131,22 @@ async function main() {
         : null;
     const wasmClassifyMs = wc?.result?.ok ? wc.result.classifyMs : null;
 
-    console.log(`| ${c.name} | ${exp} | ${nt} | ${nParse} | ${nClassify} | ${wLoad} | ${wClassify} | ${wTotal} | ${tsTotal} | ${ratioStr(wasmClassifyMs, nativeClassifyMs)} |`);
+    let encBinary = '—';
+    if (bc?.result?.ok) {
+      encBinary = fmtMs(bc.result.binaryMs);
+    } else if (bc?.result?.error === 'fixture missing') {
+      encBinary = 'SKIP';
+    }
+
+    console.log(`| ${c.name} | ${exp} | ${nt} | ${nParse} | ${nClassify} | ${wLoad} | ${wClassify} | ${wTotal} | ${tsTotal} | ${encBinary} | ${ratioStr(wasmClassifyMs, nativeClassifyMs)} |`);
   }
 
   console.log('');
   console.log('**Notes:**');
   console.log('¹ Native parse (OWL 2 XML) and WASM load (NTriples/Raptor2) use different input formats — **not comparable**.');
   console.log('² "Native preprocess+precompute+classify" and "WASM classify" perform the same logical work (in-memory OWL model → class hierarchy) and are **directly comparable**.');
-  console.log('³ "TS total" measures the full TypeScript layer: n3.Writer serialization + Worker postMessage RTT + n3.Parser + store.addQuad loop. JS overhead = TS total − WASM total.');
+  console.log('³ "TS total" measures the full TypeScript layer: binary encode + Worker postMessage RTT + n3.Parser + store.addQuad loop. JS overhead = TS total − WASM total.');
+  console.log('⁴ "Enc (binary)" is JS-only `encodeToBuffers` time; speedup vs old n3.Writer path shown in parentheses. Median of 5 runs.');
   console.log(`- Native: 3 runs per ontology, median reported. WASM / TS: 1 warm-up discarded, median of 3 measured runs.`);
   console.log(`- WASM runtime: Node.js ${process.version} with Emscripten pthreads build.`);
   console.log('- LUBM+data native input: NTriples merged to RDF/XML via rdflib (auto-generated, .gitignored).');

@@ -8,34 +8,56 @@ export interface EncodedBuffers {
 const enc = new TextEncoder();
 
 export class InternTable {
-  private readonly map = new Map<string, number>();
+  // Separate maps per term type to avoid key-prefix construction on cache hits.
+  private readonly namedNodes = new Map<string, number>();
+  private readonly blankNodes = new Map<string, number>();
+  private readonly literals = new Map<string, number>();
   private readonly entries: Uint8Array[] = [];
 
-  private intern(key: string, bytes: Uint8Array, type: 0 | 1 | 2): number {
-    const cached = this.map.get(key);
-    if (cached !== undefined) return cached;
-    const idx = this.entries.length;
+  private addEntry(bytes: Uint8Array, type: 0 | 1 | 2): number {
+    const id = (this.entries.length & 0x3fffffff) | (type << 30);
     this.entries.push(bytes);
-    const id = (idx & 0x3fffffff) | (type << 30);
-    this.map.set(key, id);
     return id;
   }
 
   encodeTerm(term: Term): number {
     switch (term.termType) {
-      case "NamedNode":
-        return this.intern(`n\0${term.value}`, enc.encode(term.value), 0);
-      case "BlankNode":
-        return this.intern(`b\0${term.value}`, enc.encode(term.value), 1);
+      case "NamedNode": {
+        let id = this.namedNodes.get(term.value);
+        if (id === undefined) {
+          id = this.addEntry(enc.encode(term.value), 0);
+          this.namedNodes.set(term.value, id);
+        }
+        return id;
+      }
+      case "BlankNode": {
+        let id = this.blankNodes.get(term.value);
+        if (id === undefined) {
+          id = this.addEntry(enc.encode(term.value), 1);
+          this.blankNodes.set(term.value, id);
+        }
+        return id;
+      }
       case "Literal": {
         const dt = term.datatype?.value ?? "";
         const lang = term.language ?? "";
         const raw = `${term.value}\0${dt}\0${lang}`;
-        return this.intern(`l\0${raw}`, enc.encode(raw), 2);
+        let id = this.literals.get(raw);
+        if (id === undefined) {
+          id = this.addEntry(enc.encode(raw), 2);
+          this.literals.set(raw, id);
+        }
+        return id;
       }
-      default:
+      default: {
         // DefaultGraph, Variable — map to empty named node
-        return this.intern("n\0", enc.encode(""), 0);
+        let id = this.namedNodes.get("");
+        if (id === undefined) {
+          id = this.addEntry(enc.encode(""), 0);
+          this.namedNodes.set("", id);
+        }
+        return id;
+      }
     }
   }
 
