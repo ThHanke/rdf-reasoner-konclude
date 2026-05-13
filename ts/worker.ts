@@ -117,6 +117,31 @@ export async function handleMessage(
         result = true;
         break;
       }
+      case "loadTripleBuffer": {
+        // args[0] = tripleBuffer (ArrayBuffer), args[1] = strTableBuffer (ArrayBuffer)
+        // Destroy the old C++ instance for a clean state (same as loadNTriples).
+        destroyReasoner();
+        const freshReasoner = getOrCreateReasoner(mod);
+        const tripleAB = args[0] as ArrayBuffer;
+        const strTableAB = args[1] as ArrayBuffer;
+        const tripleCount = tripleAB.byteLength / 12; // 3 × u32 per triple
+
+        const tripleBytes = tripleAB.byteLength;
+        const strBytes = strTableAB.byteLength;
+
+        const triplePtr = mod._malloc(tripleBytes);
+        const strTablePtr = mod._malloc(strBytes);
+        try {
+          mod.HEAPU8.set(new Uint8Array(tripleAB), triplePtr);
+          mod.HEAPU8.set(new Uint8Array(strTableAB), strTablePtr);
+          freshReasoner.loadTripleBuffer(triplePtr, tripleCount, strTablePtr, strBytes);
+        } finally {
+          mod._free(triplePtr);
+          mod._free(strTablePtr);
+        }
+        result = true;
+        break;
+      }
       case "classify": {
         result = reasoner.classify();
         break;

@@ -14,7 +14,8 @@
  */
 
 import type { Quad } from "@rdfjs/types";
-import { Writer, Parser, Store, DataFactory } from "n3";
+import { Parser, Store, DataFactory } from "n3";
+import { encodeToBuffers } from "./intern.js";
 
 export type { ReasoningOptions, ReasoningResult, StoreReasoningOptions } from "./types.js";
 export { INFERRED_GRAPH_IRI } from "./types.js";
@@ -52,22 +53,8 @@ type WorkerInboundMessage =
   | WorkerResponse;
 
 // ---------------------------------------------------------------------------
-// NTriples serialization helpers
+// NTriples output parser (input side uses binary protocol via ts/intern.ts)
 // ---------------------------------------------------------------------------
-
-function serializeToNTriples(quads: Iterable<Quad>): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const writer = new Writer({ format: "application/n-triples" });
-    for (const quad of quads) {
-      // Drop graph: NTriples is triple-only.
-      writer.addQuad(quad.subject, quad.predicate, quad.object);
-    }
-    writer.end((err, result) => {
-      if (err) reject(err);
-      else resolve(result);
-    });
-  });
-}
 
 function parseNTriples(ntriplesStr: string): Promise<Quad[]> {
   return new Promise((resolve, reject) => {
@@ -171,13 +158,18 @@ export class RdfReasoner {
 
   /**
    * Send a method call to the Worker and return a Promise for the result.
+   * Pass `transfer` to transfer ownership of ArrayBuffers (zero-copy).
    */
-  private _call(method: string, ...args: unknown[]): Promise<unknown> {
+  private _call(method: string, args: unknown[], transfer?: Transferable[]): Promise<unknown> {
     return new Promise((resolve, reject) => {
       const id = this.nextId++;
       this.pending.set(id, { resolve, reject });
       const request: WorkerRequest = { id, method, args };
-      this.worker.postMessage(request);
+      if (transfer && transfer.length > 0) {
+        this.worker.postMessage(request, transfer);
+      } else {
+        this.worker.postMessage(request);
+      }
     });
   }
 
@@ -219,12 +211,12 @@ export class RdfReasoner {
       store.removeQuads(store.getQuads(null, null, null, inferredGraphNode));
 
       const allQuads = store.getQuads(null, null, null, null);
-      const ntriplesStr = await serializeToNTriples(allQuads);
+      const { tripleBuffer, strTableBuffer } = encodeToBuffers(allQuads);
 
-      await this._call("loadNTriples", ntriplesStr);
-      await this._call("classify");
+      await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
+      await this._call("classify", []);
 
-      const resultStr = (await this._call("getInferredNTriples")) as string;
+      const resultStr = (await this._call("getInferredNTriples", [])) as string;
       const inferredQuads = await parseNTriples(resultStr);
 
       for (const q of inferredQuads) {
@@ -244,10 +236,10 @@ export class RdfReasoner {
     const result = this._queue.then(async () => {
       const mode = opts?.mode ?? "classify";
 
-      const ntriplesStr = await serializeToNTriples(quads);
+      const { tripleBuffer, strTableBuffer } = encodeToBuffers(quads);
 
-      await this._call("loadNTriples", ntriplesStr);
-      await this._call("classify");
+      await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
+      await this._call("classify", []);
 
       if (mode === "consistency") {
         // Consistency mode: no inferred quads are returned via reason().
@@ -256,7 +248,7 @@ export class RdfReasoner {
       }
 
       // "classify" and "full" both retrieve inferred triples.
-      const resultStr = (await this._call("getInferredNTriples")) as string;
+      const resultStr = (await this._call("getInferredNTriples", [])) as string;
       return parseNTriples(resultStr);
     });
     // Swallow errors so a failed call doesn't stall the queue for subsequent
@@ -314,10 +306,10 @@ export class RdfReasoner {
       ? input.getQuads(null, null, null, null)
       : input;
     const result = this._queue.then(async () => {
-      const ntriplesStr = await serializeToNTriples(quads);
-      await this._call("loadNTriples", ntriplesStr);
-      await this._call("classify");
-      return (await this._call("isConsistent")) as boolean;
+      const { tripleBuffer, strTableBuffer } = encodeToBuffers(quads);
+      await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
+      await this._call("classify", []);
+      return (await this._call("isConsistent", [])) as boolean;
     });
     this._queue = result.then(
       () => {},
