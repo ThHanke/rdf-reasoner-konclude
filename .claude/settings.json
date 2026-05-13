@@ -2,7 +2,33 @@
   "permissions": {
     "allow": [
       "Bash(git -C /home/hanke/rdf-reasoner-konclude/vendor/konclude checkout HEAD -- .)",
-      "Bash(git -C /home/hanke/rdf-reasoner-konclude/vendor/konclude status --short)"
+      "Bash(git -C /home/hanke/rdf-reasoner-konclude/vendor/konclude status --short)",
+      "Bash(ls*)",
+      "Bash(find*)",
+      "Bash(grep*)",
+      "Bash(cat*)",
+      "Bash(head*)",
+      "Bash(tail*)",
+      "Bash(wc*)",
+      "Bash(diff*)",
+      "Bash(git status*)",
+      "Bash(git log*)",
+      "Bash(git diff*)",
+      "Bash(git show*)",
+      "Bash(npm run build*)",
+      "Bash(npm test*)",
+      "Bash(npm run test*)",
+      "Bash(node*)",
+      "Bash(npx tsc*)",
+      "Bash(make build*)",
+      "Bash(make test*)",
+      "Bash(make smoke*)",
+      "Bash(make lint*)",
+      "Bash(make fmt*)",
+      "Bash(make patches*)",
+      "Bash(make reason*)",
+      "Bash(trunk check*)",
+      "Bash(trunk fmt*)"
     ]
   }
 }

@@ -8,26 +8,71 @@ OWL-DL tableau reasoning via [Konclude](https://github.com/konclude/Konclude) co
 ## Installation
 
 ```bash
-npm install rdf-reasoner-konclude n3
+npm install rdf-reasoner-konclude
 ```
 
-`n3` is a required peer dependency (used for NTriples serialization/deserialization).
+TypeScript users should also install the RDF.js type declarations:
+
+```bash
+npm install --save-dev @rdfjs/types
+```
+
+## CLI
+
+Run OWL-DL reasoning on a local file — no JavaScript required:
+
+```bash
+# One-off via npx
+npx rdf-reasoner-konclude --input ontology.ttl --output inferred.nt
+
+# Or install globally
+npm install -g rdf-reasoner-konclude
+owl-reason --input ontology.ttl
+```
+
+| Flag       | Short | Description                                    | Default                        |
+| ---------- | ----- | ---------------------------------------------- | ------------------------------ |
+| `--input`  | `-i`  | Input RDF file (`.nt` `.ttl` `.nq` `.trig`)    | stdin                          |
+| `--output` | `-o`  | Output file                                    | stdout                         |
+| `--mode`   | `-m`  | `classify` \| `consistency`                    | `classify`                     |
+| `--format` | `-f`  | Output format: `nt` \| `ttl` \| `nq` \| `trig` | auto from extension, else `nt` |
+
+Input format is auto-detected from the file extension; `--format` overrides both input and output format.
+
+Exit codes: `0` = success / consistent, `1` = inconsistent (consistency mode), `2` = error.
+
+### Docker
+
+No local Node.js needed — use the official image:
+
+```bash
+docker run --rm \
+  -v $(pwd):/data \
+  -w /data \
+  node:22-slim \
+  npx rdf-reasoner-konclude --input ont.ttl
+```
 
 ## Node.js quick-start
 
 ```typescript
-import { RdfReasoner, INFERRED_GRAPH_IRI } from 'rdf-reasoner-konclude';
-import { Store, Parser } from 'n3';
+import { RdfReasoner, INFERRED_GRAPH_IRI } from "rdf-reasoner-konclude";
+import { Store, Parser } from "n3";
 
 // Load your ontology into an N3 Store
 const store = new Store();
-const parser = new Parser({ format: 'Turtle' });
-parser.parse(`
+const parser = new Parser({ format: "Turtle" });
+parser.parse(
+  `
   @prefix owl: <http://www.w3.org/2002/07/owl#> .
   @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
   :A rdfs:subClassOf :B .
   :B rdfs:subClassOf :C .
-`, (err, quad) => { if (quad) store.addQuad(quad); });
+`,
+  (err, quad) => {
+    if (quad) store.addQuad(quad);
+  },
+);
 
 const reasoner = new RdfReasoner();
 await reasoner.ready;
@@ -36,7 +81,7 @@ await reasoner.reason(store);
 
 // Inferred triples are written into the INFERRED_GRAPH_IRI named graph
 const inferred = store.getQuads(null, null, null, INFERRED_GRAPH_IRI);
-console.log(inferred.map(q => `${q.subject.value} → ${q.object.value}`));
+console.log(inferred.map((q) => `${q.subject.value} → ${q.object.value}`));
 // e.g. [ ':A → :C' ]  (transitive subClassOf)
 
 reasoner.terminate();
@@ -47,8 +92,8 @@ No Worker setup needed — Node.js 18+ picks up the `"node"` export condition wh
 ## Browser / Vite quick-start
 
 ```typescript
-import { RdfReasoner, INFERRED_GRAPH_IRI } from 'rdf-reasoner-konclude';
-import { Store } from 'n3';
+import { RdfReasoner, INFERRED_GRAPH_IRI } from "rdf-reasoner-konclude";
+import { Store } from "n3";
 
 const store = new Store(/* ... your quads ... */);
 const reasoner = new RdfReasoner();
@@ -67,13 +112,13 @@ The browser build requires COOP/COEP HTTP headers for `SharedArrayBuffer` (used 
 
 ```typescript
 const reasoner = new RdfReasoner();
-await reasoner.ready;              // resolves when WASM module is loaded
+await reasoner.ready; // resolves when WASM module is loaded
 
-await reasoner.reason(store);      // classify + write inferred triples into store
-await reasoner.classify(store);    // alias for reason(store)
+await reasoner.reason(store); // classify + write inferred triples into store
+await reasoner.classify(store); // alias for reason(store)
 const ok = await reasoner.checkConsistency(store); // returns boolean
 
-reasoner.terminate();              // shut down the Worker
+reasoner.terminate(); // shut down the Worker
 ```
 
 `reason(store)` and `classify(store)` write inferred triples into the
@@ -88,14 +133,14 @@ Options for `reason(store, opts)` and `classify(store, opts)`:
 ```typescript
 interface StoreReasoningOptions {
   inferredGraph?: string; // IRI of the named graph for inferred triples
-                          // default: INFERRED_GRAPH_IRI
+  // default: INFERRED_GRAPH_IRI
 }
 ```
 
 ### `INFERRED_GRAPH_IRI`
 
 ```typescript
-import { INFERRED_GRAPH_IRI } from 'rdf-reasoner-konclude';
+import { INFERRED_GRAPH_IRI } from "rdf-reasoner-konclude";
 // "urn:konclude:inferred"
 ```
 
@@ -122,11 +167,11 @@ Cross-Origin-Embedder-Policy: require-corp
 export default {
   server: {
     headers: {
-      'Cross-Origin-Opener-Policy': 'same-origin',
-      'Cross-Origin-Embedder-Policy': 'require-corp',
+      "Cross-Origin-Opener-Policy": "same-origin",
+      "Cross-Origin-Embedder-Policy": "require-corp",
     },
   },
-}
+};
 ```
 
 ### nginx (production)
@@ -149,19 +194,19 @@ header {
 
 ```js
 // webpack.config.js
-module.exports = { experiments: { asyncWebAssembly: true } }
+module.exports = { experiments: { asyncWebAssembly: true } };
 ```
 
 ## Performance
 
 Benchmarked on an 8-core Linux host. Native = Konclude v0.7.0 binary; TS = Node.js 20 via this package. Threads: 8 (both native and WASM pthreads).
 
-| Ontology | Expressivity | NTriples | Native classify | TS total | Ratio |
-| --- | --- | --- | --- | --- | --- |
-| LUBM schema | SHI | 307 | 35 ms | 266 ms | ~7.3× |
-| GALEN | SHIF | 30 817 | 225 ms | 941 ms | ~4.2× |
-| Roberts family | SROIQ | 3 866 | 1 801 ms | 2 603 ms | ~1.4× |
-| LUBM schema + data | SHI | 100 850 | 160 ms | 2 104 ms | ~13× |
+| Ontology           | Expressivity | NTriples | Native classify | TS total | Ratio |
+| ------------------ | ------------ | -------- | --------------- | -------- | ----- |
+| LUBM schema        | SHI          | 307      | 35 ms           | 266 ms   | ~7.3× |
+| GALEN              | SHIF         | 30 817   | 225 ms          | 941 ms   | ~4.2× |
+| Roberts family     | SROIQ        | 3 866    | 1 801 ms        | 2 603 ms | ~1.4× |
+| LUBM schema + data | SHI          | 100 850  | 160 ms          | 2 104 ms | ~13×  |
 
 TS total includes NTriples serialization/deserialization (the main JS overhead).
 The WASM classify step alone is within 1.4×–7.3× of native. Run `npm run bench`
@@ -241,7 +286,7 @@ and `patches/` (every modification). To recompile: `docker compose run --rm buil
 
 See [NOTICE](NOTICE) for full third-party notices.
 
-> Liebig, T., Jaeger, M., Möller, R., & Möller, B. (2014). *Konclude: System Description.*
+> Liebig, T., Jaeger, M., Möller, R., & Möller, B. (2014). _Konclude: System Description._
 > Web Semantics, 27–28, 78–85. doi:10.1016/j.websem.2014.06.003
 
 ## Acknowledgements
