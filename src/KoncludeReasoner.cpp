@@ -56,6 +56,10 @@
 // Reasoner manager
 #include "Reasoner/Kernel/Manager/CReasonerManagerThread.h"
 
+// Caches started in threadStarted() but not stopped by upstream threadStopped()
+#include "Reasoner/Kernel/Cache/CComputedConsequencesCache.h"
+#include "Reasoner/Kernel/Cache/COccurrenceStatisticsCache.h"
+
 // Calc environment (for STPU access in quiesce-wait)
 #include "Reasoner/Kernel/Calculation/CConcurrentTaskCalculationEnvironment.h"
 
@@ -69,6 +73,7 @@
 // ABox / Realization
 #include "Reasoner/Ontology/CABox.h"
 #include "Reasoner/Ontology/CIndividualReference.h"
+#include "Reasoner/Realizer/CRealizerThread.h"
 #include "Reasoner/Realization/CRealization.h"
 #include "Reasoner/Realization/CConceptRealization.h"
 #include "Reasoner/Realization/CRoleRealization.h"
@@ -94,19 +99,58 @@ using namespace Konclude::Reasoner::Generator;
 using namespace Konclude::Reasoner::Classifier;
 using namespace Konclude::Reasoner::Kernel::Manager;
 using namespace Konclude::Reasoner::Realization;
+using namespace Konclude::Reasoner::Realizer;
 using namespace Konclude::Config;
 using namespace Konclude::Control::Command;
 using namespace Konclude::Parser;
 
-// Forward declaration of completeTask guard accessor (CSingleThreadTaskProcessorUnit.cpp override).
+// Forward declarations for STPU helpers (CSingleThreadTaskProcessorUnit.cpp override).
 namespace Konclude { namespace Scheduler {
     class CSingleThreadTaskProcessorUnit;
     std::mutex* stpuGetCompleteTaskGuard(CSingleThreadTaskProcessorUnit* stpu);
+    // Resets mProcessingStopped to false so startProcessing() re-enters processingLoop().
+    void stpuResetStopped(CSingleThreadTaskProcessorUnit* stpu);
 } }
 using namespace Konclude::Scheduler;
 
+// ─── WasmRealizationManager ───────────────────────────────────────────────────
+// Upstream CRealizationManager::~CRealizationManager() is empty — realizer
+// threads are never joined and keep accessing ontology memory after it's freed.
+// This subclass (a) stops each realizer on reset() so stale threads don't eat
+// pthread slots across calls, and (b) joins all remaining realizers in the
+// destructor so CThread::~CThread() → stopThread(true) runs before ~Impl()
+// frees mOntology.
+
+class WasmRealizationManager : public CRealizationManager {
+public:
+    using CRealizationManager::CRealizationManager;
+
+    // Called from Impl::reset() before delete mOntology.
+    // mOntoRealizerHash and mRealizerSet are protected in CRealizationManager.
+    void stopRealizerForOntology(CConcreteOntology* onto) {
+        CRealizer* r = mOntoRealizerHash.value(onto);
+        if (r) {
+            mOntoRealizerHash.remove(onto);
+            mRealizerSet.remove(r);
+            // Cast to CRealizerThread* so its virtual destructor dispatches
+            // correctly to ~COptimizedRepresentativeKPSetOntologyRealizingThread(),
+            // which calls CThread::~CThread() → stopThread(true) → pthread_join.
+            // CRealizer has no virtual destructor so delete-via-CRealizer* is UB.
+            delete static_cast<CRealizerThread*>(r);
+        }
+    }
+
+    ~WasmRealizationManager() override {
+        for (CRealizer* r : mRealizerSet) {
+            delete static_cast<CRealizerThread*>(r);
+        }
+    }
+};
+
 // ─── WasmReasonerManagerThread ───────────────────────────────────────────────
-// Subclass that exposes classificationMan so it can be injected after init.
+// Subclass that exposes classificationMan so it can be injected after init,
+// and overrides thread lifecycle to ensure all background threads are joined
+// before ~Impl() frees mOntology.
 
 class WasmReasonerManagerThread : public CReasonerManagerThread {
 public:
@@ -121,6 +165,55 @@ public:
         if (!cm) return nullptr;
         auto* env = dynamic_cast<CConcurrentTaskCalculationEnvironment*>(cm->getCalculationContext());
         return env ? env->getSingleTaskProcessorUnit() : nullptr;
+    }
+
+    // Replace stock CRealizationManager with WasmRealizationManager so that
+    // realizer threads are joined when the reasoner shuts down.
+    CReasonerManager* initializeManager(CConfigurationProvider* configProvider) override {
+        CReasonerManagerThread::initializeManager(configProvider);
+        // Thread has started but no events processed yet — safe to swap.
+        delete mRealizationManager;
+        mRealizationManager = new WasmRealizationManager(this);
+        return this;
+    }
+
+    // IU-1: zero out BlockThreadPool before the parent spawns them.
+    // initializeManager() reads mBlockThreadPoolThreadCount from config (default 1)
+    // then calls startThread() → threadStarted().  Our override intercepts
+    // threadStarted() and forces the count to 0 so no QtConcurrent::run()
+    // detached threads are created.  The upstream threadStopped() semaphore
+    // release/acquire is also guarded by (mBlockThreadPoolThreadCount > 0) so
+    // it correctly skips cleanup when count is 0.
+    // mBlockThreadPoolThreadCount is protected in CReasonerManagerThread.h.
+    void threadStarted() override {
+        mBlockThreadPoolThreadCount = 0;
+        CReasonerManagerThread::threadStarted();
+    }
+
+    // mBackendAssCache (CBackendRepresentativeMemoryCache, a CThread) is created
+    // in threadStarted() but never stopped by upstream threadStopped().  Join it
+    // here so its thread cannot access freed ontology memory after ~Impl() runs.
+    // mBackendAssCache, mCompConsCache, mOccStatsCache are all protected fields
+    // in CReasonerManagerThread.h — verified against upstream header.
+    void threadStopped() override {
+        CReasonerManagerThread::threadStopped();
+        // mBackendAssCache, mCompConsCache, mOccStatsCache are created in
+        // threadStarted() but not stopped by upstream threadStopped().
+        if (mBackendAssCache) {
+            mBackendAssCache->stopThread(true);
+            delete mBackendAssCache;
+            mBackendAssCache = nullptr;
+        }
+        if (mCompConsCache) {
+            mCompConsCache->stopThread(true);
+            delete mCompConsCache;
+            mCompConsCache = nullptr;
+        }
+        if (mOccStatsCache) {
+            mOccStatsCache->stopThread(true);
+            delete mOccStatsCache;
+            mOccStatsCache = nullptr;
+        }
     }
 };
 
@@ -165,15 +258,19 @@ struct KoncludeReasoner::Impl {
 
     // Ontology objects
     CConcreteOntology*            mOntology         = nullptr;
+    // Kept alive one extra reset() cycle so KPSet pthreads can finish their
+    // Emscripten exit-cleanup before the vtable is freed.
+    CConcreteOntology*            mPreviousOntology = nullptr;
 
     // Reasoning infrastructure
     WasmReasonerManagerThread*    mReasonerManager  = nullptr;
     CClassificationManager*       mClassManager     = nullptr;
 
     // Result flags
-    bool mClassified   = false;
-    bool mLoadError    = false;
-    bool mRealized     = false;
+    bool mClassified          = false;
+    bool mLoadError           = false;
+    bool mRealized            = false;
+    bool mHasIndividualsHint  = false; // true if owl:NamedIndividual triples seen
 
     // Buffer for buildInferredTripleBuffer() output
     std::vector<uint8_t> mResultBuffer;
@@ -205,9 +302,12 @@ struct KoncludeReasoner::Impl {
     }
 
     ~Impl() {
-        delete mOntology;
-        delete mReasonerManager;
+        // Stop all threads BEFORE freeing the ontology.
+        // threadStopped() (overridden) joins the realizer and BackendAssCache threads.
+        delete mReasonerManager; // joins CReasonerManagerThread; threadStopped() runs
         delete mClassManager;
+        delete mPreviousOntology;
+        delete mOntology;        // safe: all background threads have stopped
         delete mConfigProvider;
     }
 
@@ -221,13 +321,32 @@ struct KoncludeReasoner::Impl {
         delete bb;
     }
 
-    // Reset: destroy working ontology and build a fresh one.
+    // Reset: keep previous ontology alive one more cycle (KPSet pthreads may still
+    // be in Emscripten exit-cleanup touching its vtable), build a fresh one.
+    // IU-2: stop the realizer for the previous ontology so it cannot post stale
+    // events to the STPU or other shared objects after the ontology is swapped.
+    // The STPU itself is stopped in classify() (after the guard mutex) and
+    // restarted at the top of the next classify() call.
     void reset() {
-        delete mOntology;
+        // Stop the realizer for the current ontology (IU-2).
+        // Must happen BEFORE mPreviousOntology is deleted (two resets ago).
+        // The realizer thread is joined here so no stale callbacks fire after swap.
+        if (mOntology && mReasonerManager) {
+            WasmRealizationManager* rm =
+                static_cast<WasmRealizationManager*>(mReasonerManager->getRealizationManager());
+            if (rm) {
+                rm->stopRealizerForOntology(mOntology);
+            }
+        }
+
+        delete mPreviousOntology;
+        mPreviousOntology = mOntology;
+        mOntology = nullptr;
         buildFreshOntology();
-        mClassified  = false;
-        mLoadError   = false;
-        mRealized    = false;
+        mClassified         = false;
+        mLoadError          = false;
+        mRealized           = false;
+        mHasIndividualsHint = false;
         mResultBuffer.clear();
         mResultBufferPtr = 0;
     }
@@ -272,6 +391,30 @@ void KoncludeReasoner::loadTripleBuffer(int triplePtr, int tripleCount, int strT
         uint32_t end = (i + 1 < count) ? hdr[2 + i]
                                         : static_cast<uint32_t>(strDataLen);
         terms[i] = { strData + off, end - off };
+    }
+
+    // ── Detect owl:NamedIndividual assertions (realization gating) ───────────
+    // If any (? rdf:type owl:NamedIndividual) triple is present, realization
+    // requirements will be included in classify().  Absence = TBox-only path.
+    if (!mImpl->mHasIndividualsHint) {
+        static const char kRdfType[] = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+        static const char kOwlNI[]   = "http://www.w3.org/2002/07/owl#NamedIndividual";
+        uint32_t rtIdx = UINT32_MAX, niIdx = UINT32_MAX;
+        for (uint32_t i = 0; i < count; ++i) {
+            if (terms[i].len == sizeof(kRdfType)-1 &&
+                memcmp(terms[i].ptr, kRdfType, sizeof(kRdfType)-1) == 0) rtIdx = i;
+            if (terms[i].len == sizeof(kOwlNI)-1 &&
+                memcmp(terms[i].ptr, kOwlNI, sizeof(kOwlNI)-1) == 0) niIdx = i;
+        }
+        if (rtIdx != UINT32_MAX && niIdx != UINT32_MAX) {
+            const uint32_t* raw = reinterpret_cast<const uint32_t*>(triplePtr);
+            for (int i = 0; i < tripleCount; ++i) {
+                if (raw[i*3+1] == rtIdx && raw[i*3+2] == niIdx) {
+                    mImpl->mHasIndividualsHint = true;
+                    break;
+                }
+            }
+        }
     }
 
     // ── Build CRedlandStoredTriplesData (world / storage / model) ────────────
@@ -492,6 +635,11 @@ void KoncludeReasoner::loadNTriples(const std::string& ntriples) {
     // Mark as not yet classified (new data has been added).
     mImpl->mClassified = false;
 
+    if (!mImpl->mHasIndividualsHint &&
+        ntriples.find("owl#NamedIndividual") != std::string::npos) {
+        mImpl->mHasIndividualsHint = true;
+    }
+
     double loadMs = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - t0).count();
     fprintf(stderr, "{info} KoncludeReasoner >> Finished loading NTriples in %.0f ms\n", loadMs);
@@ -542,14 +690,26 @@ bool KoncludeReasoner::classify() {
     addReq(COntologyProcessingStep::OPSCONSISTENCY);
     addReq(COntologyProcessingStep::OPSPRECOMPUTESATURATION);
     addReq(COntologyProcessingStep::OPSCLASSCLASSIFY);
-    // Always include realization requirements.  For TBox-only ontologies Konclude
-    // marks Individual-Precomputing as failed and continues — same behaviour that
-    // already occurs for the simpler preprocessing steps on empty ABoxes.
     addReq(COntologyProcessingStep::OPSOBJECTROPERTYCLASSIFY);
     addReq(COntologyProcessingStep::OPSDATAROPERTYCLASSIFY);
-    addReq(COntologyProcessingStep::OPSINITREALIZE);
-    addReq(COntologyProcessingStep::OPSCONCEPTREALIZE);
-    addReq(COntologyProcessingStep::OPSROLEREALIZE);
+    // Only request realization when individuals are present.
+    // OPSINITREALIZE hangs indefinitely for TBox-only ontologies.
+    if (mImpl->mHasIndividualsHint) {
+        addReq(COntologyProcessingStep::OPSINITREALIZE);
+        addReq(COntologyProcessingStep::OPSCONCEPTREALIZE);
+        addReq(COntologyProcessingStep::OPSROLEREALIZE);
+    }
+
+    // Restart the STPU thread if it was stopped at the end of a prior classify()
+    // call.  On the very first classify() call the STPU is already running (started
+    // by CConfigDependedCalculationEnvironmentFactory during initializeManager()),
+    // so startProcessing() is a no-op there (guarded by the isRunning() check).
+    {
+        CSingleThreadTaskProcessorUnit* stpu = mImpl->mReasonerManager->getStpu();
+        if (stpu) {
+            stpu->startProcessing();
+        }
+    }
 
     // Single blocking prepareOntology.  mCalculationManager is set on the reasoner
     // manager thread in threadStarted(), which runs before any event is processed,
@@ -568,29 +728,32 @@ bool KoncludeReasoner::classify() {
         mImpl->mOntology->getABox()->getIndividualVector(false) &&
         mImpl->mOntology->getABox()->getIndividualVector(false)->getItemCount() > 0;
 
-    // Shut down the STPU thread before returning.
+    // Quiesce the STPU after every classify() call.
     //
-    // Root cause of teardown crash: STPU is an orphaned pthread that keeps running
-    // after prepareOntology() returns.  Even if its current completeTask() call has
-    // finished (confirmed via the guard mutex), it may re-enter completeTask() for
-    // stale events posted mid-classification, and those calls race with ~Impl().
+    // Root cause of getWasmTableEntry crash on sequential calls:
+    // The STPU is a long-lived pthread.  After prepareOntology() returns it may
+    // still be processing stale events from this call's calculation environment.
+    // When reset() swaps the ontology and the next classify() starts, those stale
+    // events reference freed memory → bad virtual dispatch → crash.
     //
-    // Fix: after the completeTask guard confirms the last invocation is done, we:
-    //   1. stopProcessing()  — sets mProcessingStopped, so processingLoop() exits
-    //   2. signalizeEvent()  — wakes STPU if it is blocked on mProcessingWakeUpSemaphore
-    //   3. stopThread(true)  — joins the pthread (via CThread::stopThread)
-    // All three methods are already public on CSingleThreadTaskProcessorUnit.
+    // Fix: wait for the last completeTask() to finish (guard mutex), then stop
+    // and join the STPU thread so it holds no references to this call's objects.
+    // Before the next prepareOntology() (at classify() entry below), reset
+    // mProcessingStopped and call startProcessing() to restart the thread.
     {
         CSingleThreadTaskProcessorUnit* stpu = mImpl->mReasonerManager->getStpu();
         if (stpu) {
-            // Wait for the last completeTask() to finish before stopping.
+            // Wait for any in-flight completeTask() to finish.
             std::mutex* guard = stpuGetCompleteTaskGuard(stpu);
             if (guard) {
                 std::lock_guard<std::mutex> lk(*guard);
             }
+            // Kill the STPU pthread so it holds no stale references.
             stpu->stopProcessing();   // sets mProcessingStopped = true
-            stpu->signalizeEvent();   // releases wake-up semaphore if STPU is blocked
+            stpu->signalizeEvent();   // wakes blocking semaphore so loop can exit
             stpu->stopThread(true);   // pthread_join — STPU thread is fully dead
+            // Reset mProcessingStopped so startProcessing() works on the next call.
+            stpuResetStopped(stpu);
         }
     }
 
