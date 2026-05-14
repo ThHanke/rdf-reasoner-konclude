@@ -25,6 +25,21 @@ namespace Konclude {
 			auto it = sCompleteTaskGuards.find(stpu);
 			return it != sCompleteTaskGuards.end() ? it->second : nullptr;
 		}
+
+		// Accessor subclass: only purpose is to reach the protected mProcessingStopped
+		// field so we can reset it to false before restarting the STPU thread.
+		// The cast is safe because the actual dynamic type IS CSingleThreadTaskProcessorUnit
+		// (not a deeper subclass), so the memory layout is identical.
+		class StpuRestartAccessor : public CSingleThreadTaskProcessorUnit {
+		public:
+			void resetStopped() { mProcessingStopped = false; }
+		};
+
+		// Reset mProcessingStopped so that startProcessing() → processingLoop() will
+		// not exit immediately after the STPU is restarted for the next classify() call.
+		void stpuResetStopped(CSingleThreadTaskProcessorUnit* stpu) {
+			static_cast<StpuRestartAccessor*>(stpu)->resetStopped();
+		}
 	}
 }
 
