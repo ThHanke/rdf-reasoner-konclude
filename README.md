@@ -201,15 +201,18 @@ module.exports = { experiments: { asyncWebAssembly: true } };
 
 Benchmarked on an 8-core Linux host. Native = Konclude v0.7.0 Docker image; WASM = Node.js 20 via this package. Both use 8 threads. Median of 3 runs after 1 warmup.
 
-| Ontology           | Expressivity | NTriples | Native ¹  | WASM total | Ratio |
-| ------------------ | ------------ | -------- | --------- | ---------- | ----- |
-| LUBM schema        | SHI          | 307      | 69 ms     | 527 ms     | ~7.6× |
-| GALEN              | SHIF         | 30 817   | 325 ms    | 1 374 ms   | ~4.2× |
-| Roberts family     | SROIQ        | 3 866    | 2 258 ms  | 40 311 ms  | ~17.9× |
-| LUBM schema + data | SHI          | 100 850  | 1 273 ms  | 2 434 ms   | ~1.9× |
+| Ontology           | Expressivity | NTriples | Native ¹  | WASM total  | Ratio  |
+| ------------------ | ------------ | -------- | --------- | ----------- | ------ |
+| LUBM schema        | SHI          | 307      | 34 ms     | 553 ms      | ~16×   |
+| GALEN              | SHIF         | 30 817   | 286 ms    | 1 365 ms    | ~4.8×  |
+| Roberts family     | SROIQ        | 3 866    | 2 118 ms  | 38 995 ms   | ~18×   |
+| LUBM schema + data | SHI          | 100 850  | 1 017 ms  | 2 352 ms    | ~2.3×  |
 
-¹ Native uses `classification` for TBox-only ontologies and `realization` for ontologies
-with individuals (Roberts family, LUBM + data) — matching WASM's operation selection.
+¹ Native pipeline (OWL 2 XML parse + classify/realize); WASM pipeline (NTriples parse via
+Raptor2 + classify/realize). Both include their respective I/O steps. Native uses
+`classification` for TBox-only ontologies and `realization` for ontologies with individuals
+(Roberts family, LUBM + data) — matching WASM's operation selection. LUBM schema ratio is
+dominated by fixed WASM startup cost (pthreads pool init) on a tiny 307-triple ontology.
 
 WASM total includes binary buffer encode/decode (negligible for most ontologies). Run
 `npm run bench` to reproduce (requires a built WASM binary — see [Build from source](#build-from-source)).
