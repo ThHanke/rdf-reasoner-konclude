@@ -18,6 +18,7 @@ import type { Quad } from "@rdfjs/types";
 
 import { RdfReasoner } from "../../ts/index.js";
 import { loadFixture } from "../helpers/fixture.js";
+import { assertExactMatch } from "../helpers/compare-native.js";
 
 // ---------------------------------------------------------------------------
 // WASM availability guard
@@ -32,19 +33,7 @@ const wasmExists = existsSync(wasmPath);
 
 const NS = "http://www.co-ode.org/roberts/family-tree.owl#";
 const SUBCLASS_OF = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
-
-function hasSubsumption(
-  quads: Quad[],
-  subClass: string,
-  superClass: string,
-): boolean {
-  return quads.some(
-    (q) =>
-      q.predicate.value === SUBCLASS_OF &&
-      q.subject.value === subClass &&
-      q.object.value === superClass,
-  );
-}
+const EQUIVALENT_CLASS = "http://www.w3.org/2002/07/owl#equivalentClass";
 
 // ---------------------------------------------------------------------------
 // Suite (skipped when WASM is absent)
@@ -84,49 +73,8 @@ describe.skipIf(!wasmExists)("Roberts family ontology integration", () => {
     }
   });
 
-  it("AuntOfRobert ⊑ Aunt (nominal specialisation: hasValue ⊑ someValuesFrom)", () => {
-    // AuntOfRobert ≡ Person ∩ ∃sisterOf.(Person ∩ ∃isParentOf.{robert_david_bright_1965})
-    // Aunt        ≡ Person ∩ ∃sisterOf.(Person ∩ ∃isParentOf.Person)
-    // Since the named individual is a Person, ∃isParentOf.{robert} ⊑ ∃isParentOf.Person,
-    // so AuntOfRobert ⊑ Aunt follows by OWL-DL tableau reasoning.
-    expect(
-      hasSubsumption(inferred, `${NS}AuntOfRobert`, `${NS}Aunt`),
-    ).toBe(true);
-  });
-
-  it("FemaleAncestor ⊑ Woman (intersection member subsumption)", () => {
-    // FemaleAncestor ≡ Woman ∩ ∃isAncestorOf.Person
-    // Every member of an equivalentClass intersection is a superclass.
-    expect(
-      hasSubsumption(inferred, `${NS}FemaleAncestor`, `${NS}Woman`),
-    ).toBe(true);
-  });
-
-  // ── Phase 2: TBox classification correctness ─────────────────────────────
-
-  it("FemaleAncestor ⊑ Ancestor (intersection member subsumption)", () => {
-    expect(
-      hasSubsumption(inferred, `${NS}FemaleAncestor`, `${NS}Ancestor`),
-    ).toBe(true);
-  });
-
-  it("GreatAuntOfRobert ⊑ Woman (nominal + sisterOf chain)", () => {
-    expect(
-      hasSubsumption(inferred, `${NS}GreatAuntOfRobert`, `${NS}Woman`),
-    ).toBe(true);
-  });
-
-  it("FirstCousinOfRobert ⊑ FirstCousin (nominal specialisation)", () => {
-    expect(
-      hasSubsumption(inferred, `${NS}FirstCousinOfRobert`, `${NS}FirstCousin`),
-    ).toBe(true);
-  });
-
-  it("output contains ≥ 70 rdfs:subClassOf triples (TBox regression guard)", () => {
-    const subClassOfCount = inferred.filter(
-      (q) => q.predicate.value === SUBCLASS_OF,
-    ).length;
-    expect(subClassOfCount).toBeGreaterThanOrEqual(70);
+  it("TBox matches native Konclude output exactly (set equality)", () => {
+    assertExactMatch(inferred, "roberts-native-tbox.nt", [SUBCLASS_OF, EQUIVALENT_CLASS]);
   });
 
   // ── Phase 3: ABox realization ─────────────────────────────────────────────
