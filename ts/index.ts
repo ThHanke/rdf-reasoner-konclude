@@ -70,7 +70,7 @@ export class RdfReasoner {
   /**
    * Serialization queue: each reason() / checkConsistency() call chains onto
    * this promise so that concurrent calls never interleave their
-   * loadNTriples → classify → getInferredNTriples sequences.
+   * loadTripleBuffer → classify → getInferredTripleBuffer sequences.
    */
   private _queue: Promise<void> = Promise.resolve();
 
@@ -278,7 +278,7 @@ export class RdfReasoner {
    *
    * Check whether the given quads form a consistent ontology.
    *
-   * Internally: loadNTriples → classify → isConsistent.
+   * Internally: loadTripleBuffer → classify → isConsistent.
    *
    * Concurrent calls are serialized: each call waits for the previous one to
    * complete before sending its first Worker message.
