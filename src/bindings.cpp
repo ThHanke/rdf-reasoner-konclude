@@ -7,8 +7,9 @@ EMSCRIPTEN_BINDINGS(konclude) {
     class_<KoncludeReasoner>("KoncludeReasoner")
         .constructor<>()
         .function("loadTripleBuffer",    &KoncludeReasoner::loadTripleBuffer)
-        .function("classify",            &KoncludeReasoner::classify)
-        .function("isConsistent",        &KoncludeReasoner::isConsistent)
+        .function("classification",      &KoncludeReasoner::classification)
+        .function("realization",         &KoncludeReasoner::realization)
+        .function("consistency",         &KoncludeReasoner::consistency)
         .function("buildInferredTripleBuffer",   &KoncludeReasoner::buildInferredTripleBuffer)
         .function("getInferredTripleBufferPtr",  &KoncludeReasoner::getInferredTripleBufferPtr)
         .function("reset",                       &KoncludeReasoner::reset);

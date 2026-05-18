@@ -587,46 +587,19 @@ void KoncludeReasoner::loadTripleBuffer(int triplePtr, int tripleCount, int strT
 #endif
 }
 
-// classify ─────────────────────────────────────────────────────────────────────
-//
-// Drives the Konclude reasoning pipeline through CReasonerManagerThread::
-// prepareOntology (blocking variant).  Under the WASM single-threaded build
-// (patch-002) postEvent dispatches synchronously, so this call is blocking
-// without any real thread.
-//
-// Requirements:
-//   OPSTRIPLESMAPPING  → map any additional triples
-//   OPSACTIVECOUNT     → count active entities
-//   OPSBUILD           → build from axioms
-//   OPSPREPROCESS      → normalise / simplify
-//   OPSCONSISTENCY     → consistency check
-//   OPSPRECOMPUTESATURATION → saturation
-//   OPSCLASSCLASSIFY   → class hierarchy classification
-//
-bool KoncludeReasoner::classify() {
-    if (mImpl->mLoadError) {
-        return false;
-    }
+// ── shared pipeline helper ─────────────────────────────────────────────────────
 
-#ifdef WASM_VERBOSE_LOGGING
-    auto t0 = std::chrono::steady_clock::now();
-#endif
-
+static void buildBaseRequirements(QList<COntologyProcessingRequirement*>& reqList) { // file-local helper
     COntologyProcessingStepVector* stepVec =
         COntologyProcessingStepVector::getProcessingStepVectorInstance();
-
-    QList<COntologyProcessingRequirement*> reqList;
-
-    // Build the chain of requirements.  Each step enables the next.
-    auto addReq = [&](COntologyProcessingStep::PROCESSINGSTEPTYPE stepType) {
+    auto addReq = [&](COntologyProcessingStep::PROCESSINGSTEPTYPE t) {
         reqList.push_back(new COntologyProcessingStepRequirement(
-            stepVec->getProcessingStep(stepType),
+            stepVec->getProcessingStep(t),
             COntologyProcessingStatus::PSCOMPLETELYYPROCESSED,
-            /*forbidden processing flags=*/ 0,
+            0,
             COntologyProcessingStatus::PSSUCESSFULL,
-            /*forbidden error flags=*/ 0));
+            0));
     };
-
     addReq(COntologyProcessingStep::OPSTRIPLESMAPPING);
     addReq(COntologyProcessingStep::OPSACTIVECOUNT);
     addReq(COntologyProcessingStep::OPSBUILD);
@@ -636,86 +609,97 @@ bool KoncludeReasoner::classify() {
     addReq(COntologyProcessingStep::OPSCLASSCLASSIFY);
     addReq(COntologyProcessingStep::OPSOBJECTROPERTYCLASSIFY);
     addReq(COntologyProcessingStep::OPSDATAROPERTYCLASSIFY);
-    // Only request realization when individuals are present.
-    // OPSINITREALIZE hangs indefinitely for TBox-only ontologies.
-    if (mImpl->mHasIndividualsHint) {
+}
+
+bool KoncludeReasoner::runPipeline(KoncludeReasoner::Impl* impl, bool includeRealization) {
+    QList<COntologyProcessingRequirement*> reqList;
+    buildBaseRequirements(reqList);
+
+    if (includeRealization && impl->mHasIndividualsHint) {
+        COntologyProcessingStepVector* stepVec =
+            COntologyProcessingStepVector::getProcessingStepVectorInstance();
+        auto addReq = [&](COntologyProcessingStep::PROCESSINGSTEPTYPE t) {
+            reqList.push_back(new COntologyProcessingStepRequirement(
+                stepVec->getProcessingStep(t),
+                COntologyProcessingStatus::PSCOMPLETELYYPROCESSED,
+                0,
+                COntologyProcessingStatus::PSSUCESSFULL,
+                0));
+        };
         addReq(COntologyProcessingStep::OPSINITREALIZE);
         addReq(COntologyProcessingStep::OPSCONCEPTREALIZE);
         addReq(COntologyProcessingStep::OPSROLEREALIZE);
+        addReq(COntologyProcessingStep::OPSSAMEINDIVIDUALSREALIZE);
     }
 
-    // The STPU is a long-lived thread (pool design): it stays alive for the
-    // entire Impl lifetime, blocking on its semaphore between tasks.
-    // No start/stop needed — prepareOntology() wakes it via signalizeEvent().
 #ifdef WASM_VERBOSE_LOGGING
-    fprintf(stderr, "{dbg} classify: calling prepareOntology\n");
+    fprintf(stderr, "{dbg} runPipeline(realization=%d): calling prepareOntology\n", (int)includeRealization);
 #endif
-    mImpl->mReasonerManager->prepareOntology(mImpl->mOntology, reqList);
+    impl->mReasonerManager->prepareOntology(impl->mOntology, reqList);
 #ifdef WASM_VERBOSE_LOGGING
-    fprintf(stderr, "{dbg} classify: prepareOntology returned\n");
+    fprintf(stderr, "{dbg} runPipeline: prepareOntology returned\n");
 #endif
-    // Drain any events Manager is still processing from this call (e.g. cascading
-    // requirement-failure callbacks fired after doCallback() released our semaphore).
-    // Without this, a fast second call races with Manager's post-callback cleanup.
-    mImpl->mReasonerManager->waitSynchronization();
+    impl->mReasonerManager->waitSynchronization();
 
-    // Clean up requirement objects.
     for (auto* r : reqList) delete r;
-    reqList.clear();
 
-    // hasIndividuals must be checked AFTER prepareOntology because OPSBUILD (inside
-    // prepareOntology) is what populates the ABox individual vector.
-    bool hasIndividuals = mImpl->mOntology->getABox() &&
-        mImpl->mOntology->getABox()->getIndividualVector(false) &&
-        mImpl->mOntology->getABox()->getIndividualVector(false)->getItemCount() > 0;
-
-    // Check whether classification actually completed.
-    // CClassification::isOntologyClassified() is never set to true in this codebase,
-    // so we check the processing step status directly.
     COntologyProcessingStepDataVector* stepDataVec =
-        mImpl->mOntology->getProcessingSteps()->getOntologyProcessingStepDataVector();
-    COntologyProcessingStepData* classifyStepData =
-        stepDataVec->getProcessingStepData(COntologyProcessingStep::OPSCLASSCLASSIFY);
-    bool classified = classifyStepData &&
-        classifyStepData->getProcessingStatus()->hasPartialProcessingFlags(
+        impl->mOntology->getProcessingSteps()->getOntologyProcessingStepDataVector();
+    auto stepDone = [&](COntologyProcessingStep::PROCESSINGSTEPTYPE t) -> bool {
+        auto* d = stepDataVec->getProcessingStepData(t);
+        return d && d->getProcessingStatus()->hasPartialProcessingFlags(
             COntologyProcessingStatus::PSCOMPLETELYYPROCESSED);
-    mImpl->mClassified = classified;
+    };
 
-    bool realized = false;
-    if (hasIndividuals) {
-        COntologyProcessingStepData* realizeStepData =
-            stepDataVec->getProcessingStepData(COntologyProcessingStep::OPSCONCEPTREALIZE);
-        realized = realizeStepData &&
-            realizeStepData->getProcessingStatus()->hasPartialProcessingFlags(
-                COntologyProcessingStatus::PSCOMPLETELYYPROCESSED);
-    }
-    mImpl->mRealized = realized;
+    impl->mClassified = stepDone(COntologyProcessingStep::OPSCLASSCLASSIFY);
 
-    // Join all realizer threads before returning.  prepareOntology() has
-    // completed OPSROLEREALIZE so realizers have finished their work.
-    // Joining here (while still in C++ context, STPU still alive) avoids
-    // Emscripten's async cleanupThread callbacks racing with the next
-    // reset() → buildFreshOntology() cycle.
-    if (mImpl->mHasIndividualsHint) {
-        mImpl->mReasonerManager->stopAndClearRealizers();
+    bool hasIndividuals = impl->mOntology->getABox() &&
+        impl->mOntology->getABox()->getIndividualVector(false) &&
+        impl->mOntology->getABox()->getIndividualVector(false)->getItemCount() > 0;
+
+    impl->mRealized = includeRealization && hasIndividuals &&
+        stepDone(COntologyProcessingStep::OPSCONCEPTREALIZE);
+
+    if (includeRealization && impl->mHasIndividualsHint) {
+        impl->mReasonerManager->stopAndClearRealizers();
     }
 
-#ifdef WASM_VERBOSE_LOGGING
-    if (mImpl->mRealized) {
-        fprintf(stderr, "{info} KoncludeReasoner >> Finished classification+realization in %.0f ms\n",
-            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
-    } else {
-        fprintf(stderr, "{info} KoncludeReasoner >> Finished class classification in %.0f ms\n",
-            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
-    }
-#endif
-
-    return mImpl->mClassified;
+    return impl->mClassified;
 }
 
-// isConsistent ─────────────────────────────────────────────────────────────────
+// classification ───────────────────────────────────────────────────────────────
+// TBox only: class hierarchy + property hierarchy. No ABox realization.
+bool KoncludeReasoner::classification() {
+    if (mImpl->mLoadError) return false;
+#ifdef WASM_VERBOSE_LOGGING
+    auto t0 = std::chrono::steady_clock::now();
+#endif
+    bool ok = runPipeline(mImpl, false);
+#ifdef WASM_VERBOSE_LOGGING
+    fprintf(stderr, "{info} KoncludeReasoner >> Finished classification in %.0f ms\n",
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
+#endif
+    return ok;
+}
 
-bool KoncludeReasoner::isConsistent() {
+// realization ──────────────────────────────────────────────────────────────────
+// TBox + ABox: classification followed by individual type realization.
+bool KoncludeReasoner::realization() {
+    if (mImpl->mLoadError) return false;
+#ifdef WASM_VERBOSE_LOGGING
+    auto t0 = std::chrono::steady_clock::now();
+#endif
+    bool ok = runPipeline(mImpl, true);
+#ifdef WASM_VERBOSE_LOGGING
+    fprintf(stderr, "{info} KoncludeReasoner >> Finished realization in %.0f ms\n",
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
+#endif
+    return ok;
+}
+
+// consistency ──────────────────────────────────────────────────────────────────
+
+bool KoncludeReasoner::consistency() {
     CConsistence* cons = mImpl->mOntology->getConsistence();
     if (!cons) {
         return true;

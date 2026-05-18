@@ -83,7 +83,7 @@ async function main() {
   const tsByName     = Object.fromEntries(tsResults.map(r => [r.name, r]));
   const binaryByName = Object.fromEntries(binaryResults.map(r => [r.name, r]));
 
-  const header = '| Ontology | Exp. | NTriples | Native parse ¹ | Native preprocess+precompute+classify ² | WASM load ¹ | WASM classify ² | WASM total | TS total ³ | Enc (binary) ⁴ | Ratio ² |';
+  const header = '| Ontology | Exp. | NTriples | Native parse ¹ | Native reasoning ² | WASM load ¹ | WASM classify ² | WASM total | TS total ³ | Enc (binary) ⁴ | Ratio ² |';
   const sep    = '|---|---|---|---|---|---|---|---|---|---|---|';
   console.log(header);
   console.log(sep);
@@ -103,7 +103,9 @@ async function main() {
       const combined =
         (nc.result.preprocessMs ?? 0) +
         (nc.result.precomputeMs  ?? 0) +
-        (nc.result.classifyMs    ?? 0);
+        (nc.result.classifyMs    ?? 0) +
+        (nc.result.propClassMs   ?? 0) +
+        (nc.result.realizeMs     ?? 0);
       nClassify = combined > 0 ? `${combined} ms` : '—';
     } else if (nc?.result?.error) {
       nParse = nClassify = 'N/A';
@@ -127,7 +129,8 @@ async function main() {
 
     const nativeClassifyMs =
       nc?.result && !nc.result.error
-        ? (nc.result.preprocessMs ?? 0) + (nc.result.precomputeMs ?? 0) + (nc.result.classifyMs ?? 0)
+        ? (nc.result.preprocessMs ?? 0) + (nc.result.precomputeMs ?? 0) + (nc.result.classifyMs ?? 0) +
+          (nc.result.propClassMs ?? 0) + (nc.result.realizeMs ?? 0)
         : null;
     const wasmClassifyMs = wc?.result?.ok ? wc.result.classifyMs : null;
 
@@ -144,7 +147,7 @@ async function main() {
   console.log('');
   console.log('**Notes:**');
   console.log('¹ Native parse (OWL 2 XML) and WASM load (NTriples/Raptor2) use different input formats — **not comparable**.');
-  console.log('² "Native preprocess+precompute+classify" and "WASM classify" perform the same logical work (in-memory OWL model → class hierarchy) and are **directly comparable**.');
+  console.log('² "Native preprocess+precompute+classify(+realize)" and "WASM classify" perform the same logical work and are **directly comparable**. TBox-only ontologies (LUBM schema, GALEN) use native `classification`; ABox ontologies (Roberts, LUBM+data) use native `realization` (which internally includes classification).');
   console.log('³ "TS total" measures the full TypeScript layer: binary encode + Worker postMessage RTT + n3.Parser + store.addQuad loop. JS overhead = TS total − WASM total.');
   console.log('⁴ "Enc (binary)" is JS-only `encodeToBuffers` time; speedup vs old n3.Writer path shown in parentheses. Median of 5 runs.');
   console.log(`- Native: 3 runs per ontology, median reported. WASM / TS: 1 warm-up discarded, median of 3 measured runs.`);

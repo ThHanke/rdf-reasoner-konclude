@@ -17,8 +17,8 @@ async function run() {
   }
   console.log('Classifying GALEN...');
   try {
-    const ok = r.classify();
-    console.log('classify ok:', ok);
+    const ok = r.realization();
+    console.log('realization ok:', ok);
     const out = decodeWasmTripleBuffer(mod, r);
     console.log('triples:', out.split('\n').filter(Boolean).length);
   } catch (e) {

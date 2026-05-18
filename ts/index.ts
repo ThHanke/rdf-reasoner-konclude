@@ -70,7 +70,7 @@ export class RdfReasoner {
   /**
    * Serialization queue: each reason() / checkConsistency() call chains onto
    * this promise so that concurrent calls never interleave their
-   * loadTripleBuffer → classify → getInferredTripleBuffer sequences.
+   * loadTripleBuffer → realization → getInferredTripleBuffer sequences.
    */
   private _queue: Promise<void> = Promise.resolve();
 
@@ -197,7 +197,7 @@ export class RdfReasoner {
       const { tripleBuffer, strTableBuffer } = encodeToBuffers(store.getQuads(null, null, null, null));
 
       await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
-      await this._call("classify", []);
+      await this._call("realization", []);
 
       const resultBuf = (await this._call("getInferredTripleBuffer", [])) as ArrayBuffer;
       const inferredQuads = decodeBuffers(resultBuf);
@@ -222,7 +222,7 @@ export class RdfReasoner {
       const { tripleBuffer, strTableBuffer } = encodeToBuffers(quads);
 
       await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
-      await this._call("classify", []);
+      await this._call("realization", []);
 
       if (mode === "consistency") {
         // Consistency mode: no inferred quads are returned via reason().
@@ -278,7 +278,7 @@ export class RdfReasoner {
    *
    * Check whether the given quads form a consistent ontology.
    *
-   * Internally: loadTripleBuffer → classify → isConsistent.
+   * Internally: loadTripleBuffer → classification → consistency.
    *
    * Concurrent calls are serialized: each call waits for the previous one to
    * complete before sending its first Worker message.
@@ -291,8 +291,8 @@ export class RdfReasoner {
     const result = this._queue.then(async () => {
       const { tripleBuffer, strTableBuffer } = encodeToBuffers(quads);
       await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
-      await this._call("classify", []);
-      return (await this._call("isConsistent", [])) as boolean;
+      await this._call("classification", []);
+      return (await this._call("consistency", [])) as boolean;
     });
     this._queue = result.then(
       () => {},

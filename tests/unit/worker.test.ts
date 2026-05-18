@@ -34,8 +34,9 @@ const mocks = vi.hoisted(() => {
 
   // --- WASM module mock state ---
   const loadTripleBuffer = vi.fn<[number, number, number, number], void>();
-  const classify = vi.fn<[], boolean>().mockReturnValue(true);
-  const isConsistent = vi.fn<[], boolean>().mockReturnValue(true);
+  const classification = vi.fn<[], boolean>().mockReturnValue(true);
+  const realization = vi.fn<[], boolean>().mockReturnValue(true);
+  const consistency = vi.fn<[], boolean>().mockReturnValue(true);
   const buildInferredTripleBuffer = vi.fn<[], number>().mockReturnValue(0);
   const getInferredTripleBufferPtr = vi.fn<[], number>().mockReturnValue(0);
   const reset = vi.fn<[], void>();
@@ -45,8 +46,9 @@ const mocks = vi.hoisted(() => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const KoncludeReasoner = vi.fn(function (this: any) {
     this.loadTripleBuffer = loadTripleBuffer;
-    this.classify = classify;
-    this.isConsistent = isConsistent;
+    this.classification = classification;
+    this.realization = realization;
+    this.consistency = consistency;
     this.buildInferredTripleBuffer = buildInferredTripleBuffer;
     this.getInferredTripleBufferPtr = getInferredTripleBufferPtr;
     this.reset = reset;
@@ -68,8 +70,9 @@ const mocks = vi.hoisted(() => {
   return {
     postMessage,
     loadTripleBuffer,
-    classify,
-    isConsistent,
+    classification,
+    realization,
+    consistency,
     buildInferredTripleBuffer,
     getInferredTripleBufferPtr,
     heapu8,
@@ -123,8 +126,9 @@ describe("worker handleMessage", () => {
   beforeEach(() => {
     mocks.postMessage.mockClear();
     mocks.loadTripleBuffer.mockClear();
-    mocks.classify.mockClear();
-    mocks.isConsistent.mockClear();
+    mocks.classification.mockClear();
+    mocks.realization.mockClear();
+    mocks.consistency.mockClear();
     mocks.buildInferredTripleBuffer.mockClear();
     mocks.getInferredTripleBufferPtr.mockClear();
     mocks.reset.mockClear();
@@ -149,20 +153,28 @@ describe("worker handleMessage", () => {
     expect(mocks.postMessage).toHaveBeenCalledWith({ id: 10, result: true });
   });
 
-  it("happy path: classify → posts {id, result: true}", async () => {
-    mocks.classify.mockReturnValueOnce(true);
-    await handleMessage(makeEvent(2, "classify"));
+  it("happy path: classification → posts {id, result: true}", async () => {
+    mocks.classification.mockReturnValueOnce(true);
+    await handleMessage(makeEvent(2, "classification"));
 
-    expect(mocks.classify).toHaveBeenCalledOnce();
+    expect(mocks.classification).toHaveBeenCalledOnce();
     expect(mocks.postMessage).toHaveBeenCalledWith({ id: 2, result: true });
   });
 
-  it("happy path: isConsistent → posts {id, result: true}", async () => {
-    mocks.isConsistent.mockReturnValueOnce(true);
-    await handleMessage(makeEvent(3, "isConsistent"));
+  it("happy path: realization → posts {id, result: true}", async () => {
+    mocks.realization.mockReturnValueOnce(true);
+    await handleMessage(makeEvent(3, "realization"));
 
-    expect(mocks.isConsistent).toHaveBeenCalledOnce();
+    expect(mocks.realization).toHaveBeenCalledOnce();
     expect(mocks.postMessage).toHaveBeenCalledWith({ id: 3, result: true });
+  });
+
+  it("happy path: consistency → posts {id, result: true}", async () => {
+    mocks.consistency.mockReturnValueOnce(true);
+    await handleMessage(makeEvent(4, "consistency"));
+
+    expect(mocks.consistency).toHaveBeenCalledOnce();
+    expect(mocks.postMessage).toHaveBeenCalledWith({ id: 4, result: true });
   });
 
   it("happy path: getInferredTripleBuffer → calls build/ptr, posts {id, result: ArrayBuffer}", async () => {
@@ -204,8 +216,8 @@ describe("worker handleMessage", () => {
     // The module-level initPromise was already resolved when the module was
     // imported (mockResolvedValue resolves immediately via microtask).
     // Calling handleMessage here exercises the `await initPromise` code path.
-    mocks.classify.mockReturnValueOnce(false);
-    await handleMessage(makeEvent(6, "classify"));
+    mocks.realization.mockReturnValueOnce(false);
+    await handleMessage(makeEvent(6, "realization"));
 
     expect(mocks.postMessage).toHaveBeenCalledWith({ id: 6, result: false });
   });

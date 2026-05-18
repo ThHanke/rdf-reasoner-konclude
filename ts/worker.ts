@@ -8,7 +8,7 @@
  *      `KoncludeReasoner` instance, posts `{id, result}` or `{id, error}`
  *
  * The `KoncludeReasoner` instance is stateful within a single Worker lifetime:
- *   loadTripleBuffer → classify (→ getInferredTripleBuffer or isConsistent)
+ *   loadTripleBuffer → classification | realization (→ getInferredTripleBuffer or consistency)
  */
 
 // At runtime this file lives in `dist/` alongside `dist/konclude.mjs`.
@@ -120,12 +120,16 @@ export async function handleMessage(
         result = true;
         break;
       }
-      case "classify": {
-        result = reasoner.classify();
+      case "classification": {
+        result = reasoner.classification();
         break;
       }
-      case "isConsistent": {
-        result = reasoner.isConsistent();
+      case "realization": {
+        result = reasoner.realization();
+        break;
+      }
+      case "consistency": {
+        result = reasoner.consistency();
         break;
       }
       case "getInferredTripleBuffer": {
