@@ -21,8 +21,12 @@ public:
     //     lower 30 bits (id & 0x3FFFFFFF) = index into the offset array.
     void loadTripleBuffer(int triplePtr, int tripleCount, int strTablePtr, int strTableLen);
 
-    bool classify();
-    bool isConsistent();
+    // classification — TBox only (class + property hierarchy).
+    bool classification();
+    // realization — TBox + ABox (includes classification as prerequisite).
+    bool realization();
+    // consistency — check ontology consistency (call after classification).
+    bool consistency();
 
     // Binary output protocol.
     // buildInferredTripleBuffer() assembles a combined output buffer:
@@ -38,4 +42,5 @@ public:
 private:
     struct Impl;
     Impl* mImpl;
+    static bool runPipeline(Impl* impl, bool includeRealization);
 };

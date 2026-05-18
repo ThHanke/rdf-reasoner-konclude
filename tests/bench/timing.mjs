@@ -41,7 +41,7 @@ async function bench(Module, name, nts) {
       Module._free(strTablePtr);
     }
     const tLoad1 = performance.now();
-    const ok = reasoner.classify();
+    const ok = reasoner.realization();
     const tClassify = performance.now();
     const inferred = decodeWasmTripleBuffer(Module, reasoner);
     const tOutput = performance.now();

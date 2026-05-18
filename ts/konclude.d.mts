@@ -9,8 +9,9 @@
 
 export interface KoncludeReasonerInstance {
   loadTripleBuffer(triplePtr: number, tripleCount: number, strTablePtr: number, strTableLen: number): void;
-  classify(): boolean;
-  isConsistent(): boolean;
+  classification(): boolean;
+  realization(): boolean;
+  consistency(): boolean;
   buildInferredTripleBuffer(): number;
   getInferredTripleBufferPtr(): number;
   reset(): void;

@@ -21,7 +21,7 @@ for (const [name, files, out] of [
     Module._free(triplePtr);
     Module._free(strTablePtr);
   }
-  r.classify();
+  r.realization();
   const result = decodeWasmTripleBuffer(Module, r);
   r.delete();
   writeFileSync(join(FIXTURES, out), result);
