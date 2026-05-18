@@ -31,6 +31,7 @@
 #include <algorithm>  // std::max, std::min
 #include <iostream>   // std::cerr for qDebug stubs
 #include <regex>
+#include <thread>     // std::thread::hardware_concurrency
 
 // ---------------------------------------------------------------------------
 // Container aliases (QList before QHash/QMap so they can use QList as return type)
@@ -1565,7 +1566,11 @@ struct QThread {
     static void usleep(unsigned long) {}
     void moveToThread(QThread*) {}
     static QThread* currentThread() { return nullptr; }
-    static int idealThreadCount() { return 1; }
+    static int idealThreadCount() {
+        unsigned int n = std::thread::hardware_concurrency();
+        // Cap at PTHREAD_POOL_SIZE (8) to avoid spawning beyond the pre-allocated pool.
+        return (n > 0 && n < 8u) ? (int)n : 8;
+    }
 };
 
 // ---------------------------------------------------------------------------
@@ -1792,7 +1797,7 @@ inline QByteArray QString::toLatin1() const { return toUtf8(); }
 // QThread additions
 // ---------------------------------------------------------------------------
 // (QThread struct is defined further below; this extends it — add as free function)
-inline int QThread_idealThreadCount() { return 1; }
+inline int QThread_idealThreadCount() { return QThread::idealThreadCount(); }
 
 // ---------------------------------------------------------------------------
 // QIODevice / QFile / QTextStream stubs — file I/O not available in WASM kernel
