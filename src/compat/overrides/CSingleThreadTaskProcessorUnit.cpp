@@ -284,9 +284,6 @@ namespace Konclude {
 
 
 		CSingleThreadTaskProcessorUnit* CSingleThreadTaskProcessorUnit::startProcessing() {
-			fprintf(stderr, "{stpu} startProcessing: isRunning=%d mProcessingStopped=%d mLastStartedTag=%lld mLastRequestTag=%lld\n",
-				(int)isRunning(), (int)mProcessingStopped,
-				(long long)mLastProcessingStartedTag, (long long)mLastProcessingStartRequestTag);
 			// Call 2+: unconditionally drain stale signals/events and reset tags so
 			// that signalizeEvent() can release the semaphore for the new classify()
 			// call.  Stale KPSet pthread callbacks arriving after the previous
@@ -301,16 +298,11 @@ namespace Konclude {
 				// Drain stale events from the channel handler (two passes for safety).
 				if (mEventHandler->needEventProcessing()) {
 					CEventLinker* li = mEventHandler->takeEvents(nullptr);
-					int drained = 0;
 					while (li) {
 						CEventLinker* next = li->getNextEventLinker();
 						CEvent* staleEvent = li->getData();
 						if (staleEvent) mMemoryAllocator->releaseMemoryPoolContainer(staleEvent);
 						li = next;
-						++drained;
-					}
-					if (drained > 0) {
-						fprintf(stderr, "{stpu} startProcessing: drained %d stale events\n", drained);
 					}
 				}
 				if (mEventHandler->needEventProcessing()) {
@@ -364,13 +356,7 @@ namespace Konclude {
 				if (mLastProcessingStartedTag == mLastProcessingStartRequestTag) {
 					++mLastProcessingStartRequestTag;
 					mProcessingWakeUpSemaphore.release();
-					fprintf(stderr, "{stpu} signalizeEvent: released sem, requestTag=%lld\n", (long long)mLastProcessingStartRequestTag);
-				} else {
-					fprintf(stderr, "{stpu} signalizeEvent: SKIP (startedTag=%lld requestTag=%lld)\n",
-						(long long)mLastProcessingStartedTag, (long long)mLastProcessingStartRequestTag);
 				}
-			} else {
-				fprintf(stderr, "{stpu} signalizeEvent: not blocked (mEventSignalized set)\n");
 			}
 			return this;
 		}
@@ -392,8 +378,6 @@ namespace Konclude {
 		}
 
 		bool CSingleThreadTaskProcessorUnit::processingLoop() {
-			fprintf(stderr, "{stpu} processingLoop: entered (mProcessingBlocked=%d mProcessingStopped=%d)\n",
-				(int)mProcessingBlocked, (int)mProcessingStopped);
 			bool eventSafeguardProcessed = false;
 			while (!mProcessingStopped) {
 				if (!mTaskProcessingQueue && mProcessingBlocked) {
@@ -414,7 +398,6 @@ namespace Konclude {
 					// Exit immediately if woken for shutdown — don't touch event handlers
 					// or task queues that may be partially destroyed.
 					if (mProcessingStopped) {
-						fprintf(stderr, "{stpu} processingLoop: mProcessingStopped=1 at semaphore, exiting\n");
 						continue;
 					}
 				}
