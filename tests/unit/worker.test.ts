@@ -33,13 +33,9 @@ const mocks = vi.hoisted(() => {
   (globalThis as Record<string, unknown>).self = globalThis;
 
   // --- WASM module mock state ---
-  const loadNTriples = vi.fn<[string], void>();
   const loadTripleBuffer = vi.fn<[number, number, number, number], void>();
   const classify = vi.fn<[], boolean>().mockReturnValue(true);
   const isConsistent = vi.fn<[], boolean>().mockReturnValue(true);
-  const getInferredNTriples = vi
-    .fn<[], string>()
-    .mockReturnValue("<http://a> <http://b> <http://c> .\n");
   const buildInferredTripleBuffer = vi.fn<[], number>().mockReturnValue(0);
   const getInferredTripleBufferPtr = vi.fn<[], number>().mockReturnValue(0);
   const reset = vi.fn<[], void>();
@@ -48,11 +44,9 @@ const mocks = vi.hoisted(() => {
   // Must use a regular function (not arrow) so it can be called with `new`.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const KoncludeReasoner = vi.fn(function (this: any) {
-    this.loadNTriples = loadNTriples;
     this.loadTripleBuffer = loadTripleBuffer;
     this.classify = classify;
     this.isConsistent = isConsistent;
-    this.getInferredNTriples = getInferredNTriples;
     this.buildInferredTripleBuffer = buildInferredTripleBuffer;
     this.getInferredTripleBufferPtr = getInferredTripleBufferPtr;
     this.reset = reset;
@@ -73,11 +67,9 @@ const mocks = vi.hoisted(() => {
 
   return {
     postMessage,
-    loadNTriples,
     loadTripleBuffer,
     classify,
     isConsistent,
-    getInferredNTriples,
     buildInferredTripleBuffer,
     getInferredTripleBufferPtr,
     heapu8,
@@ -130,11 +122,9 @@ function makeEvent(
 describe("worker handleMessage", () => {
   beforeEach(() => {
     mocks.postMessage.mockClear();
-    mocks.loadNTriples.mockClear();
     mocks.loadTripleBuffer.mockClear();
     mocks.classify.mockClear();
     mocks.isConsistent.mockClear();
-    mocks.getInferredNTriples.mockClear();
     mocks.buildInferredTripleBuffer.mockClear();
     mocks.getInferredTripleBufferPtr.mockClear();
     mocks.reset.mockClear();
@@ -159,14 +149,6 @@ describe("worker handleMessage", () => {
     expect(mocks.postMessage).toHaveBeenCalledWith({ id: 10, result: true });
   });
 
-  it("happy path: loadNTriples → posts {id, result: true}", async () => {
-    const ntriples = "<http://a> <http://b> <http://c> .\n";
-    await handleMessage(makeEvent(1, "loadNTriples", [ntriples]));
-
-    expect(mocks.loadNTriples).toHaveBeenCalledWith(ntriples);
-    expect(mocks.postMessage).toHaveBeenCalledWith({ id: 1, result: true });
-  });
-
   it("happy path: classify → posts {id, result: true}", async () => {
     mocks.classify.mockReturnValueOnce(true);
     await handleMessage(makeEvent(2, "classify"));
@@ -181,15 +163,6 @@ describe("worker handleMessage", () => {
 
     expect(mocks.isConsistent).toHaveBeenCalledOnce();
     expect(mocks.postMessage).toHaveBeenCalledWith({ id: 3, result: true });
-  });
-
-  it("happy path: getInferredNTriples → posts {id, result: ntriplesString}", async () => {
-    const expected = "<http://a> <http://b> <http://c> .\n";
-    mocks.getInferredNTriples.mockReturnValueOnce(expected);
-    await handleMessage(makeEvent(4, "getInferredNTriples"));
-
-    expect(mocks.getInferredNTriples).toHaveBeenCalledOnce();
-    expect(mocks.postMessage).toHaveBeenCalledWith({ id: 4, result: expected });
   });
 
   it("happy path: getInferredTripleBuffer → calls build/ptr, posts {id, result: ArrayBuffer}", async () => {
@@ -237,24 +210,4 @@ describe("worker handleMessage", () => {
     expect(mocks.postMessage).toHaveBeenCalledWith({ id: 6, result: false });
   });
 
-  it("error path: C++ method throws → posts {id, error}", async () => {
-    mocks.loadNTriples.mockImplementationOnce(() => {
-      throw new Error("boom");
-    });
-    await handleMessage(makeEvent(9, "loadNTriples", ["<http://a> <http://b> <http://c> .\n"]));
-
-    expect(mocks.postMessage).toHaveBeenCalledWith({ id: 9, error: "boom" });
-  });
-
-  it("reset: calls delete() on the current reasoner instance", async () => {
-    // Ensure an instance exists by calling loadNTriples first.
-    await handleMessage(makeEvent(7, "loadNTriples", [""]));
-    mocks.del.mockClear();
-    mocks.postMessage.mockClear();
-
-    await handleMessage(makeEvent(8, "reset"));
-
-    expect(mocks.del).toHaveBeenCalledOnce();
-    expect(mocks.postMessage).toHaveBeenCalledWith({ id: 8, result: true });
-  });
 });

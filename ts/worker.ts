@@ -8,10 +8,7 @@
  *      `KoncludeReasoner` instance, posts `{id, result}` or `{id, error}`
  *
  * The `KoncludeReasoner` instance is stateful within a single Worker lifetime:
- *   loadNTriples → classify (→ getInferredNTriples)
- *
- * Call `.delete()` (via the `reset` method) when the caller is finished to
- * release Embind-managed C++ memory.
+ *   loadTripleBuffer → classify (→ getInferredTripleBuffer or isConsistent)
  */
 
 // At runtime this file lives in `dist/` alongside `dist/konclude.mjs`.
@@ -78,13 +75,6 @@ function getOrCreateReasoner(mod: KoncludeModule): KoncludeReasonerInstance {
   return _reasoner;
 }
 
-function destroyReasoner(): void {
-  if (_reasoner !== null) {
-    _reasoner.delete();
-    _reasoner = null;
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Message dispatch
 // ---------------------------------------------------------------------------
@@ -107,14 +97,6 @@ export async function handleMessage(
     const reasoner = getOrCreateReasoner(mod);
 
     switch (method) {
-      case "loadNTriples": {
-        const r = getOrCreateReasoner(mod);
-        r.reset();
-        const ntriples = args[0] as string;
-        r.loadNTriples(ntriples);
-        result = true;
-        break;
-      }
       case "loadTripleBuffer": {
         const r = getOrCreateReasoner(mod);
         r.reset();
@@ -146,10 +128,6 @@ export async function handleMessage(
         result = reasoner.isConsistent();
         break;
       }
-      case "getInferredNTriples": {
-        result = reasoner.getInferredNTriples();
-        break;
-      }
       case "getInferredTripleBuffer": {
         const len = reasoner.buildInferredTripleBuffer();
         if (len > 0) {
@@ -167,11 +145,6 @@ export async function handleMessage(
         const emptyResponse: WorkerResponse = { id, result: empty };
         self.postMessage(emptyResponse, [empty]);
         return;
-      }
-      case "reset": {
-        destroyReasoner();
-        result = true;
-        break;
       }
       default: {
         const response: WorkerResponse = {
