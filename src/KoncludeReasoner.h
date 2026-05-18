@@ -6,8 +6,6 @@ public:
     KoncludeReasoner();
     ~KoncludeReasoner();
 
-    void loadNTriples(const std::string& ntriples);
-
     // loadTripleBuffer — zero-copy binary input protocol.
     //
     // Wire format (see ts/intern.ts for the JS encoder):
@@ -25,7 +23,6 @@ public:
 
     bool classify();
     bool isConsistent();
-    std::string getInferredNTriples();
 
     // Binary output protocol.
     // buildInferredTripleBuffer() assembles a combined output buffer:
