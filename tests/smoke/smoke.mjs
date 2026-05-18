@@ -4,6 +4,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { encodeTriplesForWasm, decodeWasmTripleBuffer } from '../bench/wasm-binary.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = join(__dirname, '../fixtures');
@@ -23,13 +24,19 @@ async function classify(Module, name, nts) {
   console.log(`[${name}] creating reasoner...`);
   const reasoner = new Module.KoncludeReasoner();
   try {
-    console.log(`[${name}] loading NTriples...`);
-    for (const nt of nts) reasoner.loadNTriples(nt);
+    console.log(`[${name}] loading triples...`);
+    const { triplePtr, tripleCount, strTablePtr, strBytes } = encodeTriplesForWasm(Module, nts.join('\n'));
+    try {
+      reasoner.loadTripleBuffer(triplePtr, tripleCount, strTablePtr, strBytes);
+    } finally {
+      Module._free(triplePtr);
+      Module._free(strTablePtr);
+    }
     console.log(`[${name}] calling classify()...`);
     const ok = reasoner.classify();
     console.log(`[${name}] classify() returned: ${ok}`);
     if (!ok) throw new Error('classify() returned false');
-    const inferred = reasoner.getInferredNTriples();
+    const inferred = decodeWasmTripleBuffer(Module, reasoner);
     console.log(`PASS: ${name}`);
     return inferred;
   } finally {
