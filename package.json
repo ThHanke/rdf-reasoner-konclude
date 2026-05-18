@@ -37,7 +37,7 @@
     "test": "vitest run",
     "apply-patches": "bash scripts/apply-patches.sh",
     "patch-wasm": "bash scripts/patch-konclude-mjs.sh",
-    "bench": "node tests/bench/bench.mjs",
+    "bench": "node tests/bench/bench.mjs 2>&1 | tee bench-results.md",
     "test:browser": "playwright test"
   },
   "dependencies": {

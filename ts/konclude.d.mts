@@ -12,6 +12,7 @@ export interface KoncludeReasonerInstance {
   classification(): boolean;
   realization(): boolean;
   consistency(): boolean;
+  processorCount(): number;
   buildInferredTripleBuffer(): number;
   getInferredTripleBufferPtr(): number;
   reset(): void;
@@ -26,6 +27,11 @@ export interface KoncludeModule {
   _free(ptr: number): void;
 }
 
+export interface KoncludeModuleConfig {
+  print?: (msg: string) => void;
+  printErr?: (msg: string) => void;
+}
+
 /** Factory function returned by the Emscripten-generated ES module. */
-declare function createKoncludeModule(): Promise<KoncludeModule>;
+declare function createKoncludeModule(config?: KoncludeModuleConfig): Promise<KoncludeModule>;
 export default createKoncludeModule;
