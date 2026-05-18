@@ -1,0 +1,33 @@
+diff --git a/Source/Reasoner/Kernel/Manager/Events/CRequirementProcessedCallbackEvent.h b/Source/Reasoner/Kernel/Manager/Events/CRequirementProcessedCallbackEvent.h
+--- a/Source/Reasoner/Kernel/Manager/Events/CRequirementProcessedCallbackEvent.h
++++ b/Source/Reasoner/Kernel/Manager/Events/CRequirementProcessedCallbackEvent.h
+@@ -27,4 +27,5 @@
+ // Libraries includes
+ #include "QtCompat.h"
++#include <atomic>
+ 
+ 
+@@ -92,5 +93,5 @@
+ 					CConcreteOntology* mOntology;
+ 					CRequirementPreparingData* mReqPrepData;
+-					CThread *recThread;
++					std::atomic<CThread*> recThread;
+ 
+ 
+diff --git a/Source/Reasoner/Kernel/Manager/Events/CRequirementProcessedCallbackEvent.cpp b/Source/Reasoner/Kernel/Manager/Events/CRequirementProcessedCallbackEvent.cpp
+--- a/Source/Reasoner/Kernel/Manager/Events/CRequirementProcessedCallbackEvent.cpp
++++ b/Source/Reasoner/Kernel/Manager/Events/CRequirementProcessedCallbackEvent.cpp
+@@ -48,7 +48,11 @@
+ 
+ 
+ 					void CRequirementProcessedCallbackEvent::doCallback() {
+-					if (recThread) {
+-						recThread->postEvent(this);
++					// Atomic exchange: only the first caller posts the event.
++					// Prevents use-after-free when stale STPU callbacks fire after
++					// the Manager has already processed and deleted this event.
++					CThread* t = recThread.exchange(nullptr, std::memory_order_acq_rel);
++					if (t) {
++						t->postEvent(this);
+ 					}
+ 				}

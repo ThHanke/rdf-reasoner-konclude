@@ -18,6 +18,7 @@
 #include <unordered_set>
 #include <chrono>
 #include <cstdio>
+#include <mutex>
 
 // ─── Konclude kernel headers ────────────────────────────────────────────────
 
@@ -60,8 +61,6 @@
 #include "Reasoner/Kernel/Cache/CComputedConsequencesCache.h"
 #include "Reasoner/Kernel/Cache/COccurrenceStatisticsCache.h"
 
-// Calc environment (for STPU access in quiesce-wait)
-#include "Reasoner/Kernel/Calculation/CConcurrentTaskCalculationEnvironment.h"
 
 // Classifier
 #include "Reasoner/Classifier/CClassificationManager.h"
@@ -91,7 +90,6 @@
 
 using namespace Konclude;
 using namespace Konclude::Reasoner::Ontology;
-using namespace Konclude::Reasoner::Kernel::Calculation;
 using namespace Konclude::Reasoner::Taxonomy;
 using namespace Konclude::Reasoner::Classification;
 using namespace Konclude::Reasoner::Consistence;
@@ -104,46 +102,54 @@ using namespace Konclude::Config;
 using namespace Konclude::Control::Command;
 using namespace Konclude::Parser;
 
-// Forward declarations for STPU helpers (CSingleThreadTaskProcessorUnit.cpp override).
-namespace Konclude { namespace Scheduler {
-    class CSingleThreadTaskProcessorUnit;
-    std::mutex* stpuGetCompleteTaskGuard(CSingleThreadTaskProcessorUnit* stpu);
-    // Resets mProcessingStopped to false so startProcessing() re-enters processingLoop().
-    void stpuResetStopped(CSingleThreadTaskProcessorUnit* stpu);
-} }
-using namespace Konclude::Scheduler;
 
 // ─── WasmRealizationManager ───────────────────────────────────────────────────
 // Upstream CRealizationManager::~CRealizationManager() is empty — realizer
-// threads are never joined and keep accessing ontology memory after it's freed.
-// This subclass (a) stops each realizer on reset() so stale threads don't eat
-// pthread slots across calls, and (b) joins all remaining realizers in the
-// destructor so CThread::~CThread() → stopThread(true) runs before ~Impl()
-// frees mOntology.
+// threads are never joined. This subclass joins all realizers at teardown so
+// CThread::~CThread() → stopThread(true) runs before ~Impl() frees mOntology.
+// Realizer threads accumulate across classify() calls and are joined only here.
 
 class WasmRealizationManager : public CRealizationManager {
 public:
     using CRealizationManager::CRealizationManager;
 
-    // Called from Impl::reset() before delete mOntology.
-    // mOntoRealizerHash and mRealizerSet are protected in CRealizationManager.
-    void stopRealizerForOntology(CConcreteOntology* onto) {
-        CRealizer* r = mOntoRealizerHash.value(onto);
-        if (r) {
-            mOntoRealizerHash.remove(onto);
-            mRealizerSet.remove(r);
-            // Cast to CRealizerThread* so its virtual destructor dispatches
-            // correctly to ~COptimizedRepresentativeKPSetOntologyRealizingThread(),
-            // which calls CThread::~CThread() → stopThread(true) → pthread_join.
-            // CRealizer has no virtual destructor so delete-via-CRealizer* is UB.
-            delete static_cast<CRealizerThread*>(r);
+    // Realizer threads that have been stopped (pthread joined) but not yet freed.
+    // Deletion is deferred to ~WasmRealizationManager() so that Emscripten's async
+    // cmd=cleanupThread callback — which fires on the JS event loop AFTER classify()
+    // returns — cannot call a virtual method through a freed vtable pointer.
+    std::vector<CRealizerThread*> mStoppedRealizers;
+
+    // Called from reset() after classify() returns (OPSROLEREALIZE complete).
+    // Joins all realizer threads before the next ontology is created, preventing
+    // OPSINITREALIZE on call N+1 from routing work to a stale realizer from call N.
+    void stopAndClearRealizers() {
+        for (CRealizer* r : mRealizerSet) {
+            CRealizerThread* rt = static_cast<CRealizerThread*>(r);
+            // Join the pthread but keep the C++ object alive.  Emscripten posts
+            // cmd=cleanupThread asynchronously after the worker exits; that message
+            // is processed on the JS event loop after classify() returns and could
+            // call back into WASM with a pointer to this object.  Freeing the object
+            // here would corrupt the vtable and cause getWasmTableEntry(0x72676E73).
+            // waitSynchronization() is NOT called here: it posts a C++ semaphore event
+            // to the thread's queue and blocks until the thread processes it.  If the
+            // thread has already crashed (invokeEntryPoint catch path), the queue is
+            // never drained and the semaphore is never released → permanent hang.
+            // stopThread(true) → pthread_join is sufficient: the thread writes its
+            // exit-status futex (via __emscripten_thread_exit in the catch handler)
+            // and Atomics.waitAsync in pthread_join resolves.
+            rt->stopThread(true);
+            mStoppedRealizers.push_back(rt);
         }
+        mRealizerSet.clear();
     }
 
     ~WasmRealizationManager() override {
-        for (CRealizer* r : mRealizerSet) {
-            delete static_cast<CRealizerThread*>(r);
+        stopAndClearRealizers();
+        // Now safe to free: all pthreads joined, final teardown, no more callbacks.
+        for (CRealizerThread* rt : mStoppedRealizers) {
+            delete rt;
         }
+        mStoppedRealizers.clear();
     }
 };
 
@@ -160,11 +166,10 @@ public:
         classificationMan = mgr;
     }
 
-    CSingleThreadTaskProcessorUnit* getStpu() {
-        CCalculationManager* cm = getCalculationManager();
-        if (!cm) return nullptr;
-        auto* env = dynamic_cast<CConcurrentTaskCalculationEnvironment*>(cm->getCalculationContext());
-        return env ? env->getSingleTaskProcessorUnit() : nullptr;
+    void stopAndClearRealizers() {
+        if (mRealizationManager) {
+            static_cast<WasmRealizationManager*>(mRealizationManager)->stopAndClearRealizers();
+        }
     }
 
     // Replace stock CRealizationManager with WasmRealizationManager so that
@@ -196,6 +201,7 @@ public:
     // mBackendAssCache, mCompConsCache, mOccStatsCache are all protected fields
     // in CReasonerManagerThread.h — verified against upstream header.
     void threadStopped() override {
+        fprintf(stderr, "{dbg} WasmReasonerManagerThread::threadStopped() — manager thread exiting!\n");
         CReasonerManagerThread::threadStopped();
         // mBackendAssCache, mCompConsCache, mOccStatsCache are created in
         // threadStarted() but not stopped by upstream threadStopped().
@@ -313,6 +319,14 @@ struct KoncludeReasoner::Impl {
 
     void buildFreshOntology() {
         mOntology = new CConcreteOntology(mBasementConfig);
+        // Each call must have a unique ontology ID.  CTerminology::CTerminology()
+        // initialises mTerminologyID = 0 for every new object.  BackendAssCache keys
+        // its per-ontology state by this ID: once OntologyData[0] is "completed" after
+        // call 1, call 2 finds it "already complete" and ignores all new updates →
+        // realization returns no individuals.  A monotonically increasing ID gives each
+        // call its own fresh OntologyData slot.
+        static qint64 sNextOntologyID = 1;
+        mOntology->setOntologyID(sNextOntologyID++);
         CConcreteOntologyBasementBuilder* bb =
             new CConcreteOntologyBasementBuilder(mOntology);
         bb->initializeBuilding();
@@ -321,24 +335,10 @@ struct KoncludeReasoner::Impl {
         delete bb;
     }
 
-    // Reset: keep previous ontology alive one more cycle (KPSet pthreads may still
-    // be in Emscripten exit-cleanup touching its vtable), build a fresh one.
-    // IU-2: stop the realizer for the previous ontology so it cannot post stale
-    // events to the STPU or other shared objects after the ontology is swapped.
-    // The STPU itself is stopped in classify() (after the guard mutex) and
-    // restarted at the top of the next classify() call.
+    // Reset: prepare a fresh ontology for the next classify() call.
+    // Realizers from the previous call are already joined at the end of classify(),
+    // so no stopAndClearRealizers() call is needed here.
     void reset() {
-        // Stop the realizer for the current ontology (IU-2).
-        // Must happen BEFORE mPreviousOntology is deleted (two resets ago).
-        // The realizer thread is joined here so no stale callbacks fire after swap.
-        if (mOntology && mReasonerManager) {
-            WasmRealizationManager* rm =
-                static_cast<WasmRealizationManager*>(mReasonerManager->getRealizationManager());
-            if (rm) {
-                rm->stopRealizerForOntology(mOntology);
-            }
-        }
-
         delete mPreviousOntology;
         mPreviousOntology = mOntology;
         mOntology = nullptr;
@@ -700,23 +700,16 @@ bool KoncludeReasoner::classify() {
         addReq(COntologyProcessingStep::OPSROLEREALIZE);
     }
 
-    // Restart the STPU thread if it was stopped at the end of a prior classify()
-    // call.  On the very first classify() call the STPU is already running (started
-    // by CConfigDependedCalculationEnvironmentFactory during initializeManager()),
-    // so startProcessing() is a no-op there (guarded by the isRunning() check).
-    {
-        CSingleThreadTaskProcessorUnit* stpu = mImpl->mReasonerManager->getStpu();
-        if (stpu) {
-            stpu->startProcessing();
-        }
-    }
-
-    // Single blocking prepareOntology.  mCalculationManager is set on the reasoner
-    // manager thread in threadStarted(), which runs before any event is processed,
-    // so getStpu() is safe to call here (after prepareOntology returns, the reasoner
-    // manager thread has definitely initialized — guaranteed by the waitForCallback
-    // happens-before relationship).
+    // The STPU is a long-lived thread (pool design): it stays alive for the
+    // entire Impl lifetime, blocking on its semaphore between tasks.
+    // No start/stop needed — prepareOntology() wakes it via signalizeEvent().
+    fprintf(stderr, "{dbg} classify: calling prepareOntology\n");
     mImpl->mReasonerManager->prepareOntology(mImpl->mOntology, reqList);
+    fprintf(stderr, "{dbg} classify: prepareOntology returned\n");
+    // Drain any events Manager is still processing from this call (e.g. cascading
+    // requirement-failure callbacks fired after doCallback() released our semaphore).
+    // Without this, a fast second call races with Manager's post-callback cleanup.
+    mImpl->mReasonerManager->waitSynchronization();
 
     // Clean up requirement objects.
     for (auto* r : reqList) delete r;
@@ -727,35 +720,6 @@ bool KoncludeReasoner::classify() {
     bool hasIndividuals = mImpl->mOntology->getABox() &&
         mImpl->mOntology->getABox()->getIndividualVector(false) &&
         mImpl->mOntology->getABox()->getIndividualVector(false)->getItemCount() > 0;
-
-    // Quiesce the STPU after every classify() call.
-    //
-    // Root cause of getWasmTableEntry crash on sequential calls:
-    // The STPU is a long-lived pthread.  After prepareOntology() returns it may
-    // still be processing stale events from this call's calculation environment.
-    // When reset() swaps the ontology and the next classify() starts, those stale
-    // events reference freed memory → bad virtual dispatch → crash.
-    //
-    // Fix: wait for the last completeTask() to finish (guard mutex), then stop
-    // and join the STPU thread so it holds no references to this call's objects.
-    // Before the next prepareOntology() (at classify() entry below), reset
-    // mProcessingStopped and call startProcessing() to restart the thread.
-    {
-        CSingleThreadTaskProcessorUnit* stpu = mImpl->mReasonerManager->getStpu();
-        if (stpu) {
-            // Wait for any in-flight completeTask() to finish.
-            std::mutex* guard = stpuGetCompleteTaskGuard(stpu);
-            if (guard) {
-                std::lock_guard<std::mutex> lk(*guard);
-            }
-            // Kill the STPU pthread so it holds no stale references.
-            stpu->stopProcessing();   // sets mProcessingStopped = true
-            stpu->signalizeEvent();   // wakes blocking semaphore so loop can exit
-            stpu->stopThread(true);   // pthread_join — STPU thread is fully dead
-            // Reset mProcessingStopped so startProcessing() works on the next call.
-            stpuResetStopped(stpu);
-        }
-    }
 
     // Check whether classification actually completed.
     // CClassification::isOntologyClassified() is never set to true in this codebase,
@@ -778,6 +742,15 @@ bool KoncludeReasoner::classify() {
                 COntologyProcessingStatus::PSCOMPLETELYYPROCESSED);
     }
     mImpl->mRealized = realized;
+
+    // Join all realizer threads before returning.  prepareOntology() has
+    // completed OPSROLEREALIZE so realizers have finished their work.
+    // Joining here (while still in C++ context, STPU still alive) avoids
+    // Emscripten's async cleanupThread callbacks racing with the next
+    // reset() → buildFreshOntology() cycle.
+    if (mImpl->mHasIndividualsHint) {
+        mImpl->mReasonerManager->stopAndClearRealizers();
+    }
 
     double totalMs = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - t0).count();

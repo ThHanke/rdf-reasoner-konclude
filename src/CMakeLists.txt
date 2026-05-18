@@ -231,6 +231,11 @@ list(APPEND KERNEL_SOURCES "${OVERRIDE_DIR}/CKoncludeInfo.cpp")
 list(FILTER KERNEL_SOURCES EXCLUDE REGEX ".*/Scheduler/CSingleThreadTaskProcessorUnit\\.cpp$")
 list(APPEND KERNEL_SOURCES "${OVERRIDE_DIR}/CSingleThreadTaskProcessorUnit.cpp")
 
+# Realizer callback data override: adds takeCallback() with atomic exchange to prevent
+# double-callback use-after-free when a late CRealizingCalculatedCallbackEvent fires.
+list(FILTER KERNEL_SOURCES EXCLUDE REGEX ".*/Realizer/COntologyRealizingDynamicRequirmentCallbackData\\.cpp$")
+list(APPEND KERNEL_SOURCES "${OVERRIDE_DIR}/COntologyRealizingDynamicRequirmentCallbackData.cpp")
+
 # ---------------------------------------------------------------------------
 # 3. Static library: konclude_kernel
 # ---------------------------------------------------------------------------

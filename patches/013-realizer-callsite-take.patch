@@ -1,0 +1,13 @@
+diff --git a/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp b/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp
+--- a/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp
++++ b/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp
+@@ -4533,7 +4533,7 @@
+ 						if (!callbackData->hasCurrentProcessingRequirmentCount()) {
+ 							ontRealItem->logRequirementProcessingFinishStatistics(procData->getStatistics());
+-							CCallbackData* callback = callbackData->getProcessingFinishedCallback();
+-							callback->doCallback();
++							CCallbackData* callback = callbackData->takeCallback();
++							if (callback) callback->doCallback();
+ 							delete callbackData;
+ 						}
+ 					}
