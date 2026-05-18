@@ -103,12 +103,17 @@ namespace Konclude {
         void CThread::postEvent(QEvent* event, int /*priority*/) {
             PthreadState* s = getState(this);
             if (!s) {
+                fprintf(stderr, "{thread} postEvent DROP (no state): name='%s' type=%d\n",
+                    threadName.c_str(), event ? (int)event->type() : -1);
                 delete event; return;
             }
             pthread_mutex_lock(&s->queueMutex);
             s->eventQueue.push_back(event);
+            size_t qsize = s->eventQueue.size();
             pthread_cond_signal(&s->queueCond);
             pthread_mutex_unlock(&s->queueMutex);
+            fprintf(stderr, "{thread} postEvent OK: name='%s' type=%d qsize=%zu running=%d started=%d\n",
+                threadName.c_str(), (int)event->type(), qsize, (int)s->running, (int)s->started);
         }
 
         void CThread::waitSynchronization() {
@@ -129,6 +134,8 @@ namespace Konclude {
 
         void CThread::run() {
             threadID = nextThreadID++;
+            fprintf(stderr, "{thread} run() start: name='%s' id=%lld\n",
+                threadName.c_str(), (long long)threadID);
 
             bool registered = false;
             if (mWatchDog) registered = mWatchDog->registerThread(this);
@@ -141,16 +148,37 @@ namespace Konclude {
 
             pthread_mutex_lock(&s->queueMutex);
             while (true) {
-                while (s->eventQueue.empty() && !s->shouldStop)
+                while (s->eventQueue.empty() && !s->shouldStop) {
+                    fprintf(stderr, "{thread} wait: name='%s' qsize=%zu\n",
+                        threadName.c_str(), s->eventQueue.size());
                     pthread_cond_wait(&s->queueCond, &s->queueMutex);
-                if (s->shouldStop && s->eventQueue.empty()) break;
+                    fprintf(stderr, "{thread} wake: name='%s' qsize=%zu shouldStop=%d\n",
+                        threadName.c_str(), s->eventQueue.size(), (int)s->shouldStop);
+                }
+                // On stop: drain remaining events without processing. In native
+                // Konclude each ontology is a fresh process so threads simply die;
+                // events queued after the final callback (e.g. late STPU callbacks
+                // referencing already-freed CRealizingTestingItem) are dropped
+                // automatically. Replicating that behaviour here prevents
+                // use-after-free vtable crashes in the Realizer-Thread.
+                if (s->shouldStop) {
+                    while (!s->eventQueue.empty()) {
+                        delete s->eventQueue.front();
+                        s->eventQueue.pop_front();
+                    }
+                    break;
+                }
                 QEvent* ev = s->eventQueue.front();
                 s->eventQueue.pop_front();
                 pthread_mutex_unlock(&s->queueMutex);
 
+                fprintf(stderr, "{thread} event: name='%s' type=%d\n",
+                    threadName.c_str(), (int)ev->type());
                 try {
                     this->event(ev);
                 } catch (...) {}
+                fprintf(stderr, "{thread} event-done: name='%s' type=%d\n",
+                    threadName.c_str(), (int)ev->type());
                 delete ev;
 
                 pthread_mutex_lock(&s->queueMutex);
@@ -159,6 +187,8 @@ namespace Konclude {
 
             s->running = false;
             threadRuns = false;
+            fprintf(stderr, "{thread} run() exit: name='%s' id=%lld\n",
+                threadName.c_str(), (long long)threadID);
             threadStopped();
             if (mWatchDog) mWatchDog->checkoutThread(this);
         }
@@ -228,6 +258,8 @@ namespace Konclude {
         void CThread::stopThread(bool waitStopped) {
             PthreadState* s = getState(this);
             if (!s || !s->started) return;
+            fprintf(stderr, "{thread} stopThread: name='%s' waitStopped=%d\n",
+                threadName.c_str(), (int)waitStopped);
             pthread_mutex_lock(&s->queueMutex);
             s->shouldStop = true;
             pthread_cond_signal(&s->queueCond);
@@ -235,6 +267,8 @@ namespace Konclude {
             if (waitStopped) {
                 pthread_join(s->thread, nullptr);
                 s->started = false;
+                fprintf(stderr, "{thread} stopThread: joined name='%s'\n",
+                    threadName.c_str());
             }
         }
 

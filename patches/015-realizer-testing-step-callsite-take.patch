@@ -1,0 +1,12 @@
+diff --git a/Source/Reasoner/Realizer/CRealizingTestingStep.cpp b/Source/Reasoner/Realizer/CRealizingTestingStep.cpp
+--- a/Source/Reasoner/Realizer/CRealizingTestingStep.cpp
++++ b/Source/Reasoner/Realizer/CRealizingTestingStep.cpp
+@@ -119,6 +119,6 @@
+ 								callbackData->decProcessingRequirmentCount();
+ 								if (!callbackData->hasCurrentProcessingRequirmentCount()) {
+-									CCallbackData* callback = callbackData->getProcessingFinishedCallback();
+-									callback->doCallback();
++									CCallbackData* callback = callbackData->takeCallback();
++									if (callback) callback->doCallback();
+ 									delete callbackData;
+ 								}

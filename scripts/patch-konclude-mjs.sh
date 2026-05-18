@@ -84,4 +84,56 @@ else
   echo "patch-konclude-mjs: [SKIP]    worker.onerror already patched"
 fi
 
+# ── Patch 3: no-op __emscripten_thread_free_data ─────────────────────────────
+# After classify(), KPSet processor pthreads exit and post cmd=cleanupThread.
+# returnWorkerToPool() calls __emscripten_thread_free_data(pthread_ptr), which
+# is a WASM export that calls back into C++ state that may already be in an
+# undefined state (stale vtable pointer → getWasmTableEntry(0x72676E73) crash).
+# No-op the function: the thread descriptor memory leaks (one per pthread pool
+# thread, fixed count) but the crash is eliminated.
+BEFORE_FREE='var __emscripten_thread_free_data=a0=>(__emscripten_thread_free_data=wasmExports["vc"])(a0);'
+AFTER_FREE='var __emscripten_thread_free_data=a0=>{};'
+
+if grep -qF "$BEFORE_FREE" "$DIST_FILE"; then
+  python3 - "$DIST_FILE" <<'PYEOF'
+import sys
+path = sys.argv[1]
+before = 'var __emscripten_thread_free_data=a0=>(__emscripten_thread_free_data=wasmExports["vc"])(a0);'
+after  = 'var __emscripten_thread_free_data=a0=>{};'
+text = open(path).read()
+open(path, 'w').write(text.replace(before, after, 1))
+PYEOF
+  echo "patch-konclude-mjs: [APPLIED] no-op __emscripten_thread_free_data"
+else
+  echo "patch-konclude-mjs: [SKIP]    __emscripten_thread_free_data already patched"
+fi
+
+# ── Patch 4: guard invokeEntryPoint against vtable corruption crashes ─────────
+# KPSet processor pthreads crash with getWasmTableEntry(0x72676E73) ("sngr" —
+# freed memory reused for string data) inside their thread function after
+# classify() has already returned.  The work is done; the crash is in cleanup
+# code that runs on shared memory already freed by the previous call cycle.
+# Wrapping the thread entry in a try-catch prevents the error event from
+# reaching the main Worker's onerror handler (which would reject pending RPC
+# promises with "unwind").
+BEFORE_ENTRY='var invokeEntryPoint=(ptr,arg)=>{runtimeKeepaliveCounter=0;noExitRuntime=0;var result=getWasmTableEntry(ptr)(arg);function finish(result){if(keepRuntimeAlive()){EXITSTATUS=result}else{__emscripten_thread_exit(result)}}finish(result)};'
+# On crash: log, call __emscripten_thread_exit(0) so pthread_join (which uses
+# Atomics.wait on the thread's exit-status word) can unblock, then return.
+# Without the __emscripten_thread_exit call, stopThread(true)/pthread_join hangs.
+AFTER_ENTRY='var invokeEntryPoint=(ptr,arg)=>{runtimeKeepaliveCounter=0;noExitRuntime=0;var result;try{result=getWasmTableEntry(ptr)(arg);}catch(e){err("invokeEntryPoint: thread ptr="+ptr+" crashed: "+(e&&e.message));__emscripten_thread_exit(0);return;}function finish(result){if(keepRuntimeAlive()){EXITSTATUS=result}else{__emscripten_thread_exit(result)}}finish(result)};'
+
+if grep -qF "$BEFORE_ENTRY" "$DIST_FILE"; then
+  python3 - "$DIST_FILE" <<'PYEOF'
+import sys
+path = sys.argv[1]
+before = 'var invokeEntryPoint=(ptr,arg)=>{runtimeKeepaliveCounter=0;noExitRuntime=0;var result=getWasmTableEntry(ptr)(arg);function finish(result){if(keepRuntimeAlive()){EXITSTATUS=result}else{__emscripten_thread_exit(result)}}finish(result)};'
+after  = 'var invokeEntryPoint=(ptr,arg)=>{runtimeKeepaliveCounter=0;noExitRuntime=0;var result;try{result=getWasmTableEntry(ptr)(arg);}catch(e){err("invokeEntryPoint: thread ptr="+ptr+" crashed: "+(e&&e.message));__emscripten_thread_exit(0);return;}function finish(result){if(keepRuntimeAlive()){EXITSTATUS=result}else{__emscripten_thread_exit(result)}}finish(result)};'
+text = open(path).read()
+open(path, 'w').write(text.replace(before, after, 1))
+PYEOF
+  echo "patch-konclude-mjs: [APPLIED] guarded invokeEntryPoint against vtable crashes"
+else
+  echo "patch-konclude-mjs: [SKIP]    invokeEntryPoint already guarded"
+fi
+
 echo "patch-konclude-mjs: done"

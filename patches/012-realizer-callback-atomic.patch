@@ -1,0 +1,22 @@
+diff --git a/Source/Reasoner/Realizer/COntologyRealizingDynamicRequirmentCallbackData.h b/Source/Reasoner/Realizer/COntologyRealizingDynamicRequirmentCallbackData.h
+--- a/Source/Reasoner/Realizer/COntologyRealizingDynamicRequirmentCallbackData.h
++++ b/Source/Reasoner/Realizer/COntologyRealizingDynamicRequirmentCallbackData.h
+@@ -24,4 +24,5 @@
+ // Libraries includes
++#include <atomic>
+ 
+ 
+ // Namespace includes
+@@ -68,4 +69,5 @@
+ 					COntologyRealizingDynamicRequirmentCallbackData* setProcessingFinishedCallback(CCallbackData* callback);
+ 					CCallbackData* getProcessingFinishedCallback();
++					CCallbackData* takeCallback();
+ 
+ 					cint64 getCurrentProcessingRequirmentCount();
+@@ -82,5 +84,5 @@
+ 					COntologyRealizingDynamicRequirmentProcessingStatistics mStatistics;
+ 					cint64 mProcessingRequirmentCount;
+-					CCallbackData* mCallback;
++					std::atomic<CCallbackData*> mCallback;
+ 
+ 				// private methods
