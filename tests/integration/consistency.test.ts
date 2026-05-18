@@ -87,6 +87,13 @@ describe.skipIf(!wasmExists)("Consistency checking integration", () => {
     expect(consistent).toBe(true);
   });
 
+  it("roberts-family (complex OWL-DL, 405 individuals) → checkConsistency() returns true", async () => {
+    const quads = loadFixture("roberts-family.nt");
+    const consistent = await reasoner.checkConsistency(quads);
+
+    expect(consistent).toBe(true);
+  }, 360000);
+
   it("concurrent classify() and checkConsistency() calls are serialized", async () => {
     // Fire both calls simultaneously — they must not interleave their
     // loadNTriples → classify sequences inside the Worker.

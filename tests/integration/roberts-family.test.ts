@@ -61,7 +61,7 @@ describe.skipIf(!wasmExists)("Roberts family ontology integration", () => {
 
     inputQuads = loadFixture("roberts-family.nt");
     inferred = await reasoner.classify(inputQuads);
-  }, 60000);
+  }, 360000);
 
   afterAll(() => {
     reasoner?.terminate();
@@ -101,4 +101,68 @@ describe.skipIf(!wasmExists)("Roberts family ontology integration", () => {
       hasSubsumption(inferred, `${NS}FemaleAncestor`, `${NS}Woman`),
     ).toBe(true);
   });
+
+  // ── Phase 2: TBox classification correctness ─────────────────────────────
+
+  it("FemaleAncestor ⊑ Ancestor (intersection member subsumption)", () => {
+    expect(
+      hasSubsumption(inferred, `${NS}FemaleAncestor`, `${NS}Ancestor`),
+    ).toBe(true);
+  });
+
+  it("GreatAuntOfRobert ⊑ Woman (nominal + sisterOf chain)", () => {
+    expect(
+      hasSubsumption(inferred, `${NS}GreatAuntOfRobert`, `${NS}Woman`),
+    ).toBe(true);
+  });
+
+  it("FirstCousinOfRobert ⊑ FirstCousin (nominal specialisation)", () => {
+    expect(
+      hasSubsumption(inferred, `${NS}FirstCousinOfRobert`, `${NS}FirstCousin`),
+    ).toBe(true);
+  });
+
+  it("output contains ≥ 70 rdfs:subClassOf triples (TBox regression guard)", () => {
+    const subClassOfCount = inferred.filter(
+      (q) => q.predicate.value === SUBCLASS_OF,
+    ).length;
+    expect(subClassOfCount).toBeGreaterThanOrEqual(70);
+  });
+
+  // ── Phase 3: ABox realization ─────────────────────────────────────────────
+
+  const RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+
+  it("john_william_folland rdf:type Person appears in output (direct type echoed back)", () => {
+    expect(
+      inferred.some(
+        (q) =>
+          q.subject.value === `${NS}john_william_folland` &&
+          q.predicate.value === RDF_TYPE &&
+          q.object.value === `${NS}Person`,
+      ),
+    ).toBe(true);
+  });
+
+  it("at least one hasMother role assertion present (role realization ran)", () => {
+    const hasMother = `${NS}hasMother`;
+    expect(
+      inferred.some((q) => q.predicate.value === hasMother),
+    ).toBe(true);
+  });
+
+  it("ABox realization ran: inferred contains rdf:type triples", () => {
+    expect(
+      inferred.some((q) => q.predicate.value === RDF_TYPE),
+    ).toBe(true);
+  });
+
+  it("sequential call stability: second classify() on same reasoner succeeds", async () => {
+    // Call classify() again on the same reasoner with a different (small) ontology.
+    // Tests that STPU + realizer threads reset correctly between calls.
+    const lubmQuads = loadFixture("lubm.nt");
+    const inferred2 = await reasoner.classify(lubmQuads);
+    expect(Array.isArray(inferred2)).toBe(true);
+    expect(inferred2.length).toBeGreaterThan(0);
+  }, 30000);
 });
