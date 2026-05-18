@@ -35,16 +35,18 @@ const EQUIVALENT_CLASS = "http://www.w3.org/2002/07/owl#equivalentClass";
 // ---------------------------------------------------------------------------
 // Known divergences between WASM and native Konclude for GALEN
 //
-// WASM and native pick different IRI representatives for 14 equivalence-class
-// nodes. Both representatives are semantically equivalent (same CHierarchyNode);
-// the divergence is an artifact of concept-tag ordering (WASM uses
-// first-encountered concept; native uses primary concept name).
+// These 14 divergences are representative-IRI hash-ordering artifacts:
+// the WASM build uses std::unordered_map (QHash shim) which iterates in a
+// different order than Qt's QHash. The KPSet classifier builds the taxonomy
+// by iterating the satItemList; the first concept to create its CHierarchyNode
+// (determined by hash map iteration order) becomes the equivalence representative.
+// Both WASM-chosen and native-chosen IRIs are valid synonyms in the same
+// equivalence class — no correctness impact.
+// TODO(plan-016): Fix requires aligning KPSet scheduling order or accepting
+// the divergence as a known Qt→std migration artifact.
 //
 // Each entry appears once as a native-only triple and once as a WASM-only
-// triple (28 strings total). Excluded from set-equality until the
-// representative-IRI selection is aligned with native (Unit 4 of plan-016).
-//
-// TODO(plan-016 Unit 4): fix representative IRI selection and remove this list.
+// triple (28 strings total). Excluded from set-equality.
 // ---------------------------------------------------------------------------
 
 const GALEN_KNOWN_DIVERGENCES: string[] = [
