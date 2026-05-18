@@ -865,9 +865,13 @@ std::string KoncludeReasoner::getInferredNTriples() {
         "http://www.w3.org/2002/07/owl#Thing";
 
     // Pick the canonical representative IRI for a node: the named concept
-    // with the lowest concept tag (oldest/primary). This matches native
-    // Konclude's representative selection — primary named classes receive
-    // lower tags than derived equivalents.
+    // with the lowest concept tag. Note: this does NOT match native Konclude's
+    // representative selection for all ontologies. Native uses getOneEquivalentConcept()
+    // (eqConList.first()), which is the concept that first created the hierarchy node
+    // during KPSet classification — determined by satItemList iteration order.
+    // For GALEN, 14 equivalence pairs differ from native due to std::unordered_map
+    // vs QHash iteration order in the classifier. See buildInferredTripleBuffer()
+    // for the same logic.
     auto nodeRep = [&conceptIri](CHierarchyNode* node) -> std::string {
         if (!node) return "";
         QList<CConcept*>* list = node->getEquivalentConceptList();
@@ -1051,6 +1055,10 @@ int KoncludeReasoner::buildInferredTripleBuffer() {
             }
 
             // pick node representative: lowest concept tag
+            // Note: native uses eqConList.first() = first concept to create the hierarchy
+            // node (KPSet satItemList order, hash-map-dependent). Using lowest tag is
+            // deterministic but diverges from native for 14 GALEN pairs (Qt vs std hash
+            // iteration order). See GALEN_KNOWN_DIVERGENCES in galen.test.ts.
             auto nodeRep = [&](CHierarchyNode* node) -> std::string {
                 if (!node) return "";
                 QList<CConcept*>* list = node->getEquivalentConceptList();
