@@ -6,6 +6,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { encodeTriplesForWasm, decodeWasmTripleBuffer } from './wasm-binary.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -32,11 +33,17 @@ async function benchOne(Module, nts) {
   const reasoner = new Module.KoncludeReasoner();
   try {
     const tLoad0 = performance.now();
-    for (const nt of nts) reasoner.loadNTriples(nt);
+    const { triplePtr, tripleCount, strTablePtr, strBytes } = encodeTriplesForWasm(Module, nts.join('\n'));
+    try {
+      reasoner.loadTripleBuffer(triplePtr, tripleCount, strTablePtr, strBytes);
+    } finally {
+      Module._free(triplePtr);
+      Module._free(strTablePtr);
+    }
     const tLoad1 = performance.now();
     const ok = reasoner.classify();
     const tClassify = performance.now();
-    const inferred = reasoner.getInferredNTriples();
+    const inferred = decodeWasmTripleBuffer(Module, reasoner);
     const tOutput = performance.now();
 
     if (!ok) throw new Error('classify() returned false');
