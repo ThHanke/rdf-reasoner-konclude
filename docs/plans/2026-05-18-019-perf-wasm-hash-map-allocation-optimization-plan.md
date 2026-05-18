@@ -156,9 +156,11 @@ drop-in for the QHash shim.
   - `src/compat/QtCompat.h` uses `robin_hood::unordered_node_map` for `QHash::Map`.
   - No other changes to QHash struct.
 
-- [ ] **Unit 3: Swap `QSet` base to `robin_hood::unordered_flat_set`; add `WASM_BIGINT=1`**
+- [x] **Unit 3: Add `WASM_BIGINT=1`; QSet flat_set reverted** *(QSet change reverted — see note below)*
 
-  **Goal:** Replace `std::unordered_set<T, QHasherFn<T>>` with `robin_hood::unordered_flat_set<T, QHasherFn<T>>` as QSet's base class, eliminating per-element node allocation. Add `WASM_BIGINT=1` to Emscripten link flags.
+  **Goal:** Add `WASM_BIGINT=1` to Emscripten link flags. QSet flat_set was attempted but reverted.
+
+  **Implementation note:** `robin_hood::unordered_flat_set` was initially used for QSet, but caused the roberts-family integration test (ABox realization) to return 0 triples. Root cause: flat_set rehashes at ~80% load factor vs std's 100%, invalidating iterators mid-iteration in Konclude's ABox realization code (`mRealizerSet` grows while being iterated). All TBox-only tests passed because those QSets never grow past 80% during an active iteration. QSet reverted to `std::unordered_set`. WASM_BIGINT=1 was retained.
 
   **Requirements:** R3, R5
 

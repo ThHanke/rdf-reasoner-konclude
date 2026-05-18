@@ -19,6 +19,17 @@
 #include <unordered_map>
 #include <vector>
 #include <unordered_set>
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wshadow"
+#pragma GCC diagnostic ignored "-Wunused-variable"
+#pragma GCC diagnostic ignored "-Wdeprecated-builtins"
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wshadow"
+#pragma clang diagnostic ignored "-Wunused-variable"
+#pragma clang diagnostic ignored "-Wdeprecated-builtins"
+#include "robin_hood.h"
+#pragma clang diagnostic pop
+#pragma GCC diagnostic pop
 #include <set>
 #include <stack>
 #include <string>
@@ -155,7 +166,7 @@ template<typename K, typename V>
 struct QHash {
 private:
     using Bucket = std::vector<V>;
-    using Map    = std::unordered_map<K, Bucket, QHasherFn<K>>;
+    using Map    = robin_hood::unordered_node_map<K, Bucket, QHasherFn<K>>;
     Map mData;
 
 public:

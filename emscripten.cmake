@@ -24,6 +24,7 @@ set(KONCLUDE_EMSCRIPTEN_LINK_FLAGS
     "-Wl,--error-limit=0"
     "-sNO_DISABLE_EXCEPTION_CATCHING"
     "-sALLOW_BLOCKING_ON_MAIN_THREAD=1"
+    "-sWASM_BIGINT=1"
     "-flto"
     "-sEXPORTED_RUNTIME_METHODS=[\"HEAPU8\"]"
     "-sEXPORTED_FUNCTIONS=[\"_malloc\",\"_free\"]"
