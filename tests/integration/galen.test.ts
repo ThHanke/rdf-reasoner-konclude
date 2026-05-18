@@ -16,7 +16,7 @@ import type { Quad } from "@rdfjs/types";
 
 import { RdfReasoner } from "../../ts/index.js";
 import { loadFixture } from "../helpers/fixture.js";
-import { assertMatchExcluding } from "../helpers/compare-native.js";
+import { assertExactMatch } from "../helpers/compare-native.js";
 
 // ---------------------------------------------------------------------------
 // WASM availability guard
@@ -31,56 +31,6 @@ const wasmExists = existsSync(wasmPath);
 
 const SUBCLASS_OF = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
 const EQUIVALENT_CLASS = "http://www.w3.org/2002/07/owl#equivalentClass";
-
-// ---------------------------------------------------------------------------
-// Known divergences between WASM and native Konclude for GALEN
-//
-// These 14 divergences are representative-IRI hash-ordering artifacts:
-// the WASM build uses std::unordered_map (QHash shim) which iterates in a
-// different order than Qt's QHash. The KPSet classifier builds the taxonomy
-// by iterating the satItemList; the first concept to create its CHierarchyNode
-// (determined by hash map iteration order) becomes the equivalence representative.
-// Both WASM-chosen and native-chosen IRIs are valid synonyms in the same
-// equivalence class — no correctness impact.
-// TODO(plan-016): Fix requires aligning KPSet scheduling order or accepting
-// the divergence as a known Qt→std migration artifact.
-//
-// Each entry appears once as a native-only triple and once as a WASM-only
-// triple (28 strings total). Excluded from set-equality.
-// ---------------------------------------------------------------------------
-
-const GALEN_KNOWN_DIVERGENCES: string[] = [
-  // native-only (native picks these IRIs as representatives)
-  `<http://ex.test/galen#AtrophicGastritisProcess> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://ex.test/galen#AtrophyProcess> .`,
-  `<http://ex.test/galen#AtrophicGastritisProcess> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://ex.test/galen#Gastritis> .`,
-  `<http://ex.test/galen#BrachiocephalVein> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://ex.test/galen#MirrorImagedBodyStructure> .`,
-  `<http://ex.test/galen#BrachiocephalVein> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://ex.test/galen#NAMEDVein> .`,
-  `<http://ex.test/galen#ConductionFibres> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://ex.test/galen#Myocardium> .`,
-  `<http://ex.test/galen#GastricMucosalAtrophy> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://ex.test/galen#AtrophyOfMucosa> .`,
-  `<http://ex.test/galen#GastricMucosalHypertrophy> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://ex.test/galen#HypertrophyOfMucosa> .`,
-  `<http://ex.test/galen#GreatSaphenousVein> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://ex.test/galen#NAMEDVein> .`,
-  `<http://ex.test/galen#Haem> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://ex.test/galen#ComplexChemicals> .`,
-  `<http://ex.test/galen#Myocardium> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://ex.test/galen#Muscle> .`,
-  `<http://ex.test/galen#ShortSaphenousVein> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://ex.test/galen#NAMEDVein> .`,
-  `<http://ex.test/galen#VitaminB12> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://ex.test/galen#NAMEDVitamin> .`,
-  `<http://ex.test/galen#VitaminB1> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://ex.test/galen#NAMEDVitamin> .`,
-  `<http://ex.test/galen#VitaminB6> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://ex.test/galen#NAMEDVitamin> .`,
-  // WASM-only (WASM picks these IRIs as representatives instead)
-  `<http://ex.test/galen#Atrophyic_HyperplasticGastritisGastritisProcess> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://ex.test/galen#AtrophyProcess> .`,
-  `<http://ex.test/galen#Atrophyic_HyperplasticGastritisGastritisProcess> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://ex.test/galen#Gastritis> .`,
-  `<http://ex.test/galen#AtrophyOfGastricMucosa> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://ex.test/galen#AtrophyOfMucosa> .`,
-  `<http://ex.test/galen#BrachiocephalicVein> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://ex.test/galen#MirrorImagedBodyStructure> .`,
-  `<http://ex.test/galen#BrachiocephalicVein> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://ex.test/galen#NAMEDVein> .`,
-  `<http://ex.test/galen#CardiacMuscle> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://ex.test/galen#Muscle> .`,
-  `<http://ex.test/galen#Cobalamin> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://ex.test/galen#NAMEDVitamin> .`,
-  `<http://ex.test/galen#ConductionFibres> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://ex.test/galen#CardiacMuscle> .`,
-  `<http://ex.test/galen#GreaterSaphenousVein> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://ex.test/galen#NAMEDVein> .`,
-  `<http://ex.test/galen#Heme> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://ex.test/galen#ComplexChemicals> .`,
-  `<http://ex.test/galen#HypertrophyOfGastricMucosa> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://ex.test/galen#HypertrophyOfMucosa> .`,
-  `<http://ex.test/galen#LesserSaphenousVein> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://ex.test/galen#NAMEDVein> .`,
-  `<http://ex.test/galen#Pyridoxine> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://ex.test/galen#NAMEDVitamin> .`,
-  `<http://ex.test/galen#Thiamin> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://ex.test/galen#NAMEDVitamin> .`,
-];
 
 // ---------------------------------------------------------------------------
 // Suite (skipped when WASM is absent)
@@ -113,7 +63,7 @@ describe.skipIf(!wasmExists)("GALEN medical ontology integration", () => {
     }
   });
 
-  it("TBox matches native Konclude output excluding known representative-IRI divergences (set equality)", () => {
-    assertMatchExcluding(inferred, "galen-native-tbox.nt", [SUBCLASS_OF, EQUIVALENT_CLASS], GALEN_KNOWN_DIVERGENCES);
+  it("TBox matches native Konclude output exactly (set equality)", () => {
+    assertExactMatch(inferred, "galen-native-tbox.nt", [SUBCLASS_OF, EQUIVALENT_CLASS]);
   });
 });

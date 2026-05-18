@@ -41,7 +41,7 @@ function buildMismatchMessage(
   onlyInWasm: string[],
 ): string {
   return (
-    `TBox mismatch:\n` +
+    `Mismatch:\n` +
     `Only in native (${onlyInNative.length} missing from WASM): ${JSON.stringify(onlyInNative)}\n` +
     `Only in WASM (${onlyInWasm.length} extra in WASM): ${JSON.stringify(onlyInWasm)}`
   );
