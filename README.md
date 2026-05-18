@@ -199,42 +199,46 @@ module.exports = { experiments: { asyncWebAssembly: true } };
 
 ## Performance
 
-Benchmarked on an 8-core Linux host. Native = Konclude v0.7.0 binary; TS = Node.js 20 via this package. Threads: 8 (both native and WASM pthreads).
+Benchmarked on an 8-core Linux host. Native = Konclude v0.7.0 Docker image; WASM = Node.js 20 via this package. Both use 8 threads. Median of 3 runs after 1 warmup.
 
-| Ontology           | Expressivity | NTriples | Native classify | TS total | Ratio |
-| ------------------ | ------------ | -------- | --------------- | -------- | ----- |
-| LUBM schema        | SHI          | 307      | 35 ms           | 266 ms   | ~7.3× |
-| GALEN              | SHIF         | 30 817   | 225 ms          | 941 ms   | ~4.2× |
-| Roberts family     | SROIQ        | 3 866    | 1 801 ms        | 2 603 ms | ~1.4× |
-| LUBM schema + data | SHI          | 100 850  | 160 ms          | 2 104 ms | ~13×  |
+| Ontology           | Expressivity | NTriples | Native ¹  | WASM total | Ratio |
+| ------------------ | ------------ | -------- | --------- | ---------- | ----- |
+| LUBM schema        | SHI          | 307      | 69 ms     | 527 ms     | ~7.6× |
+| GALEN              | SHIF         | 30 817   | 325 ms    | 1 374 ms   | ~4.2× |
+| Roberts family     | SROIQ        | 3 866    | 2 258 ms  | 40 311 ms  | ~17.9× |
+| LUBM schema + data | SHI          | 100 850  | 1 273 ms  | 2 434 ms   | ~1.9× |
 
-TS total includes NTriples serialization/deserialization (the main JS overhead).
-The WASM classify step alone is within 1.4×–7.3× of native. Run `npm run bench`
-to reproduce (requires a built WASM binary — see [Build from source](#build-from-source)).
+¹ Native uses `classification` for TBox-only ontologies and `realization` for ontologies
+with individuals (Roberts family, LUBM + data) — matching WASM's operation selection.
+
+WASM total includes binary buffer encode/decode (negligible for most ontologies). Run
+`npm run bench` to reproduce (requires a built WASM binary — see [Build from source](#build-from-source)).
 
 ## How it works
 
 ```text
 main thread
   RdfReasoner.reason(store)
-    → serialize Store quads to NTriples (n3.js Writer)
+    → encode Store quads to binary buffer (zero-copy, no NTriples serialization)
     → postMessage to Worker
 
-Worker (pthreads WASM)
-  → KoncludeReasoner::loadNTriples()     // NTriples → librdf model (Raptor2)
-  → mapTriples()                         // librdf → OWL expression model
-  → KoncludeReasoner::classify()         // OWL-DL tableau (KPSet, parallel)
-  → KoncludeReasoner::getInferredNTriples()
-    → postMessage result back
+Worker (pthreads WASM, 8 threads)
+  → KoncludeReasoner::loadTripleBuffer()   // binary buffer → librdf model (Raptor2)
+  → mapTriples()                           // librdf → OWL expression model
+  → KoncludeReasoner::realization()        // OWL-DL tableau + ABox (KPSet, 8 pthreads)
+  │    or KoncludeReasoner::classification() // TBox-only (no individuals)
+  → KoncludeReasoner::getInferredTripleBuffer()
+    → postMessage result back (zero-copy ArrayBuffer transfer)
 
 main thread
-  → parse NTriples → Quad[] (n3.js Parser)
+  → decode binary buffer → Quad[]
   → write into store[INFERRED_GRAPH_IRI]
 ```
 
 The WASM binary is compiled from Konclude's C++ tableau engine with Qt removed
 (replaced by `std::` shims) and pthreads enabled. The KPSet classifier requires
-real threads — cooperative dispatch deadlocks.
+real threads — cooperative dispatch deadlocks. Method names mirror the native
+Konclude CLI commands (`classification`, `realization`, `consistency`).
 
 ## Build from source
 
@@ -291,9 +295,10 @@ See [NOTICE](NOTICE) for full third-party notices.
 
 ## Acknowledgements
 
-Konclude was created by [Andreas Steigmiller](https://github.com/andreas-steigmiller)
-at the Institute of Artificial Intelligence, University of Ulm. Co-authors on the
-system description paper are Thorsten Liebig and Birte Glimm, also from the
-University of Ulm. All credit for the reasoning algorithm belongs to the Konclude
-authors. This package is an independent WebAssembly port developed with AI
+[Konclude](https://github.com/konclude/Konclude) was developed by
+[Andreas Steigmiller](https://github.com/andreas-steigmiller) at the Institute
+of Artificial Intelligence, University of Ulm. The system description paper
+(cited above) has co-authors Thorsten Liebig and Birte Glimm, also from the
+University of Ulm. All credit for the reasoning algorithm belongs to Andreas
+Steigmiller. This package is an independent WebAssembly port developed with AI
 assistance from [Claude](https://anthropic.com) (Anthropic).
