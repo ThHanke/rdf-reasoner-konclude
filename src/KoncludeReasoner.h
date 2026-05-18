@@ -27,6 +27,8 @@ public:
     bool realization();
     // consistency — check ontology consistency (call after classification).
     bool consistency();
+    // processorCount — number of parallel worker threads configured.
+    int processorCount();
 
     // Binary output protocol.
     // buildInferredTripleBuffer() assembles a combined output buffer:

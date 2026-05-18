@@ -50,6 +50,7 @@
 #include "Config/CGlobalConfigurationBase.h"
 #include "Config/CConfigurationGroup.h"
 #include "Config/CConvertBooleanConfigType.h"
+#include "Config/CStringConfigType.h"
 #include "Control/Command/CReasonerConfigurationGroup.h"
 
 // Reasoner manager
@@ -242,6 +243,12 @@ public:
                 dynamic_cast<CConvertBooleanConfigType*>(d->getConfigType());
             if (bt) bt->readFromBoolean(false);
         }
+        // Use all available hardware threads (capped at PTHREAD_POOL_SIZE=8).
+        CConfigData* pc = mConfig->createAndSetConfig("Konclude.Calculation.ProcessorCount");
+        if (pc) {
+            CStringConfigType* st = dynamic_cast<CStringConfigType*>(pc->getConfigType());
+            if (st) st->setValue("AUTO");
+        }
     }
     ~WasmConfigProvider() {
         delete mConfig;
@@ -272,6 +279,9 @@ struct KoncludeReasoner::Impl {
     WasmReasonerManagerThread*    mReasonerManager  = nullptr;
     CClassificationManager*       mClassManager     = nullptr;
 
+    // Configured parallel worker count (set after initializeManager).
+    int mProcessorCount = 1;
+
     // Result flags
     bool mClassified          = false;
     bool mLoadError           = false;
@@ -297,6 +307,7 @@ struct KoncludeReasoner::Impl {
         // ── Initialise the reasoner manager (synchronous in WASM via patch-002) ──
         mReasonerManager = new WasmReasonerManagerThread();
         mReasonerManager->initializeManager(mConfigProvider);
+        mProcessorCount = CThread::idealThreadCount();
 
         // ── Initialise the classification manager and inject it into the reasoner ──
         CConfigDependedSubsumptionClassifierFactory* classFactory =
@@ -705,6 +716,12 @@ bool KoncludeReasoner::consistency() {
         return true;
     }
     return cons->isOntologyConsistent();
+}
+
+// processorCount ───────────────────────────────────────────────────────────────
+
+int KoncludeReasoner::processorCount() {
+    return mImpl ? mImpl->mProcessorCount : 0;
 }
 
 // reset ────────────────────────────────────────────────────────────────────────
