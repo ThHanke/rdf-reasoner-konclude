@@ -286,13 +286,14 @@ and `patches/` (every modification). To recompile: `docker compose run --rm buil
 
 See [NOTICE](NOTICE) for full third-party notices.
 
-> Liebig, T., Jaeger, M., Möller, R., & Möller, B. (2014). _Konclude: System Description._
-> Web Semantics, 27–28, 78–85. doi:10.1016/j.websem.2014.06.003
+> Steigmiller, A., Liebig, T., & Glimm, B. (2014). _Konclude: System Description._
+> Journal of Web Semantics, 27–28, 78–85. doi:10.1016/j.websem.2014.06.003
 
 ## Acknowledgements
 
-Konclude was developed at the Institute of Artificial Intelligence, University
-of Ulm, by Thorsten Liebig, Murat Özcep, Stefan Wandelt, and others. All
-credit for the reasoning algorithm belongs to the Konclude authors. This
-package is an independent WebAssembly port developed with AI assistance from
-[Claude](https://anthropic.com) (Anthropic).
+Konclude was created by [Andreas Steigmiller](https://github.com/andreas-steigmiller)
+at the Institute of Artificial Intelligence, University of Ulm. Co-authors on the
+system description paper are Thorsten Liebig and Birte Glimm, also from the
+University of Ulm. All credit for the reasoning algorithm belongs to the Konclude
+authors. This package is an independent WebAssembly port developed with AI
+assistance from [Claude](https://anthropic.com) (Anthropic).
