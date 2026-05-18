@@ -51,7 +51,7 @@ export interface WorkerInitErrorMessage {
 // Eager initialisation
 // ---------------------------------------------------------------------------
 
-const initPromise: Promise<KoncludeModule> = createKoncludeModule()
+const initPromise: Promise<KoncludeModule> = createKoncludeModule({ print: () => {}, printErr: () => {} })
   .then((mod) => {
     self.postMessage({ type: "ready" } as WorkerReadyMessage);
     return mod;

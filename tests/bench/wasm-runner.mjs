@@ -97,7 +97,7 @@ export async function benchAll(cases = WASM_CASES, opts = { warmup: 1, runs: 3 }
     const tripleCount = nts.reduce((s, nt) => s + countTriples(nt), 0);
 
     async function runFresh() {
-      const Module = await createKoncludeModule();
+      const Module = await createKoncludeModule({ print: () => {}, printErr: () => {} });
       return benchOne(Module, nts);
     }
 
