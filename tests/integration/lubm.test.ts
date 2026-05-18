@@ -17,6 +17,7 @@ import type { Quad } from "@rdfjs/types";
 
 import { RdfReasoner } from "../../ts/index.js";
 import { loadFixture } from "../helpers/fixture.js";
+import { assertExactMatch } from "../helpers/compare-native.js";
 
 // ---------------------------------------------------------------------------
 // WASM availability guard
@@ -29,21 +30,8 @@ const wasmExists = existsSync(wasmPath);
 // Helpers
 // ---------------------------------------------------------------------------
 
-const NS = "http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#";
 const SUBCLASS_OF = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
-
-function hasSubsumption(
-  quads: Quad[],
-  subClass: string,
-  superClass: string,
-): boolean {
-  return quads.some(
-    (q) =>
-      q.predicate.value === SUBCLASS_OF &&
-      q.subject.value === subClass &&
-      q.object.value === superClass,
-  );
-}
+const EQUIVALENT_CLASS = "http://www.w3.org/2002/07/owl#equivalentClass";
 
 // ---------------------------------------------------------------------------
 // Suite (skipped when WASM is absent)
@@ -76,70 +64,7 @@ describe.skipIf(!wasmExists)("LUBM university benchmark ontology integration", (
     }
   });
 
-  // Direct asserted subsumptions that the reasoner must reproduce.
-  // All of these are explicit rdfs:subClassOf axioms in the LUBM ontology,
-  // so they must appear in any sound reasoner's output.
-
-  it("AssistantProfessor ⊑ Professor (asserted)", () => {
-    expect(
-      hasSubsumption(
-        inferred,
-        `${NS}AssistantProfessor`,
-        `${NS}Professor`,
-      ),
-    ).toBe(true);
-  });
-
-  it("AssociateProfessor ⊑ Professor (asserted)", () => {
-    expect(
-      hasSubsumption(
-        inferred,
-        `${NS}AssociateProfessor`,
-        `${NS}Professor`,
-      ),
-    ).toBe(true);
-  });
-
-  it("Chair ⊑ Professor (asserted)", () => {
-    expect(
-      hasSubsumption(inferred, `${NS}Chair`, `${NS}Professor`),
-    ).toBe(true);
-  });
-
-  it("Dean ⊑ Professor (asserted)", () => {
-    expect(
-      hasSubsumption(inferred, `${NS}Dean`, `${NS}Professor`),
-    ).toBe(true);
-  });
-
-  it("ConferencePaper ⊑ Article (direct asserted, reproduced by reasoner)", () => {
-    expect(
-      hasSubsumption(
-        inferred,
-        `${NS}ConferencePaper`,
-        `${NS}Article`,
-      ),
-    ).toBe(true);
-  });
-
-  it("at least 5 known LUBM subsumption pairs present in output", () => {
-    const knownPairs: [string, string][] = [
-      ["AssistantProfessor", "Professor"],
-      ["AssociateProfessor", "Professor"],
-      ["Chair", "Professor"],
-      ["Dean", "Professor"],
-      ["ConferencePaper", "Article"],
-      ["Article", "Publication"],
-      ["Book", "Publication"],
-      ["ClericalStaff", "AdministrativeStaff"],
-      ["Professor", "Faculty"],
-      ["Faculty", "Employee"],
-    ];
-
-    const foundCount = knownPairs.filter(([sub, sup]) =>
-      hasSubsumption(inferred, `${NS}${sub}`, `${NS}${sup}`),
-    ).length;
-
-    expect(foundCount).toBeGreaterThanOrEqual(5);
+  it("TBox matches native Konclude output exactly (set equality)", () => {
+    assertExactMatch(inferred, "lubm-native-tbox.nt", [SUBCLASS_OF, EQUIVALENT_CLASS]);
   });
 });
