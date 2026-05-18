@@ -111,14 +111,14 @@ describe.skipIf(!wasmExists)(
       ).toBe(true);
     });
 
-    it("TBox subsumption inferred (FemaleAncestor ⊑ Woman)", () => {
+    it("TBox subsumption inferred (FemaleAncestor ⊑ FemaleDescendent)", () => {
       const hasSub = inferred.some(
         (q) =>
           q.subject.value === NS + "FemaleAncestor" &&
           q.predicate.value === "http://www.w3.org/2000/01/rdf-schema#subClassOf" &&
-          q.object.value === NS + "Woman",
+          q.object.value === NS + "FemaleDescendent",
       );
-      expect(hasSub, "FemaleAncestor ⊑ Woman must be inferred").toBe(true);
+      expect(hasSub, "FemaleAncestor ⊑ FemaleDescendent must be inferred").toBe(true);
     });
   },
 );

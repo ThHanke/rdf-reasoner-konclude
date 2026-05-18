@@ -39,6 +39,10 @@ function triple(subject, predicate, object) {
  *  - <EquivalentClasses> with N <Class IRI="..."/> children
  *    (emits all N*(N-1) ordered pairs)
  *
+ * SubClassOf subjects and objects are normalized to the lexicographically
+ * smallest IRI in their equivalence class, matching the WASM nodeRep rule.
+ * EquivalentClasses pairs are emitted as-is (all N*(N-1) pairs, no normalization).
+ *
  * Elements where any child uses abbreviatedIRI (e.g. owl:Thing via
  * abbreviated form) are skipped. Full IRI="..." form is always used
  * in Konclude output so this is defensive only.
@@ -46,17 +50,11 @@ function triple(subject, predicate, object) {
 function parseXmlToTriples(xml) {
   const triples = [];
 
-  // Match <SubClassOf> blocks (including whitespace between tags)
-  const subClassPattern =
-    /<SubClassOf>\s*<Class IRI="([^"]+)"\/>\s*<Class IRI="([^"]+)"\/>\s*<\/SubClassOf>/g;
-  let m;
-  while ((m = subClassPattern.exec(xml)) !== null) {
-    triples.push(triple(m[1], RDFS_SUBCLASSOF, m[2]));
-  }
-
-  // Match <EquivalentClasses> blocks
+  // Pass 1: build equivalence map — each IRI → lex-min IRI in its group
+  const equivMap = new Map();
   const equivPattern =
     /<EquivalentClasses>([\s\S]*?)<\/EquivalentClasses>/g;
+  let m;
   while ((m = equivPattern.exec(xml)) !== null) {
     const block = m[1];
     const memberPattern = /<Class IRI="([^"]+)"\/>/g;
@@ -65,7 +63,32 @@ function parseXmlToTriples(xml) {
     while ((mm = memberPattern.exec(block)) !== null) {
       members.push(mm[1]);
     }
-    // Emit all ordered pairs i≠j
+    if (members.length < 2) continue;
+    const canon = members.reduce((a, b) => (b < a ? b : a));
+    for (const iri of members) {
+      equivMap.set(iri, canon);
+    }
+  }
+
+  const norm = (iri) => equivMap.get(iri) ?? iri;
+
+  // Pass 2: SubClassOf — normalize subject and object through equivMap
+  const subClassPattern =
+    /<SubClassOf>\s*<Class IRI="([^"]+)"\/>\s*<Class IRI="([^"]+)"\/>\s*<\/SubClassOf>/g;
+  while ((m = subClassPattern.exec(xml)) !== null) {
+    triples.push(triple(norm(m[1]), RDFS_SUBCLASSOF, norm(m[2])));
+  }
+
+  // Pass 3: EquivalentClasses pairs (emit all N*(N-1), no normalization)
+  equivPattern.lastIndex = 0;
+  while ((m = equivPattern.exec(xml)) !== null) {
+    const block = m[1];
+    const memberPattern = /<Class IRI="([^"]+)"\/>/g;
+    const members = [];
+    let mm;
+    while ((mm = memberPattern.exec(block)) !== null) {
+      members.push(mm[1]);
+    }
     for (let i = 0; i < members.length; i++) {
       for (let j = 0; j < members.length; j++) {
         if (i !== j) {

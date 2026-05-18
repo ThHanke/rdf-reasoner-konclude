@@ -31,7 +31,6 @@ const wasmExists = existsSync(wasmPath);
 // Helpers
 // ---------------------------------------------------------------------------
 
-const NS = "http://www.co-ode.org/roberts/family-tree.owl#";
 const SUBCLASS_OF = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
 const EQUIVALENT_CLASS = "http://www.w3.org/2002/07/owl#equivalentClass";
 
@@ -81,28 +80,8 @@ describe.skipIf(!wasmExists)("Roberts family ontology integration", () => {
 
   const RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
 
-  it("john_william_folland rdf:type Person appears in output (direct type echoed back)", () => {
-    expect(
-      inferred.some(
-        (q) =>
-          q.subject.value === `${NS}john_william_folland` &&
-          q.predicate.value === RDF_TYPE &&
-          q.object.value === `${NS}Person`,
-      ),
-    ).toBe(true);
-  });
-
-  it("at least one hasMother role assertion present (role realization ran)", () => {
-    const hasMother = `${NS}hasMother`;
-    expect(
-      inferred.some((q) => q.predicate.value === hasMother),
-    ).toBe(true);
-  });
-
-  it("ABox realization ran: inferred contains rdf:type triples", () => {
-    expect(
-      inferred.some((q) => q.predicate.value === RDF_TYPE),
-    ).toBe(true);
+  it("ABox matches native Konclude output exactly (set equality)", () => {
+    assertExactMatch(inferred, "roberts-native-abox.nt", [RDF_TYPE]);
   });
 
   it("sequential call stability: second classify() on same reasoner succeeds", async () => {

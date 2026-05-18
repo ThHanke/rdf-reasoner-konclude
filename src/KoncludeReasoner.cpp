@@ -864,28 +864,15 @@ std::string KoncludeReasoner::getInferredNTriples() {
     static const std::string owlThing =
         "http://www.w3.org/2002/07/owl#Thing";
 
-    // Pick the canonical representative IRI for a node: the named concept
-    // with the lowest concept tag. Note: this does NOT match native Konclude's
-    // representative selection for all ontologies. Native uses getOneEquivalentConcept()
-    // (eqConList.first()), which is the concept that first created the hierarchy node
-    // during KPSet classification — determined by satItemList iteration order.
-    // For GALEN, 14 equivalence pairs differ from native due to std::unordered_map
-    // vs QHash iteration order in the classifier. See buildInferredTripleBuffer()
-    // for the same logic.
-    auto nodeRep = [&conceptIri](CHierarchyNode* node) -> std::string {
-        if (!node) return "";
-        QList<CConcept*>* list = node->getEquivalentConceptList();
-        if (!list) return "";
-        CConcept* best = nullptr;
-        qint64 bestTag = std::numeric_limits<qint64>::max();
-        for (CConcept* c : *list) {
-            if (!c) continue;
-            std::string iri = conceptIri(c);
-            if (iri.empty()) continue;
-            qint64 tag = c->getConceptTag();
-            if (tag < bestTag) { bestTag = tag; best = c; }
-        }
-        return best ? conceptIri(best) : "";
+    // Pick the canonical representative IRI for a node: the lex-minimum
+    // named IRI collected into nodeToIris during the first pass.
+    // nodeToIris uses nodeHash (concept→node), so it sees ALL equivalent
+    // concepts — not just the primary concept returned by getEquivalentConceptList().
+    auto nodeRep = [&nodeToIris](CHierarchyNode* node) -> std::string {
+        auto it = nodeToIris.find(node);
+        if (it == nodeToIris.end() || it->second.empty()) return "";
+        const auto& iris = it->second;
+        return *std::min_element(iris.begin(), iris.end());
     };
 
     for (auto& [node, iris] : nodeToIris) {
@@ -1054,25 +1041,16 @@ int KoncludeReasoner::buildInferredTripleBuffer() {
                 }
             }
 
-            // pick node representative: lowest concept tag
-            // Note: native uses eqConList.first() = first concept to create the hierarchy
-            // node (KPSet satItemList order, hash-map-dependent). Using lowest tag is
-            // deterministic but diverges from native for 14 GALEN pairs (Qt vs std hash
-            // iteration order). See GALEN_KNOWN_DIVERGENCES in galen.test.ts.
-            auto nodeRep = [&](CHierarchyNode* node) -> std::string {
-                if (!node) return "";
-                QList<CConcept*>* list = node->getEquivalentConceptList();
-                if (!list) return "";
-                CConcept* best = nullptr;
-                qint64 bestTag = std::numeric_limits<qint64>::max();
-                for (CConcept* c : *list) {
-                    if (!c) continue;
-                    std::string iri = conceptIri(c);
-                    if (iri.empty()) continue;
-                    qint64 tag = c->getConceptTag();
-                    if (tag < bestTag) { bestTag = tag; best = c; }
-                }
-                return best ? conceptIri(best) : "";
+            // pick node representative: lex-min IRI from nodeToIris
+            // (nodeToIris uses nodeHash, which maps all equivalent concepts to
+            // the same node — unlike getEquivalentConceptList which only returns
+            // the primary concept). Lex-min is deterministic and matches the
+            // normalization applied to native TBox fixtures.
+            auto nodeRep = [&nodeToIris](CHierarchyNode* node) -> std::string {
+                auto it = nodeToIris.find(node);
+                if (it == nodeToIris.end() || it->second.empty()) return "";
+                const auto& iris = it->second;
+                return *std::min_element(iris.begin(), iris.end());
             };
 
             // subClassOf
@@ -1118,12 +1096,15 @@ int KoncludeReasoner::buildInferredTripleBuffer() {
 
             if (conReal) {
                 // Concept type visitor structs
+                // Collects all equivalent concept IRIs for a given type item.
+                // visitConcepts iterates all members of the equivalence set;
+                // returning true continues iteration to collect all synonyms.
                 struct ConceptNameVisitor : CConceptRealizationConceptVisitor {
-                    std::string iri;
+                    std::vector<std::string> iris;
                     bool visitConcept(CConcept* c, CConceptRealization*) override {
                         if (!c) return true;
                         QString q = CIRIName::getRecentIRIName(c->getClassNameLinker());
-                        if (!q.empty()) { iri = std::string(q); return false; }
+                        if (!q.empty()) iris.emplace_back(std::string(q));
                         return true;
                     }
                 };
@@ -1140,14 +1121,15 @@ int KoncludeReasoner::buildInferredTripleBuffer() {
                     bool visitType(CConceptInstantiatedItem* item, CConceptRealization* cr) override {
                         ConceptNameVisitor cv;
                         cr->visitConcepts(item, &cv);
-                        if (cv.iri.empty() || cv.iri == *owlThing || cv.iri == *owlNothing)
-                            return true;
-                        uint32_t cId = intern->intern(cv.iri);
-                        auto key = std::make_tuple(indiId, pRdfType, cId);
-                        if (emitted->insert(key).second) {
-                            tripleIds->push_back(indiId);
-                            tripleIds->push_back(pRdfType);
-                            tripleIds->push_back(cId);
+                        for (const auto& iri : cv.iris) {
+                            if (iri == *owlThing || iri == *owlNothing) continue;
+                            uint32_t cId = intern->intern(iri);
+                            auto key = std::make_tuple(indiId, pRdfType, cId);
+                            if (emitted->insert(key).second) {
+                                tripleIds->push_back(indiId);
+                                tripleIds->push_back(pRdfType);
+                                tripleIds->push_back(cId);
+                            }
                         }
                         return true;
                     }
