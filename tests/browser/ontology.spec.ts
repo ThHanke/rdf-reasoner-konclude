@@ -4,6 +4,7 @@
  * Mirrors the Node.js integration tests (pizza, lubm, galen, roberts-family)
  * but runs the full pipeline inside a real Chromium browser worker via Playwright.
  * Fixtures are fetched from the Vite dev server at /tests/fixtures/*.nt.
+ * Where native Konclude reference fixtures exist, results are compared by set equality.
  *
  * Prerequisites:
  *   npm run build && npm run patch-wasm   (dist/ must exist)
@@ -11,6 +12,11 @@
  */
 
 import { test, expect } from "@playwright/test";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // ---------------------------------------------------------------------------
 // Setup
@@ -29,123 +35,61 @@ test.beforeEach(async ({ page }) => {
 });
 
 // ---------------------------------------------------------------------------
-// Helper
+// Helpers
 // ---------------------------------------------------------------------------
+
+const SUBCLASS_OF    = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
+const EQUIV_CLASS    = "http://www.w3.org/2002/07/owl#equivalentClass";
+const RDF_TYPE       = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
 
 type Triple = { s: string; p: string; o: string };
-const RDFS_SUB = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
 
 function hasSub(triples: Triple[], sub: string, sup: string): boolean {
-  return triples.some((t) => t.s === sub && t.p === RDFS_SUB && t.o === sup);
+  return triples.some((t) => t.s === sub && t.p === SUBCLASS_OF && t.o === sup);
 }
 
-/** Fetch a fixture, parse it, run reason(), return inferred triples. */
-async function classifyFixture(page: any, fixture: string): Promise<{ count: number; triples: Triple[] }> {
-  return page.evaluate(async (fixturePath: string) => {
-    const { RdfReasoner, INFERRED_GRAPH_IRI, Store, Parser, DataFactory } = window;
+function loadNativeFixture(file: string): string[] {
+  const raw = readFileSync(join(__dirname, "../fixtures", file), "utf8");
+  return raw
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0 && !l.startsWith("#"));
+}
 
-    const text = await fetch(fixturePath).then((r) => r.text());
+function assertNativeMatch(triples: Triple[], predicates: string[], fixtureFile: string): void {
+  const predSet = new Set(predicates);
+  const actual = triples
+    .filter((t) => predSet.has(t.p))
+    .map((t) => `<${t.s}> <${t.p}> <${t.o}> .`)
+    .sort();
+  const expected = loadNativeFixture(fixtureFile).sort();
+
+  const actualSet   = new Set(actual);
+  const expectedSet = new Set(expected);
+  const missing = expected.filter((t) => !actualSet.has(t));
+  const extra   = actual.filter((t)   => !expectedSet.has(t));
+
+  if (missing.length > 0 || extra.length > 0) {
+    throw new Error(
+      `Native mismatch in ${fixtureFile}:\n` +
+      `  Missing from browser (${missing.length}): ${JSON.stringify(missing.slice(0, 5))}\n` +
+      `  Extra in browser   (${extra.length}):   ${JSON.stringify(extra.slice(0, 5))}`,
+    );
+  }
+
+  expect(actual).toEqual(expected);
+}
+
+/**
+ * Fetch one or more NT fixtures, parse them, run reason(), return all inferred triples.
+ */
+async function classifyFixtures(page: any, fixtures: string[]): Promise<Triple[]> {
+  return page.evaluate(async (fixturePaths: string[]) => {
+    const { RdfReasoner, INFERRED_GRAPH_IRI, Store, Parser, DataFactory } = window;
 
     const store = new Store();
-    await new Promise<void>((resolve, reject) => {
-      const parser = new Parser({ format: "N-Triples" });
-      parser.parse(text, (err: Error | null, quad: any) => {
-        if (err) { reject(err); return; }
-        if (quad) store.addQuad(quad);
-        else resolve();
-      });
-    });
-
-    const reasoner = new RdfReasoner();
-    await reasoner.ready;
-    await reasoner.reason(store);
-    reasoner.terminate();
-
-    const inferredGraph = DataFactory.namedNode(INFERRED_GRAPH_IRI);
-    const quads = store.getQuads(null, null, null, inferredGraph);
-    return {
-      count: quads.length,
-      triples: quads.map((q: any) => ({ s: q.subject.value, p: q.predicate.value, o: q.object.value })),
-    };
-  }, fixture);
-}
-
-// ---------------------------------------------------------------------------
-// Pizza (2.4 KB)
-// ---------------------------------------------------------------------------
-
-test("pizza ontology: browser worker classifies same as Node.js", async ({ page }) => {
-  const result = await classifyFixture(page, "/tests/fixtures/pizza.nt");
-
-  expect(result.count).toBeGreaterThan(0);
-
-  const px = "http://example.org/pizza#";
-  expect(hasSub(result.triples, px + "VegetarianPizza", px + "Pizza")).toBe(true);
-  expect(hasSub(result.triples, px + "MeatyPizza",      px + "Pizza")).toBe(true);
-  expect(hasSub(result.triples, px + "IceCream",        px + "Food")).toBe(true);
-});
-
-// ---------------------------------------------------------------------------
-// LUBM (47 KB)
-// ---------------------------------------------------------------------------
-
-test("lubm ontology: browser worker classifies same as Node.js", async ({ page }) => {
-  test.setTimeout(120_000);
-
-  const result = await classifyFixture(page, "/tests/fixtures/lubm.nt");
-
-  expect(result.count).toBeGreaterThan(0);
-
-  const lubm = "http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#";
-  expect(hasSub(result.triples, lubm + "Article",            lubm + "Publication")).toBe(true);
-  expect(hasSub(result.triples, lubm + "AssistantProfessor", lubm + "Professor")).toBe(true);
-  expect(hasSub(result.triples, lubm + "AssociateProfessor", lubm + "Professor")).toBe(true);
-});
-
-// ---------------------------------------------------------------------------
-// Galen (3.9 MB)
-// ---------------------------------------------------------------------------
-
-test("galen ontology: browser worker classifies same as Node.js", async ({ page }) => {
-  test.setTimeout(300_000);
-
-  const result = await classifyFixture(page, "/tests/fixtures/galen.nt");
-
-  expect(result.count).toBeGreaterThan(0);
-
-  const g = "http://ex.test/galen#";
-  expect(hasSub(result.triples, g + "Abdomen", g + "NAMEDTrunkBodyPart")).toBe(true);
-});
-
-// ---------------------------------------------------------------------------
-// Roberts family (614 KB)
-// ---------------------------------------------------------------------------
-
-test("roberts-family ontology: browser worker classifies same as Node.js", async ({ page }) => {
-  test.setTimeout(300_000);
-
-  const result = await classifyFixture(page, "/tests/fixtures/roberts-family.nt");
-
-  expect(result.count).toBeGreaterThan(0);
-
-  const r = "http://www.co-ode.org/roberts/family-tree.owl#";
-  expect(hasSub(result.triples, r + "Ancestor",         r + "BloodRelation")).toBe(true);
-  expect(hasSub(result.triples, r + "AncestorOfRobert", r + "Ancestor")).toBe(true);
-});
-
-// ---------------------------------------------------------------------------
-// LUBM schema + data (17 MB)
-// ---------------------------------------------------------------------------
-
-test("lubm schema + data: browser worker realization", async ({ page }) => {
-  test.setTimeout(300_000);
-
-  const result = await page.evaluate(async () => {
-    const { RdfReasoner, INFERRED_GRAPH_IRI, Store, Parser, DataFactory } = window;
-
-    async function loadNT(url: string) {
-      const text = await fetch(url).then((r) => r.text());
-      const store = new Store();
+    for (const path of fixturePaths) {
+      const text = await fetch(path).then((r) => r.text());
       await new Promise<void>((resolve, reject) => {
         new Parser({ format: "N-Triples" }).parse(text, (err: Error | null, quad: any) => {
           if (err) { reject(err); return; }
@@ -153,15 +97,7 @@ test("lubm schema + data: browser worker realization", async ({ page }) => {
           else resolve();
         });
       });
-      return store.getQuads(null, null, null, null) as any[];
     }
-
-    const [schemaQuads, dataQuads] = await Promise.all([
-      loadNT("/tests/fixtures/lubm.nt"),
-      loadNT("/tests/fixtures/lubm-data.nt"),
-    ]);
-
-    const store = new Store([...schemaQuads, ...dataQuads]);
 
     const reasoner = new RdfReasoner();
     await reasoner.ready;
@@ -169,16 +105,86 @@ test("lubm schema + data: browser worker realization", async ({ page }) => {
     reasoner.terminate();
 
     const inferredGraph = DataFactory.namedNode(INFERRED_GRAPH_IRI);
-    const quads = store.getQuads(null, null, null, inferredGraph);
-    return {
-      count: quads.length,
-      triples: quads.map((q: any) => ({ s: q.subject.value, p: q.predicate.value, o: q.object.value })),
-    };
-  });
+    return store
+      .getQuads(null, null, null, inferredGraph)
+      .map((q: any) => ({ s: q.subject.value, p: q.predicate.value, o: q.object.value }));
+  }, fixtures);
+}
 
-  expect(result.count).toBeGreaterThan(0);
+// ---------------------------------------------------------------------------
+// Pizza (2.4 KB) — no native reference; spot-check only
+// ---------------------------------------------------------------------------
 
+test("pizza ontology: browser worker classifies same as Node.js", async ({ page }) => {
+  const triples = await classifyFixtures(page, ["/tests/fixtures/pizza.nt"]);
+
+  expect(triples.length).toBeGreaterThan(0);
+
+  const px = "http://example.org/pizza#";
+  expect(hasSub(triples, px + "VegetarianPizza", px + "Pizza")).toBe(true);
+  expect(hasSub(triples, px + "MeatyPizza",      px + "Pizza")).toBe(true);
+  expect(hasSub(triples, px + "IceCream",        px + "Food")).toBe(true);
+});
+
+// ---------------------------------------------------------------------------
+// LUBM (47 KB) — compare TBox against native Konclude reference
+// ---------------------------------------------------------------------------
+
+test("lubm ontology: browser worker matches native Konclude output", async ({ page }) => {
+  test.setTimeout(120_000);
+
+  const triples = await classifyFixtures(page, ["/tests/fixtures/lubm.nt"]);
+
+  expect(triples.length).toBeGreaterThan(0);
+  assertNativeMatch(triples, [SUBCLASS_OF, EQUIV_CLASS], "lubm-native-tbox.nt");
+});
+
+// ---------------------------------------------------------------------------
+// Galen (3.9 MB) — compare TBox against native Konclude reference
+// ---------------------------------------------------------------------------
+
+test("galen ontology: browser worker matches native Konclude output", async ({ page }) => {
+  test.setTimeout(300_000);
+
+  const triples = await classifyFixtures(page, ["/tests/fixtures/galen.nt"]);
+
+  expect(triples.length).toBeGreaterThan(0);
+  assertNativeMatch(triples, [SUBCLASS_OF, EQUIV_CLASS], "galen-native-tbox.nt");
+});
+
+// ---------------------------------------------------------------------------
+// Roberts family (614 KB) — compare TBox + ABox against native Konclude reference
+// ---------------------------------------------------------------------------
+
+test("roberts-family ontology: browser worker matches native Konclude output", async ({ page }) => {
+  test.setTimeout(300_000);
+
+  const triples = await classifyFixtures(page, ["/tests/fixtures/roberts-family.nt"]);
+
+  expect(triples.length).toBeGreaterThan(0);
+  assertNativeMatch(triples, [SUBCLASS_OF, EQUIV_CLASS], "roberts-native-tbox.nt");
+  assertNativeMatch(triples, [RDF_TYPE],                 "roberts-native-abox.nt");
+});
+
+// ---------------------------------------------------------------------------
+// LUBM schema + data (17 MB) — compare TBox against native; ABox spot-check
+// ---------------------------------------------------------------------------
+
+test("lubm schema + data: browser worker realization matches native TBox", async ({ page }) => {
+  test.setTimeout(300_000);
+
+  const triples = await classifyFixtures(page, [
+    "/tests/fixtures/lubm.nt",
+    "/tests/fixtures/lubm-data.nt",
+  ]);
+
+  expect(triples.length).toBeGreaterThan(0);
+
+  // TBox should be identical to schema-only native output
+  assertNativeMatch(triples, [SUBCLASS_OF, EQUIV_CLASS], "lubm-native-tbox.nt");
+
+  // ABox spot-check: individuals get expected types via realization
   const lubm = "http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#";
-  expect(hasSub(result.triples, lubm + "Article",            lubm + "Publication")).toBe(true);
-  expect(hasSub(result.triples, lubm + "AssistantProfessor", lubm + "Professor")).toBe(true);
+  expect(hasSub(triples, lubm + "Article",            lubm + "Publication")).toBe(true);
+  expect(hasSub(triples, lubm + "AssistantProfessor", lubm + "Professor")).toBe(true);
 });
