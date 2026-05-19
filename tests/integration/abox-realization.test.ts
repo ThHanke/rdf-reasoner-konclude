@@ -1,12 +1,12 @@
 /**
  * Integration test: ABox realization
  *
- * Tests `RdfReasoner.classify()` against a small ontology that has both TBox
+ * Tests `RdfReasoner.materialize()` against a small ontology that has both TBox
  * axioms and ABox assertions, verifying that:
  *   - individuals receive rdf:type from superclass chains
  *   - directly asserted rdf:type triples appear in the output
  *   - directly asserted object property triples appear in the output
- *   - TBox-only ontologies produce no rdf:type triples
+ *   - TBox-only ontologies produce no rdf:type triples (via classify())
  *
  * These tests require the built WASM binary (`dist/konclude.wasm`).  When the
  * binary is absent the entire suite is skipped so that `vitest run tests/unit/`
@@ -119,7 +119,7 @@ describe.skipIf(!wasmExists)("ABox realization integration", () => {
     "individual gets rdf:type from superclass chain — Alice is Employee, Employee ⊑ Person → inferred Alice rdf:type Person",
     async () => {
       const quads = parseNTriples(ABOX_NTRIPLES);
-      const inferred = await reasoner.classify(quads);
+      const inferred = await reasoner.materialize(quads);
 
       expect(
         hasTriple(inferred, EX("Alice"), RDF_TYPE, EX("Person")),
@@ -130,7 +130,7 @@ describe.skipIf(!wasmExists)("ABox realization integration", () => {
 
   it("directly asserted rdf:type appears in output", async () => {
     const quads = parseNTriples(ABOX_NTRIPLES);
-    const inferred = await reasoner.classify(quads);
+    const inferred = await reasoner.materialize(quads);
 
     // The asserted type Employee should be echoed back in the output.
     expect(
@@ -141,7 +141,7 @@ describe.skipIf(!wasmExists)("ABox realization integration", () => {
 
   it("object property assertion appears in output", async () => {
     const quads = parseNTriples(ABOX_NTRIPLES);
-    const inferred = await reasoner.classify(quads);
+    const inferred = await reasoner.materialize(quads);
 
     expect(
       hasTriple(inferred, EX("Alice"), EX("knows"), EX("Bob")),

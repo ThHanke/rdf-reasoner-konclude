@@ -80,9 +80,19 @@ describe.skipIf(!wasmExists)("Roberts family ontology integration", () => {
 
   const RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
 
-  it("ABox matches native Konclude output exactly (set equality)", () => {
-    assertExactMatch(inferred, "roberts-native-abox.nt", [RDF_TYPE]);
-  });
+  it("ABox matches native Konclude output exactly (set equality)", async () => {
+    // Use a dedicated reasoner for ABox realization so the shared `reasoner`
+    // instance remains in classify()-compatible state for the sequential
+    // stability test below.
+    const aboxReasoner = new RdfReasoner();
+    await aboxReasoner.ready;
+    try {
+      const inferredABox = await aboxReasoner.materialize(inputQuads);
+      assertExactMatch(inferredABox, "roberts-native-abox.nt", [RDF_TYPE]);
+    } finally {
+      aboxReasoner.terminate();
+    }
+  }, 360000);
 
   it("sequential call stability: second classify() on same reasoner succeeds", async () => {
     // Call classify() again on the same reasoner with a different (small) ontology.
