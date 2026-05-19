@@ -17,9 +17,9 @@ import type { Quad } from "@rdfjs/types";
 import { Store, DataFactory } from "n3";
 import { encodeToBuffers, decodeBuffers } from "./intern.js";
 
-export type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions } from "./types.js";
+export type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions } from "./types.js";
 export { INFERRED_GRAPH_IRI } from "./types.js";
-import type { ReasoningOptions, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions } from "./types.js";
+import type { ReasoningOptions, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions } from "./types.js";
 import { INFERRED_GRAPH_IRI } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -392,6 +392,81 @@ export class RdfReasoner {
           q.predicate.value !== "http://www.w3.org/2000/01/rdf-schema#subClassOf" &&
           q.predicate.value !== "http://www.w3.org/2002/07/owl#equivalentClass",
       );
+    });
+    this._queue = result.then(
+      () => {},
+      () => {},
+    );
+    return result;
+  }
+
+  // -------------------------------------------------------------------------
+  // classifyProperties()
+  // -------------------------------------------------------------------------
+
+  /** Classify property hierarchy of a Store. Inferred rdfs:subPropertyOf triples
+   *  are written into `opts.inferredGraph` (default `INFERRED_GRAPH_IRI`). The
+   *  graph is cleared before each call. Concurrent calls are serialized. */
+  classifyProperties(store: Store, opts?: ClassifyPropertiesStoreOptions): Promise<void>;
+  /**
+   * Classify the property hierarchy for the given quads.
+   *
+   * Returns the inferred rdfs:subPropertyOf quads in the default graph.
+   *
+   * Named graphs in the input are dropped (NTriples wire format is
+   * triple-only). All returned quads are in the DefaultGraph.
+   *
+   * Concurrent calls are serialized: each call waits for the previous one to
+   * complete before sending its first Worker message.
+   */
+  classifyProperties(quads: Iterable<Quad>): Promise<Quad[]>;
+  classifyProperties(
+    input: Store | Iterable<Quad>,
+    opts?: ClassifyPropertiesStoreOptions,
+  ): Promise<void> | Promise<Quad[]> {
+    if (input instanceof Store) {
+      return this._classifyPropertiesOnStore(input, opts);
+    }
+    return this._classifyPropertiesOnQuads(input as Iterable<Quad>);
+  }
+
+  private _classifyPropertiesOnStore(store: Store, opts?: ClassifyPropertiesStoreOptions): Promise<void> {
+    const result = this._queue.then(async () => {
+      const inferredGraphNode = DataFactory.namedNode(
+        opts?.inferredGraph ?? INFERRED_GRAPH_IRI,
+      );
+      store.removeQuads(store.getQuads(null, null, null, inferredGraphNode));
+
+      const { tripleBuffer, strTableBuffer } = encodeToBuffers(store.getQuads(null, null, null, null));
+
+      await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
+      await this._call("classification", []);
+
+      const resultBuf = (await this._call("getPropertyTripleBuffer", [])) as ArrayBuffer;
+      const inferredQuads = decodeBuffers(resultBuf);
+
+      for (const q of inferredQuads) {
+        store.addQuad(
+          DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode),
+        );
+      }
+    });
+    this._queue = result.then(
+      () => {},
+      () => {},
+    );
+    return result;
+  }
+
+  private _classifyPropertiesOnQuads(quads: Iterable<Quad>): Promise<Quad[]> {
+    const result = this._queue.then(async () => {
+      const { tripleBuffer, strTableBuffer } = encodeToBuffers(quads);
+
+      await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
+      await this._call("classification", []);
+
+      const resultBuf = (await this._call("getPropertyTripleBuffer", [])) as ArrayBuffer;
+      return decodeBuffers(resultBuf);
     });
     this._queue = result.then(
       () => {},
