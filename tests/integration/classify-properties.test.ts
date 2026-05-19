@@ -75,54 +75,36 @@ const EX = (local: string) => `http://example.org/${local}`;
 
 describe.skipIf(!wasmExists)("classifyProperties() integration", () => {
   let reasoner: RdfReasoner;
+  let inferred: Quad[];
 
   beforeAll(async () => {
     reasoner = new RdfReasoner();
     await reasoner.ready;
+    inferred = await reasoner.classifyProperties(parseNTriples(PROP_NTRIPLES));
   });
 
   afterAll(() => {
     reasoner?.terminate();
   });
 
-  it("returns rdfs:subPropertyOf triple for explicit subproperty assertion", async () => {
-    const quads = parseNTriples(PROP_NTRIPLES);
-    const inferred = await reasoner.classifyProperties(quads);
-
+  it("returns rdfs:subPropertyOf triple for explicit subproperty assertion", () => {
     expect(
       hasTriple(inferred, EX("friendOf"), RDFS_SUB_PROPERTY_OF, EX("knows")),
       "friendOf rdfs:subPropertyOf knows must appear in classifyProperties() output",
     ).toBe(true);
   });
 
-  it("result contains no rdf:type triples", async () => {
-    const quads = parseNTriples(PROP_NTRIPLES);
-    const inferred = await reasoner.classifyProperties(quads);
-
+  it("result contains no rdf:type triples", () => {
     const typeTriples = inferred.filter((q) => q.predicate.value === RDF_TYPE);
-    expect(
-      typeTriples,
-      "classifyProperties() must not return rdf:type triples",
-    ).toHaveLength(0);
+    expect(typeTriples, "classifyProperties() must not return rdf:type triples").toHaveLength(0);
   });
 
-  it("result contains no rdfs:subClassOf triples", async () => {
-    const quads = parseNTriples(PROP_NTRIPLES);
-    const inferred = await reasoner.classifyProperties(quads);
-
-    const subClassTriples = inferred.filter(
-      (q) => q.predicate.value === RDFS_SUB_CLASS_OF,
-    );
-    expect(
-      subClassTriples,
-      "classifyProperties() must not return rdfs:subClassOf triples",
-    ).toHaveLength(0);
+  it("result contains no rdfs:subClassOf triples", () => {
+    const subClassTriples = inferred.filter((q) => q.predicate.value === RDFS_SUB_CLASS_OF);
+    expect(subClassTriples, "classifyProperties() must not return rdfs:subClassOf triples").toHaveLength(0);
   });
 
-  it("all returned quads are in the DefaultGraph", async () => {
-    const quads = parseNTriples(PROP_NTRIPLES);
-    const inferred = await reasoner.classifyProperties(quads);
-
+  it("all returned quads are in the DefaultGraph", () => {
     for (const q of inferred) {
       expect(q.graph.termType).toBe("DefaultGraph");
     }
