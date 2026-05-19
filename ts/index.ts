@@ -166,7 +166,7 @@ export class RdfReasoner {
    *  before each call. Concurrent calls are serialized. */
   reason(store: Store, opts?: StoreReasoningOptions): Promise<void>;
   /**
-   * @deprecated Use `reason(store)` instead.
+   * @deprecated Use `classify()`, `materialize()`, or `checkConsistency()` instead.
    *
    * Run OWL-DL reasoning over the provided quads.
    *
@@ -253,7 +253,7 @@ export class RdfReasoner {
   /** Classify a Store (alias for `reason(store)`). */
   classify(store: Store, opts?: StoreReasoningOptions): Promise<void>;
   /**
-   * @deprecated Use `classify(store)` instead.
+   * @deprecated Use `classify(store)` instead. For ABox/rdf:type results, use `materialize(store)`.
    *
    * Classify the given quads (alias for `reason(quads, { mode: 'classify' })`).
    *

@@ -4,6 +4,10 @@ export const INFERRED_GRAPH_IRI = "urn:konclude:inferred";
 
 /**
  * Options controlling how the reasoning operation is performed.
+ *
+ * @remarks This interface is used by the deprecated `reason()` API. Prefer
+ * `classify()`, `materialize()`, or `checkConsistency()` instead, which do not
+ * require a `mode` parameter.
  */
 export interface ReasoningOptions {
   /**
