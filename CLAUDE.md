@@ -12,6 +12,7 @@ Port the Konclude OWL-DL tableau reasoning kernel to WebAssembly and publish as 
 | ----------------- | ------------------------------------ | ---------------------------------------------------------- |
 | `make build`      | `npm run build`                      | TypeScript compilation only (fast)                         |
 | `make build-wasm` | `docker compose run --rm build`      | Full WASM rebuild — ~20–30 min; use ccache for incremental |
+| —                 | `npm run patch-wasm`                 | **Must run after every `make build-wasm`** — patches `dist/konclude.mjs` for browser compat (strips `createRequire`, fixes pthread onerror) |
 | `make test`       | `npm test`                           | Vitest unit + integration suite                            |
 | `make smoke`      | `docker compose run --rm smoke-test` | Quick WASM sanity check                                    |
 | `make reason`     | `node dist/cli.js $(ARGS)`           | Run CLI locally: `make reason ARGS="--input ont.ttl"`      |

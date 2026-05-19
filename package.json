@@ -1,6 +1,6 @@
 {
   "name": "rdf-reasoner-konclude",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "OWL-DL tableau reasoning via Konclude compiled to WebAssembly. Async TypeScript API — pass an N3.js Store, get inferred triples back. Uses RDF.js Quad types throughout.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -8,7 +8,9 @@
   "bin": {
     "owl-reason": "./dist/cli.js"
   },
-  "sideEffects": ["./dist/worker.js"],
+  "sideEffects": [
+    "./dist/worker.js"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -34,7 +36,9 @@
     "postbuild": "cp ts/worker-node.mjs dist/worker-node.mjs && cp ts/index.node.mjs dist/index.node.mjs && sed -i 's|from \"./index\\.js\"|from \"./index.node.mjs\"|' dist/cli.js && { printf '#!/usr/bin/env node\\n'; cat dist/cli.js; } > dist/cli.js.tmp && mv dist/cli.js.tmp dist/cli.js && chmod +x dist/cli.js",
     "test": "vitest run",
     "apply-patches": "bash scripts/apply-patches.sh",
-    "bench": "node tests/bench/bench.mjs"
+    "patch-wasm": "bash scripts/patch-konclude-mjs.sh",
+    "bench": "node tests/bench/bench.mjs 2>&1 | tee bench-results.md",
+    "test:browser": "playwright test"
   },
   "dependencies": {
     "n3": "^1.22.0"
@@ -43,12 +47,14 @@
     "@rdfjs/types": ">=2.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@rdfjs/types": "^2.0.1",
     "@types/n3": "^1.21.1",
+    "@types/node": "^20.0.0",
     "n3": "^1.22.0",
     "typescript": "^5.4.5",
-    "vitest": "^4.0.0",
-    "@types/node": "^20.0.0"
+    "vite": "^5.4.21",
+    "vitest": "^4.0.0"
   },
   "license": "LGPL-3.0-or-later",
   "keywords": [

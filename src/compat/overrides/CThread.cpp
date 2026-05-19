@@ -141,9 +141,22 @@ namespace Konclude {
 
             pthread_mutex_lock(&s->queueMutex);
             while (true) {
-                while (s->eventQueue.empty() && !s->shouldStop)
+                while (s->eventQueue.empty() && !s->shouldStop) {
                     pthread_cond_wait(&s->queueCond, &s->queueMutex);
-                if (s->shouldStop && s->eventQueue.empty()) break;
+                }
+                // On stop: drain remaining events without processing. In native
+                // Konclude each ontology is a fresh process so threads simply die;
+                // events queued after the final callback (e.g. late STPU callbacks
+                // referencing already-freed CRealizingTestingItem) are dropped
+                // automatically. Replicating that behaviour here prevents
+                // use-after-free vtable crashes in the Realizer-Thread.
+                if (s->shouldStop) {
+                    while (!s->eventQueue.empty()) {
+                        delete s->eventQueue.front();
+                        s->eventQueue.pop_front();
+                    }
+                    break;
+                }
                 QEvent* ev = s->eventQueue.front();
                 s->eventQueue.pop_front();
                 pthread_mutex_unlock(&s->queueMutex);

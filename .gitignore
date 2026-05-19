@@ -148,3 +148,4 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
 tests/fixtures/lubm-combined.rdf.xml
+bench-results.md

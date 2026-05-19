@@ -13,6 +13,8 @@ set(KONCLUDE_EMSCRIPTEN_LINK_FLAGS
     "-sEXPORT_ES6=1"
     "-sEXPORT_NAME=createKoncludeModule"
     "-sINITIAL_MEMORY=1073741824"
+    "-sALLOW_MEMORY_GROWTH=1"
+    "-sMAXIMUM_MEMORY=4294967296"
     "-sNO_EXIT_RUNTIME=1"
     "--bind"
     "-sUSE_PTHREADS=1"
@@ -22,5 +24,8 @@ set(KONCLUDE_EMSCRIPTEN_LINK_FLAGS
     "-Wl,--error-limit=0"
     "-sNO_DISABLE_EXCEPTION_CATCHING"
     "-sALLOW_BLOCKING_ON_MAIN_THREAD=1"
+    "-sWASM_BIGINT=1"
     "-flto"
+    "-sEXPORTED_RUNTIME_METHODS=[\"HEAPU8\"]"
+    "-sEXPORTED_FUNCTIONS=[\"_malloc\",\"_free\"]"
 )

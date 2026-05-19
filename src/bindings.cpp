@@ -6,9 +6,12 @@ using namespace emscripten;
 EMSCRIPTEN_BINDINGS(konclude) {
     class_<KoncludeReasoner>("KoncludeReasoner")
         .constructor<>()
-        .function("loadNTriples",        &KoncludeReasoner::loadNTriples)
-        .function("classify",            &KoncludeReasoner::classify)
-        .function("isConsistent",        &KoncludeReasoner::isConsistent)
-        .function("getInferredNTriples", &KoncludeReasoner::getInferredNTriples)
-        .function("reset",               &KoncludeReasoner::reset);
+        .function("loadTripleBuffer",    &KoncludeReasoner::loadTripleBuffer)
+        .function("classification",      &KoncludeReasoner::classification)
+        .function("realization",         &KoncludeReasoner::realization)
+        .function("consistency",         &KoncludeReasoner::consistency)
+        .function("processorCount",      &KoncludeReasoner::processorCount)
+        .function("buildInferredTripleBuffer",   &KoncludeReasoner::buildInferredTripleBuffer)
+        .function("getInferredTripleBufferPtr",  &KoncludeReasoner::getInferredTripleBufferPtr)
+        .function("reset",                       &KoncludeReasoner::reset);
 }

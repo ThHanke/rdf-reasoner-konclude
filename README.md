@@ -199,42 +199,54 @@ module.exports = { experiments: { asyncWebAssembly: true } };
 
 ## Performance
 
-Benchmarked on an 8-core Linux host. Native = Konclude v0.7.0 binary; TS = Node.js 20 via this package. Threads: 8 (both native and WASM pthreads).
+Benchmarked on an 8-core Linux host. Native = Konclude v0.7.0 Docker image; WASM Node.js = Node.js 20 via this package; WASM Browser = Chromium 135 via this package. All WASM runs use 8 threads. Median of 3 runs after 1 warmup.
 
-| Ontology           | Expressivity | NTriples | Native classify | TS total | Ratio |
-| ------------------ | ------------ | -------- | --------------- | -------- | ----- |
-| LUBM schema        | SHI          | 307      | 35 ms           | 266 ms   | ~7.3× |
-| GALEN              | SHIF         | 30 817   | 225 ms          | 941 ms   | ~4.2× |
-| Roberts family     | SROIQ        | 3 866    | 1 801 ms        | 2 603 ms | ~1.4× |
-| LUBM schema + data | SHI          | 100 850  | 160 ms          | 2 104 ms | ~13×  |
+| Ontology           | Expressivity | NTriples | Native ¹ | WASM Node.js ² | WASM Browser ² | Node ratio |
+| ------------------ | ------------ | -------- | -------- | -------------- | -------------- | ---------- |
+| LUBM schema        | SHI          | 307      | 34 ms    | 207 ms         | 202 ms         | ~6×        |
+| GALEN              | SHIF         | 30 817   | 286 ms   | 968 ms         | 852 ms         | ~3.4×      |
+| Roberts family     | SROIQ        | 3 866    | 2 118 ms | 38 769 ms      | 37 903 ms      | ~18×       |
+| LUBM schema + data | SHI          | 100 850  | 1 017 ms | 1 672 ms       | —              | ~1.6×      |
 
-TS total includes NTriples serialization/deserialization (the main JS overhead).
-The WASM classify step alone is within 1.4×–7.3× of native. Run `npm run bench`
-to reproduce (requires a built WASM binary — see [Build from source](#build-from-source)).
+¹ Native pipeline (OWL 2 XML parse + classify/realize). Native uses `classification` for
+TBox-only ontologies and `realization` for ontologies with individuals (Roberts family,
+LUBM + data) — matching WASM's operation selection. LUBM schema ratio is dominated by
+fixed WASM startup cost (pthreads pool init) on a tiny 307-triple ontology.
+
+² WASM timing covers binary buffer encode (Quads → buffer) + `loadTripleBuffer` + realization
++ decode. Input RDF is pre-parsed into quads before the timing window — NTriples/Turtle parsing
+is excluded, matching what your application pays after data is already loaded into a Store.
+Node.js 20 and Chromium 135 are within ~12% of each other on most ontologies; Roberts family
+(SROIQ with ABox realization) is effectively equal. LUBM schema + data not measured in browser
+(17 MB fixture).
+
+Run `npm run bench` to reproduce (requires a built WASM binary — see [Build from source](#build-from-source)).
 
 ## How it works
 
 ```text
 main thread
   RdfReasoner.reason(store)
-    → serialize Store quads to NTriples (n3.js Writer)
+    → encode Store quads to binary buffer (zero-copy, no NTriples serialization)
     → postMessage to Worker
 
-Worker (pthreads WASM)
-  → KoncludeReasoner::loadNTriples()     // NTriples → librdf model (Raptor2)
-  → mapTriples()                         // librdf → OWL expression model
-  → KoncludeReasoner::classify()         // OWL-DL tableau (KPSet, parallel)
-  → KoncludeReasoner::getInferredNTriples()
-    → postMessage result back
+Worker (pthreads WASM, 8 threads)
+  → KoncludeReasoner::loadTripleBuffer()   // binary buffer → librdf model (Raptor2)
+  → mapTriples()                           // librdf → OWL expression model
+  → KoncludeReasoner::realization()        // OWL-DL tableau + ABox (KPSet, 8 pthreads)
+  │    or KoncludeReasoner::classification() // TBox-only (no individuals)
+  → KoncludeReasoner::getInferredTripleBuffer()
+    → postMessage result back (zero-copy ArrayBuffer transfer)
 
 main thread
-  → parse NTriples → Quad[] (n3.js Parser)
+  → decode binary buffer → Quad[]
   → write into store[INFERRED_GRAPH_IRI]
 ```
 
 The WASM binary is compiled from Konclude's C++ tableau engine with Qt removed
 (replaced by `std::` shims) and pthreads enabled. The KPSet classifier requires
-real threads — cooperative dispatch deadlocks.
+real threads — cooperative dispatch deadlocks. Method names mirror the native
+Konclude CLI commands (`classification`, `realization`, `consistency`).
 
 ## Build from source
 
@@ -286,13 +298,15 @@ and `patches/` (every modification). To recompile: `docker compose run --rm buil
 
 See [NOTICE](NOTICE) for full third-party notices.
 
-> Liebig, T., Jaeger, M., Möller, R., & Möller, B. (2014). _Konclude: System Description._
-> Web Semantics, 27–28, 78–85. doi:10.1016/j.websem.2014.06.003
+> Steigmiller, A., Liebig, T., & Glimm, B. (2014). _Konclude: System Description._
+> Journal of Web Semantics, 27–28, 78–85. doi:10.1016/j.websem.2014.06.003
 
 ## Acknowledgements
 
-Konclude was developed at the Institute of Artificial Intelligence, University
-of Ulm, by Thorsten Liebig, Murat Özcep, Stefan Wandelt, and others. All
-credit for the reasoning algorithm belongs to the Konclude authors. This
-package is an independent WebAssembly port developed with AI assistance from
-[Claude](https://anthropic.com) (Anthropic).
+[Konclude](https://github.com/konclude/Konclude) was developed by
+[Andreas Steigmiller](https://github.com/andreas-steigmiller) at the Institute
+of Artificial Intelligence, University of Ulm. The system description paper
+(cited above) has co-authors Thorsten Liebig and Birte Glimm, also from the
+University of Ulm. All credit for the reasoning algorithm belongs to Andreas
+Steigmiller. This package is an independent WebAssembly port developed with AI
+assistance from [Claude](https://anthropic.com) (Anthropic).
