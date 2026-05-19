@@ -67,6 +67,19 @@ export interface MaterializeStoreOptions extends MaterializeOptions {
 }
 
 /**
+ * Options for Store-based classifyProperties operations.
+ */
+export interface ClassifyPropertiesStoreOptions {
+  /**
+   * Named graph IRI where inferred property triples are written.
+   *
+   * Defaults to `INFERRED_GRAPH_IRI` (`"urn:konclude:inferred"`).
+   * The graph is cleared before each call; do not store ontology triples here.
+   */
+  inferredGraph?: string;
+}
+
+/**
  * The result returned by a reasoning operation.
  *
  * @remarks Reserved for future use. When `mode:'full'` is fully implemented
