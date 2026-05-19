@@ -97,6 +97,8 @@ function mockWorkerSequence(inferredQuads: Quad[]) {
     const req = msg as { id: number; method: string };
     if (req.method === "loadTripleBuffer") {
       simulateWorkerMessage({ id: req.id, result: true });
+    } else if (req.method === "classification") {
+      simulateWorkerMessage({ id: req.id, result: true });
     } else if (req.method === "realization") {
       simulateWorkerMessage({ id: req.id, result: true });
     } else if (req.method === "getInferredTripleBuffer") {
@@ -138,7 +140,7 @@ describe("RdfReasoner — Store API", () => {
   // -------------------------------------------------------------------------
 
   describe("reason(store)", () => {
-    it("calls loadTripleBuffer → realization → getInferredTripleBuffer in order", async () => {
+    it("calls loadTripleBuffer → classification → getInferredTripleBuffer in order", async () => {
       const reasoner = await makeReadyReasoner();
       const store = new Store();
       store.addQuad(quad(A, subClassOf, B, defaultGraph()));
@@ -151,7 +153,7 @@ describe("RdfReasoner — Store API", () => {
       const methods = mocks.workerPostMessage.mock.calls.map(
         (c) => (c[0] as { method: string }).method,
       );
-      expect(methods).toEqual(["loadTripleBuffer", "realization", "getInferredTripleBuffer"]);
+      expect(methods).toEqual(["loadTripleBuffer", "classification", "getInferredTripleBuffer"]);
     });
 
     it("inferred quad is written to default named graph (urn:konclude:inferred)", async () => {
@@ -186,7 +188,7 @@ describe("RdfReasoner — Store API", () => {
         if (req.method === "loadTripleBuffer") {
           strEntries = decodeStrTableEntries(req.args[1] as ArrayBuffer);
           simulateWorkerMessage({ id: req.id, result: true });
-        } else if (req.method === "realization") {
+        } else if (req.method === "classification") {
           simulateWorkerMessage({ id: req.id, result: true });
         } else if (req.method === "getInferredTripleBuffer") {
           simulateWorkerMessage({ id: req.id, result: buildCombinedBuffer([]) });
@@ -254,7 +256,7 @@ describe("RdfReasoner — Store API", () => {
         if (req.method === "loadTripleBuffer") {
           tripleByteLength = (req.args[0] as ArrayBuffer).byteLength;
           simulateWorkerMessage({ id: req.id, result: true });
-        } else if (req.method === "realization") {
+        } else if (req.method === "classification") {
           simulateWorkerMessage({ id: req.id, result: true });
         } else if (req.method === "getInferredTripleBuffer") {
           simulateWorkerMessage({ id: req.id, result: buildCombinedBuffer([]) });
@@ -310,7 +312,7 @@ describe("RdfReasoner — Store API", () => {
       const methods = mocks.workerPostMessage.mock.calls.map(
         (c) => (c[0] as { method: string }).method,
       );
-      expect(methods).toEqual(["loadTripleBuffer", "realization", "getInferredTripleBuffer"]);
+      expect(methods).toEqual(["loadTripleBuffer", "classification", "getInferredTripleBuffer"]);
 
       const inferredGraphNode = namedNode(INFERRED_GRAPH_IRI);
       const inferred = store.getQuads(null, null, null, inferredGraphNode);
@@ -413,7 +415,7 @@ describe("RdfReasoner — Store API", () => {
         const req = msg as { id: number; method: string };
         if (req.method === "loadTripleBuffer") {
           simulateWorkerMessage({ id: req.id, result: true });
-        } else if (req.method === "realization") {
+        } else if (req.method === "classification") {
           simulateWorkerMessage({ id: req.id, result: true });
         } else if (req.method === "getInferredTripleBuffer") {
           callCount++;

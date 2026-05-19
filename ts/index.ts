@@ -197,7 +197,7 @@ export class RdfReasoner {
       const { tripleBuffer, strTableBuffer } = encodeToBuffers(store.getQuads(null, null, null, null));
 
       await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
-      await this._call("realization", []);
+      await this._call("classification", []);
 
       const resultBuf = (await this._call("getInferredTripleBuffer", [])) as ArrayBuffer;
       const inferredQuads = decodeBuffers(resultBuf);
@@ -222,15 +222,17 @@ export class RdfReasoner {
       const { tripleBuffer, strTableBuffer } = encodeToBuffers(quads);
 
       await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
-      await this._call("realization", []);
 
       if (mode === "consistency") {
         // Consistency mode: no inferred quads are returned via reason().
         // Callers wanting a boolean should use checkConsistency().
+        await this._call("realization", []);
         return [];
       }
 
-      // "classify" and "full" both retrieve inferred triples.
+      // "classify" (default) → TBox-only classification; "full" → full TBox+ABox realization.
+      await this._call(mode === "full" ? "realization" : "classification", []);
+
       const resultBuf = (await this._call("getInferredTripleBuffer", [])) as ArrayBuffer;
       return decodeBuffers(resultBuf);
     });
