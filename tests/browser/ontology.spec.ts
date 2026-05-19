@@ -132,3 +132,53 @@ test("roberts-family ontology: browser worker classifies same as Node.js", async
   expect(hasSub(result.triples, r + "Ancestor",         r + "BloodRelation")).toBe(true);
   expect(hasSub(result.triples, r + "AncestorOfRobert", r + "Ancestor")).toBe(true);
 });
+
+// ---------------------------------------------------------------------------
+// LUBM schema + data (17 MB)
+// ---------------------------------------------------------------------------
+
+test("lubm schema + data: browser worker realization", async ({ page }) => {
+  test.setTimeout(300_000);
+
+  const result = await page.evaluate(async () => {
+    const { RdfReasoner, INFERRED_GRAPH_IRI, Store, Parser, DataFactory } = window;
+
+    async function loadNT(url: string) {
+      const text = await fetch(url).then((r) => r.text());
+      const store = new Store();
+      await new Promise<void>((resolve, reject) => {
+        new Parser({ format: "N-Triples" }).parse(text, (err: Error | null, quad: any) => {
+          if (err) { reject(err); return; }
+          if (quad) store.addQuad(quad);
+          else resolve();
+        });
+      });
+      return store.getQuads(null, null, null, null) as any[];
+    }
+
+    const [schemaQuads, dataQuads] = await Promise.all([
+      loadNT("/tests/fixtures/lubm.nt"),
+      loadNT("/tests/fixtures/lubm-data.nt"),
+    ]);
+
+    const store = new Store([...schemaQuads, ...dataQuads]);
+
+    const reasoner = new RdfReasoner();
+    await reasoner.ready;
+    await reasoner.reason(store);
+    reasoner.terminate();
+
+    const inferredGraph = DataFactory.namedNode(INFERRED_GRAPH_IRI);
+    const quads = store.getQuads(null, null, null, inferredGraph);
+    return {
+      count: quads.length,
+      triples: quads.map((q: any) => ({ s: q.subject.value, p: q.predicate.value, o: q.object.value })),
+    };
+  });
+
+  expect(result.count).toBeGreaterThan(0);
+
+  const lubm = "http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#";
+  expect(hasSub(result.triples, lubm + "Article",            lubm + "Publication")).toBe(true);
+  expect(hasSub(result.triples, lubm + "AssistantProfessor", lubm + "Professor")).toBe(true);
+});
