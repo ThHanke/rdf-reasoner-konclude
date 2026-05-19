@@ -17,9 +17,9 @@ import type { Quad } from "@rdfjs/types";
 import { Store, DataFactory } from "n3";
 import { encodeToBuffers, decodeBuffers } from "./intern.js";
 
-export type { ReasoningOptions, ReasoningResult, StoreReasoningOptions } from "./types.js";
+export type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions } from "./types.js";
 export { INFERRED_GRAPH_IRI } from "./types.js";
-import type { ReasoningOptions, StoreReasoningOptions } from "./types.js";
+import type { ReasoningOptions, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions } from "./types.js";
 import { INFERRED_GRAPH_IRI } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -296,6 +296,102 @@ export class RdfReasoner {
       await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
       await this._call("classification", []);
       return (await this._call("consistency", [])) as boolean;
+    });
+    this._queue = result.then(
+      () => {},
+      () => {},
+    );
+    return result;
+  }
+
+  // -------------------------------------------------------------------------
+  // materialize()
+  // -------------------------------------------------------------------------
+
+  /** Materialize ABox entailments (rdf:type) into a Store. Inferred triples are
+   *  written into `opts.inferredGraph` (default `INFERRED_GRAPH_IRI`). The
+   *  graph is cleared before each call. When `opts.includeClassHierarchy` is
+   *  `true`, rdfs:subClassOf and owl:equivalentClass triples are also included.
+   *  Concurrent calls are serialized. */
+  materialize(store: Store, opts?: MaterializeStoreOptions): Promise<void>;
+  /**
+   * Materialize ABox entailments (rdf:type assertions) for the given quads.
+   *
+   * Runs the full TBox+ABox realization pipeline. By default only rdf:type
+   * entailments are returned. Pass `{ includeClassHierarchy: true }` to also
+   * receive rdfs:subClassOf and owl:equivalentClass triples.
+   *
+   * Named graphs in the input are dropped (NTriples wire format is
+   * triple-only). All returned quads are in the DefaultGraph.
+   *
+   * Concurrent calls are serialized: each call waits for the previous one to
+   * complete before sending its first Worker message.
+   */
+  materialize(quads: Iterable<Quad>, opts?: MaterializeOptions): Promise<Quad[]>;
+  materialize(
+    input: Store | Iterable<Quad>,
+    opts?: MaterializeStoreOptions | MaterializeOptions,
+  ): Promise<void> | Promise<Quad[]> {
+    if (input instanceof Store) {
+      return this._materializeOnStore(input, opts as MaterializeStoreOptions | undefined);
+    }
+    return this._materializeOnQuads(input as Iterable<Quad>, opts as MaterializeOptions | undefined);
+  }
+
+  private _materializeOnStore(store: Store, opts?: MaterializeStoreOptions): Promise<void> {
+    const result = this._queue.then(async () => {
+      const inferredGraphNode = DataFactory.namedNode(
+        opts?.inferredGraph ?? INFERRED_GRAPH_IRI,
+      );
+      store.removeQuads(store.getQuads(null, null, null, inferredGraphNode));
+
+      const { tripleBuffer, strTableBuffer } = encodeToBuffers(store.getQuads(null, null, null, null));
+
+      await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
+      await this._call("realization", []);
+
+      const resultBuf = (await this._call("getInferredTripleBuffer", [])) as ArrayBuffer;
+      const allQuads = decodeBuffers(resultBuf);
+
+      const inferredQuads = opts?.includeClassHierarchy === true
+        ? allQuads
+        : allQuads.filter(
+            (q) =>
+              q.predicate.value !== "http://www.w3.org/2000/01/rdf-schema#subClassOf" &&
+              q.predicate.value !== "http://www.w3.org/2002/07/owl#equivalentClass",
+          );
+
+      for (const q of inferredQuads) {
+        store.addQuad(
+          DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode),
+        );
+      }
+    });
+    this._queue = result.then(
+      () => {},
+      () => {},
+    );
+    return result;
+  }
+
+  private _materializeOnQuads(quads: Iterable<Quad>, opts?: MaterializeOptions): Promise<Quad[]> {
+    const result = this._queue.then(async () => {
+      const { tripleBuffer, strTableBuffer } = encodeToBuffers(quads);
+
+      await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
+      await this._call("realization", []);
+
+      const resultBuf = (await this._call("getInferredTripleBuffer", [])) as ArrayBuffer;
+      const allQuads = decodeBuffers(resultBuf);
+
+      if (opts?.includeClassHierarchy === true) {
+        return allQuads;
+      }
+      return allQuads.filter(
+        (q) =>
+          q.predicate.value !== "http://www.w3.org/2000/01/rdf-schema#subClassOf" &&
+          q.predicate.value !== "http://www.w3.org/2002/07/owl#equivalentClass",
+      );
     });
     this._queue = result.then(
       () => {},
