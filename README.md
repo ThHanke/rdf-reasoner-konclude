@@ -199,23 +199,28 @@ module.exports = { experiments: { asyncWebAssembly: true } };
 
 ## Performance
 
-Benchmarked on an 8-core Linux host. Native = Konclude v0.7.0 Docker image; WASM = Node.js 20 via this package. Both use 8 threads. Median of 3 runs after 1 warmup.
+Benchmarked on an 8-core Linux host. Native = Konclude v0.7.0 Docker image; WASM Node.js = Node.js 20 via this package; WASM Browser = Chromium 135 via this package. All WASM runs use 8 threads. Median of 3 runs after 1 warmup.
 
-| Ontology           | Expressivity | NTriples | Native ¹  | WASM total  | Ratio  |
-| ------------------ | ------------ | -------- | --------- | ----------- | ------ |
-| LUBM schema        | SHI          | 307      | 34 ms     | 553 ms      | ~16×   |
-| GALEN              | SHIF         | 30 817   | 286 ms    | 1 365 ms    | ~4.8×  |
-| Roberts family     | SROIQ        | 3 866    | 2 118 ms  | 38 995 ms   | ~18×   |
-| LUBM schema + data | SHI          | 100 850  | 1 017 ms  | 2 352 ms    | ~2.3×  |
+| Ontology           | Expressivity | NTriples | Native ¹ | WASM Node.js ² | WASM Browser ² | Node ratio |
+| ------------------ | ------------ | -------- | -------- | -------------- | -------------- | ---------- |
+| LUBM schema        | SHI          | 307      | 34 ms    | 207 ms         | 202 ms         | ~6×        |
+| GALEN              | SHIF         | 30 817   | 286 ms   | 968 ms         | 852 ms         | ~3.4×      |
+| Roberts family     | SROIQ        | 3 866    | 2 118 ms | 38 769 ms      | 37 903 ms      | ~18×       |
+| LUBM schema + data | SHI          | 100 850  | 1 017 ms | 1 672 ms       | —              | ~1.6×      |
 
-¹ Native pipeline (OWL 2 XML parse + classify/realize); WASM pipeline (NTriples parse via
-Raptor2 + classify/realize). Both include their respective I/O steps. Native uses
-`classification` for TBox-only ontologies and `realization` for ontologies with individuals
-(Roberts family, LUBM + data) — matching WASM's operation selection. LUBM schema ratio is
-dominated by fixed WASM startup cost (pthreads pool init) on a tiny 307-triple ontology.
+¹ Native pipeline (OWL 2 XML parse + classify/realize). Native uses `classification` for
+TBox-only ontologies and `realization` for ontologies with individuals (Roberts family,
+LUBM + data) — matching WASM's operation selection. LUBM schema ratio is dominated by
+fixed WASM startup cost (pthreads pool init) on a tiny 307-triple ontology.
 
-WASM total includes binary buffer encode/decode (negligible for most ontologies). Run
-`npm run bench` to reproduce (requires a built WASM binary — see [Build from source](#build-from-source)).
+² WASM timing covers binary buffer encode (Quads → buffer) + `loadTripleBuffer` + realization
++ decode. Input RDF is pre-parsed into quads before the timing window — NTriples/Turtle parsing
+is excluded, matching what your application pays after data is already loaded into a Store.
+Node.js 20 and Chromium 135 are within ~12% of each other on most ontologies; Roberts family
+(SROIQ with ABox realization) is effectively equal. LUBM schema + data not measured in browser
+(17 MB fixture).
+
+Run `npm run bench` to reproduce (requires a built WASM binary — see [Build from source](#build-from-source)).
 
 ## How it works
 

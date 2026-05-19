@@ -1,10 +1,11 @@
 /**
  * Browser test entry point — loaded as a <script type="module"> by Vite.
  *
- * Imports RdfReasoner (from the TS source so Vite can bundle n3 and intern),
- * then exposes the classes on `window` for Playwright's page.evaluate() calls.
+ * Imports RdfReasoner from the compiled dist/ so the Worker URL and konclude.mjs
+ * path are resolved correctly without needing Vite aliases for Worker contexts.
+ * Exposes classes on `window` for Playwright's page.evaluate() calls.
  */
-import { RdfReasoner, INFERRED_GRAPH_IRI } from "../../ts/index.ts";
+import { RdfReasoner, INFERRED_GRAPH_IRI } from "../../dist/index.js";
 import { DataFactory, Store, Parser } from "n3";
 
 declare global {

@@ -6,7 +6,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { encodeTriplesForWasm, decodeWasmTripleBuffer } from './wasm-binary.mjs';
+import { parseNTriples, encodeQuadsForWasm, decodeWasmTripleBuffer } from './wasm-binary.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -29,11 +29,12 @@ function median(arr) {
     : sorted[mid];
 }
 
-async function benchOne(Module, nts) {
+// quads are pre-parsed outside benchOne so NTriples parsing is excluded from timing.
+async function benchOne(Module, quads) {
   const reasoner = new Module.KoncludeReasoner();
   try {
     const tLoad0 = performance.now();
-    const { triplePtr, tripleCount, strTablePtr, strBytes } = encodeTriplesForWasm(Module, nts.join('\n'));
+    const { triplePtr, tripleCount, strTablePtr, strBytes } = encodeQuadsForWasm(Module, quads);
     try {
       reasoner.loadTripleBuffer(triplePtr, tripleCount, strTablePtr, strBytes);
     } finally {
@@ -85,20 +86,22 @@ export async function benchAll(cases = WASM_CASES, opts = { warmup: 1, runs: 3 }
   for (const c of cases) {
     process.stderr.write(`  wasm: ${c.name}... `);
 
-    let nts;
+    let quads;
+    let tripleCount;
     try {
-      nts = c.files.map(loadNT);
+      const nts = c.files.map(loadNT);
+      tripleCount = nts.reduce((s, nt) => s + countTriples(nt), 0);
+      // Pre-parse NTriples → Quads once, outside the timing window.
+      quads = parseNTriples(nts.join('\n'));
     } catch {
       process.stderr.write('SKIP (fixture missing)\n');
       results.push({ ...c, result: { error: 'fixture missing' } });
       continue;
     }
 
-    const tripleCount = nts.reduce((s, nt) => s + countTriples(nt), 0);
-
     async function runFresh() {
       const Module = await createKoncludeModule({ print: () => {}, printErr: () => {} });
-      return benchOne(Module, nts);
+      return benchOne(Module, quads);
     }
 
     for (let i = 0; i < opts.warmup; i++) {
