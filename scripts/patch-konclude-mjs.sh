@@ -136,4 +136,88 @@ else
   echo "patch-konclude-mjs: [SKIP]    invokeEntryPoint already guarded"
 fi
 
+# ── Patch 5: add @vite-ignore to pthread Worker creation ─────────────────────
+# Vite's vite:worker-import-meta-url plugin crashes with an unhandled exception
+# when it encounters the dynamic workerOptions variable in the pthread Worker
+# creation call.  Adding /* @vite-ignore */ tells the plugin to skip this call,
+# preventing the crash so the module can be served in Vite dev-server contexts
+# (used by the browser integration tests).
+BEFORE_VITE_WORKER='worker=new Worker(new URL("konclude.mjs",import.meta.url),workerOptions)'
+AFTER_VITE_WORKER='worker=new Worker(new URL("konclude.mjs",_scriptName),/* @vite-ignore */workerOptions)'
+
+if grep -qF "$BEFORE_VITE_WORKER" "$DIST_FILE"; then
+  python3 - "$DIST_FILE" <<'PYEOF'
+import sys
+path = sys.argv[1]
+# Change Worker URL base from import.meta.url to _scriptName (same value, set
+# earlier as var _scriptName = import.meta.url).  This breaks the regex pattern
+# that Vite's vite:worker-import-meta-url plugin uses to detect Worker bundles
+# (which requires "new URL(..., import.meta.url)"), preventing Vite from
+# rewriting the URL and appending ?worker query parameters that break runtime.
+# Also add /* @vite-ignore */ in the options as a secondary safety measure.
+before = 'worker=new Worker(new URL("konclude.mjs",import.meta.url),workerOptions)'
+after  = 'worker=new Worker(new URL("konclude.mjs",_scriptName),/* @vite-ignore */workerOptions)'
+text = open(path).read()
+open(path, 'w').write(text.replace(before, after, 1))
+PYEOF
+  echo "patch-konclude-mjs: [APPLIED] use _scriptName in pthread Worker URL (prevents Vite rewriting)"
+else
+  echo "patch-konclude-mjs: [SKIP]    pthread Worker already uses _scriptName"
+fi
+
+# ── Patch 6: allow on-demand worker allocation in browser ────────────────────
+# Emscripten's getNewWorker() bails with `return` (returns undefined) when the
+# pthread pool is exhausted AND ENVIRONMENT_IS_NODE is false (i.e. in browsers).
+# Konclude's KPSet classifier starts all 8 pool workers, and each worker then
+# calls pthread_create to spawn sub-threads.  With a full pool and no on-demand
+# allocation, spawnThread() returns EAGAIN.  KPSet spin-waits for a slot that
+# never opens (cleanupThread messages are deferred until the main thread unblocks
+# from memory.atomic.wait32), causing a permanent deadlock in the browser.
+# Fix: remove the !ENVIRONMENT_IS_NODE guard, matching Node.js behaviour.
+# Safety: loadWasmModuleToWorker sets worker.onmessage and sends {cmd:"load"}
+# before spawnThread sends {cmd:"run"}; workers process them in order.
+# {cmd:"loaded"} and {cmd:"cleanupThread"} queue up and are processed when
+# the main Emscripten thread returns from WASM after classification completes.
+BEFORE_GETNEW='getNewWorker(){if(PThread.unusedWorkers.length==0){if(!ENVIRONMENT_IS_NODE){return}PThread.allocateUnusedWorker();PThread.loadWasmModuleToWorker(PThread.unusedWorkers[0])}return PThread.unusedWorkers.pop()}'
+AFTER_GETNEW='getNewWorker(){if(PThread.unusedWorkers.length==0){PThread.allocateUnusedWorker();PThread.loadWasmModuleToWorker(PThread.unusedWorkers[0])}return PThread.unusedWorkers.pop()}'
+
+if grep -qF "$BEFORE_GETNEW" "$DIST_FILE"; then
+  python3 - "$DIST_FILE" <<'PYEOF'
+import sys
+path = sys.argv[1]
+before = 'getNewWorker(){if(PThread.unusedWorkers.length==0){if(!ENVIRONMENT_IS_NODE){return}PThread.allocateUnusedWorker();PThread.loadWasmModuleToWorker(PThread.unusedWorkers[0])}return PThread.unusedWorkers.pop()}'
+after  = 'getNewWorker(){if(PThread.unusedWorkers.length==0){PThread.allocateUnusedWorker();PThread.loadWasmModuleToWorker(PThread.unusedWorkers[0])}return PThread.unusedWorkers.pop()}'
+text = open(path).read()
+open(path, 'w').write(text.replace(before, after, 1))
+PYEOF
+  echo "patch-konclude-mjs: [APPLIED] allow on-demand worker allocation in browser (fix KPSet deadlock)"
+else
+  echo "patch-konclude-mjs: [SKIP]    getNewWorker already allows on-demand allocation"
+fi
+
+# ── Patch 7: increase pthreadPoolSize 8→32 ───────────────────────────────────
+# KPSet starts 8 pre-allocated pool workers then spawns ~9 more on-demand during
+# classification (total ~17 threads).  Browser Chromium silently defers/drops
+# script evaluation for workers created mid-classification while 8+ WASM threads
+# are already running — on-demand workers are allocated, their HTTP fetch
+# succeeds, but the module never evaluates.  Pre-allocating 20 workers at module
+# init time ensures all threads are ready before classify() is called, avoiding
+# on-demand creation entirely.  20 gives 3 units of margin beyond observed peak.
+BEFORE_POOL='var pthreadPoolSize=8;'
+AFTER_POOL='var pthreadPoolSize=32;'
+
+if grep -qF "$BEFORE_POOL" "$DIST_FILE"; then
+  python3 - "$DIST_FILE" <<'PYEOF'
+import sys
+path = sys.argv[1]
+before = 'var pthreadPoolSize=8;'
+after  = 'var pthreadPoolSize=32;'
+text = open(path).read()
+open(path, 'w').write(text.replace(before, after, 1))
+PYEOF
+  echo "patch-konclude-mjs: [APPLIED] pthreadPoolSize 8→32 (pre-allocate enough workers for KPSet)"
+else
+  echo "patch-konclude-mjs: [SKIP]    pthreadPoolSize already patched"
+fi
+
 echo "patch-konclude-mjs: done"

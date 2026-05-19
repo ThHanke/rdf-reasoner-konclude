@@ -6,12 +6,19 @@ import { Parser } from 'n3';
 import { encodeToBuffers, decodeBuffers } from '../../dist/intern.js';
 
 /**
- * Encode an NTriples string into WASM heap buffers ready for loadTripleBuffer().
+ * Parse an NTriples string into an array of Quad objects (outside timing window).
+ */
+export function parseNTriples(ntriplesString) {
+  return new Parser({ format: 'N-Triples' }).parse(ntriplesString);
+}
+
+/**
+ * Encode pre-parsed Quads into WASM heap buffers ready for loadTripleBuffer().
  * Returns { triplePtr, tripleCount, strTablePtr, strBytes }.
  * Caller MUST call mod._free(triplePtr) and mod._free(strTablePtr) after use.
+ * Use this instead of encodeTriplesForWasm to exclude NTriples parsing from timing.
  */
-export function encodeTriplesForWasm(mod, ntriplesString) {
-  const quads = new Parser({ format: 'N-Triples' }).parse(ntriplesString);
+export function encodeQuadsForWasm(mod, quads) {
   const { tripleBuffer, strTableBuffer } = encodeToBuffers(quads);
 
   const tripleCount = tripleBuffer.byteLength / 12;
@@ -21,6 +28,14 @@ export function encodeTriplesForWasm(mod, ntriplesString) {
   mod.HEAPU8.set(new Uint8Array(strTableBuffer), strTablePtr);
 
   return { triplePtr, tripleCount, strTablePtr, strBytes: strTableBuffer.byteLength };
+}
+
+/**
+ * Encode an NTriples string into WASM heap buffers ready for loadTripleBuffer().
+ * Includes NTriples parsing in the call — use encodeQuadsForWasm to exclude it.
+ */
+export function encodeTriplesForWasm(mod, ntriplesString) {
+  return encodeQuadsForWasm(mod, parseNTriples(ntriplesString));
 }
 
 /**
