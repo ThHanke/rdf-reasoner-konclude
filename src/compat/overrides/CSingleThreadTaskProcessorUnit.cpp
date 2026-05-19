@@ -25,6 +25,21 @@ namespace Konclude {
 			auto it = sCompleteTaskGuards.find(stpu);
 			return it != sCompleteTaskGuards.end() ? it->second : nullptr;
 		}
+
+		// Accessor subclass: only purpose is to reach the protected mProcessingStopped
+		// field so we can reset it to false before restarting the STPU thread.
+		// The cast is safe because the actual dynamic type IS CSingleThreadTaskProcessorUnit
+		// (not a deeper subclass), so the memory layout is identical.
+		class StpuRestartAccessor : public CSingleThreadTaskProcessorUnit {
+		public:
+			void resetStopped() { mProcessingStopped = false; }
+		};
+
+		// Reset mProcessingStopped so that startProcessing() → processingLoop() will
+		// not exit immediately after the STPU is restarted for the next classify() call.
+		void stpuResetStopped(CSingleThreadTaskProcessorUnit* stpu) {
+			static_cast<StpuRestartAccessor*>(stpu)->resetStopped();
+		}
 	}
 }
 
@@ -269,9 +284,62 @@ namespace Konclude {
 
 
 		CSingleThreadTaskProcessorUnit* CSingleThreadTaskProcessorUnit::startProcessing() {
+			// Call 2+: unconditionally drain stale signals/events and reset tags so
+			// that signalizeEvent() can release the semaphore for the new classify()
+			// call.  Stale KPSet pthread callbacks arriving after the previous
+			// classify() returned increment mLastProcessingStartRequestTag without a
+			// matching semaphore acquire, making startedTag < requestTag.  When they
+			// diverge, signalizeEvent()'s equality guard silently skips every release,
+			// permanently stalling the STPU.
+			if (mLastProcessingStartedTag > 0) {
+				// Drain stale semaphore counts first (non-blocking).
+				while (mProcessingWakeUpSemaphore.tryAcquire(1, 0)) {}
+
+				// Drain stale events from the channel handler (two passes for safety).
+				if (mEventHandler->needEventProcessing()) {
+					CEventLinker* li = mEventHandler->takeEvents(nullptr);
+					while (li) {
+						CEventLinker* next = li->getNextEventLinker();
+						CEvent* staleEvent = li->getData();
+						if (staleEvent) mMemoryAllocator->releaseMemoryPoolContainer(staleEvent);
+						li = next;
+					}
+				}
+				if (mEventHandler->needEventProcessing()) {
+					CEventLinker* li = mEventHandler->takeEvents(nullptr);
+					while (li) {
+						CEventLinker* next = li->getNextEventLinker();
+						CEvent* staleEvent = li->getData();
+						if (staleEvent) mMemoryAllocator->releaseMemoryPoolContainer(staleEvent);
+						li = next;
+					}
+				}
+
+				// Drain any semaphore counts that arrived with the stale events.
+				while (mProcessingWakeUpSemaphore.tryAcquire(1, 0)) {}
+
+				// Reset tags so signalizeEvent()'s equality guard passes again.
+				mLastProcessingStartRequestTag = mLastProcessingStartedTag;
+
+				// Reset mProcessingStopped (set by stopProcessing() in some code paths)
+				// so processingLoop() does not exit immediately on next entry.
+				mProcessingStopped = false;
+			}
+
 			if (!isRunning()) {
 				startThread();
 				postEvent(new Concurrent::Events::CHandleEventsEvent());
+				// postEvent() → signalizeEvent() incremented mLastProcessingStartRequestTag
+				// by 1.  Pre-sync the started tag so that prepareOntology()'s signalizeEvent()
+				// call (on the manager thread) sees equal tags before the STPU pthread has had
+				// a chance to acquire the semaphore and update the tag itself.
+				mLastProcessingStartedTag = mLastProcessingStartRequestTag;
+			} else if (!mEventSignalized) {
+				// Thread already alive (call 2+): post CHandleEventsEvent to re-enter
+				// processingLoop().  Only needed if the previous processingLoop() exited
+				// (mProcessingStopped path) or the thread is idle.
+				postEvent(new Concurrent::Events::CHandleEventsEvent());
+				mLastProcessingStartedTag = mLastProcessingStartRequestTag;
 			}
 			return this;
 		}
@@ -329,7 +397,9 @@ namespace Konclude {
 					mLastProcessingStartedTag = mLastProcessingStartRequestTag;
 					// Exit immediately if woken for shutdown — don't touch event handlers
 					// or task queues that may be partially destroyed.
-					if (mProcessingStopped) continue;
+					if (mProcessingStopped) {
+						continue;
+					}
 				}
 				mProcessingBlocked = false;
 				eventSafeguardProcessed = false;

@@ -18,6 +18,7 @@ import type { Quad } from "@rdfjs/types";
 
 import { RdfReasoner } from "../../ts/index.js";
 import { loadFixture } from "../helpers/fixture.js";
+import { assertExactMatch } from "../helpers/compare-native.js";
 
 // ---------------------------------------------------------------------------
 // WASM availability guard
@@ -30,21 +31,8 @@ const wasmExists = existsSync(wasmPath);
 // Helpers
 // ---------------------------------------------------------------------------
 
-const NS = "http://www.co-ode.org/roberts/family-tree.owl#";
 const SUBCLASS_OF = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
-
-function hasSubsumption(
-  quads: Quad[],
-  subClass: string,
-  superClass: string,
-): boolean {
-  return quads.some(
-    (q) =>
-      q.predicate.value === SUBCLASS_OF &&
-      q.subject.value === subClass &&
-      q.object.value === superClass,
-  );
-}
+const EQUIVALENT_CLASS = "http://www.w3.org/2002/07/owl#equivalentClass";
 
 // ---------------------------------------------------------------------------
 // Suite (skipped when WASM is absent)
@@ -61,7 +49,7 @@ describe.skipIf(!wasmExists)("Roberts family ontology integration", () => {
 
     inputQuads = loadFixture("roberts-family.nt");
     inferred = await reasoner.classify(inputQuads);
-  });
+  }, 360000);
 
   afterAll(() => {
     reasoner?.terminate();
@@ -84,21 +72,24 @@ describe.skipIf(!wasmExists)("Roberts family ontology integration", () => {
     }
   });
 
-  it("AuntOfRobert ⊑ Aunt (nominal specialisation: hasValue ⊑ someValuesFrom)", () => {
-    // AuntOfRobert ≡ Person ∩ ∃sisterOf.(Person ∩ ∃isParentOf.{robert_david_bright_1965})
-    // Aunt        ≡ Person ∩ ∃sisterOf.(Person ∩ ∃isParentOf.Person)
-    // Since the named individual is a Person, ∃isParentOf.{robert} ⊑ ∃isParentOf.Person,
-    // so AuntOfRobert ⊑ Aunt follows by OWL-DL tableau reasoning.
-    expect(
-      hasSubsumption(inferred, `${NS}AuntOfRobert`, `${NS}Aunt`),
-    ).toBe(true);
+  it("TBox matches native Konclude output exactly (set equality)", () => {
+    assertExactMatch(inferred, "roberts-native-tbox.nt", [SUBCLASS_OF, EQUIVALENT_CLASS]);
   });
 
-  it("FemaleAncestor ⊑ Woman (intersection member subsumption)", () => {
-    // FemaleAncestor ≡ Woman ∩ ∃isAncestorOf.Person
-    // Every member of an equivalentClass intersection is a superclass.
-    expect(
-      hasSubsumption(inferred, `${NS}FemaleAncestor`, `${NS}Woman`),
-    ).toBe(true);
+  // ── Phase 3: ABox realization ─────────────────────────────────────────────
+
+  const RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+
+  it("ABox matches native Konclude output exactly (set equality)", () => {
+    assertExactMatch(inferred, "roberts-native-abox.nt", [RDF_TYPE]);
   });
+
+  it("sequential call stability: second classify() on same reasoner succeeds", async () => {
+    // Call classify() again on the same reasoner with a different (small) ontology.
+    // Tests that STPU + realizer threads reset correctly between calls.
+    const lubmQuads = loadFixture("lubm.nt");
+    const inferred2 = await reasoner.classify(lubmQuads);
+    expect(Array.isArray(inferred2)).toBe(true);
+    expect(inferred2.length).toBeGreaterThan(0);
+  }, 30000);
 });

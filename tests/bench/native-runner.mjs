@@ -11,13 +11,15 @@ const REPO_ROOT = join(__dirname, '../..');
 const TESTS_DIR = join(REPO_ROOT, 'vendor/konclude/Tests');
 const FIXTURES_DIR = join(REPO_ROOT, 'tests/fixtures');
 
-const RE_VERSION  = /Version (v[\d.]+-\d+ - \w+)/;
-const RE_PARSE    = /Ontology parsed in (\d+) ms/;
-const RE_PREPROC  = /Finished preprocessing in (\d+) ms/;
-const RE_PRECOMP  = /Finished precomputing in (\d+) ms/;
-const RE_CLASSIFY = /Finished class classification in (\d+) ms/;
-const RE_TOTAL    = /Total processing time:\s*(\d+) ms/;
-const RE_THREADS  = /Reasoner initialized with (\d+) processing unit/;
+const RE_VERSION   = /Version (v[\d.]+-\d+ - \w+)/;
+const RE_PARSE     = /Ontology parsed in (\d+) ms/;
+const RE_PREPROC   = /Finished preprocessing in (\d+) ms/;
+const RE_PRECOMP   = /Finished precomputing in (\d+) ms/;
+const RE_CLASSIFY  = /Finished class classification in (\d+) ms/;
+const RE_PROPCLASS = /Finished object property classification in (\d+) ms/;
+const RE_REALIZE   = /Finished \(lazy\) realization in (\d+) ms/;
+const RE_TOTAL     = /Total processing time:\s*(\d+) ms/;
+const RE_THREADS   = /Reasoner initialized with (\d+) processing unit/;
 
 function parseMs(log, re) {
   const m = log.match(re);
@@ -57,7 +59,7 @@ g.serialize('${out}', format='xml')
   return out;
 }
 
-export function benchOne(owlFile, mountDir, runs = 3) {
+export function benchOne(owlFile, mountDir, runs = 3, command = 'classification') {
   if (!checkDocker()) {
     return { error: 'docker unavailable' };
   }
@@ -78,7 +80,7 @@ export function benchOne(owlFile, mountDir, runs = 3) {
         'run', '--rm',
         '-v', `${mountDir}:/tests:ro`,
         'konclude/konclude:latest',
-        'classification', '-v', '-w', 'AUTO',
+        command, '-v', '-w', 'AUTO',
         '-i', `/tests/${owlFile}`,
         '-o', '/dev/null',
       ],
@@ -91,7 +93,10 @@ export function benchOne(owlFile, mountDir, runs = 3) {
 
     const log = (r.stdout || '') + (r.stderr || '');
 
-    if (r.status !== 0 && !log.includes('Finished class classification')) {
+    const doneMarker = command === 'realization'
+      ? 'Finished (lazy) realization'
+      : 'Finished class classification';
+    if (r.status !== 0 && !log.includes(doneMarker)) {
       return { error: `docker exited ${r.status}: ${log.slice(0, 300)}` };
     }
 
@@ -109,11 +114,13 @@ export function benchOne(owlFile, mountDir, runs = 3) {
       preprocessMs: parseMs(log, RE_PREPROC),
       precomputeMs: parseMs(log, RE_PRECOMP),
       classifyMs:   parseMs(log, RE_CLASSIFY),
+      propClassMs:  parseMs(log, RE_PROPCLASS),
+      realizeMs:    parseMs(log, RE_REALIZE),
       totalMs:      parseMs(log, RE_TOTAL),
     });
   }
 
-  const fields = ['parseMs', 'preprocessMs', 'precomputeMs', 'classifyMs', 'totalMs'];
+  const fields = ['parseMs', 'preprocessMs', 'precomputeMs', 'classifyMs', 'propClassMs', 'realizeMs', 'totalMs'];
   const result = { nativeVersion, threads };
   for (const f of fields) {
     const vals = timings.map(t => t[f]).filter(v => v != null);
@@ -123,12 +130,13 @@ export function benchOne(owlFile, mountDir, runs = 3) {
 }
 
 export const NATIVE_CASES = [
-  { name: 'LUBM schema',    owlFile: 'lubm-univ-bench.owl.xml',      dir: TESTS_DIR,    expressiveness: 'SHI' },
-  { name: 'GALEN',          owlFile: 'galen.owl.xml',                 dir: TESTS_DIR,    expressiveness: 'SHIF' },
-  { name: 'Roberts family', owlFile: 'roberts-family-full-D.owl.xml', dir: TESTS_DIR,    expressiveness: 'SROIQ' },
+  { name: 'LUBM schema',    owlFile: 'lubm-univ-bench.owl.xml',      dir: TESTS_DIR,    expressiveness: 'SHI',    command: 'classification' },
+  { name: 'GALEN',          owlFile: 'galen.owl.xml',                 dir: TESTS_DIR,    expressiveness: 'SHIF',   command: 'classification' },
+  // Roberts has ABox individuals → realization (which includes classification internally)
+  { name: 'Roberts family', owlFile: 'roberts-family-full-D.owl.xml', dir: TESTS_DIR,    expressiveness: 'SROIQ',  command: 'realization' },
   // Combined TBox+ABox as RDF/XML — generated from lubm.nt + lubm-data.nt via rdflib
   { name: 'LUBM schema + data', owlFile: 'lubm-combined.rdf.xml',    dir: FIXTURES_DIR, expressiveness: 'SHI',
-    generate: ensureLubmCombined },
+    command: 'realization', generate: ensureLubmCombined },
 ];
 
 export async function benchAll(cases = NATIVE_CASES, runs = 3) {
@@ -147,7 +155,7 @@ export async function benchAll(cases = NATIVE_CASES, runs = 3) {
       dir = dirname(generated);
     }
 
-    const result = benchOne(c.owlFile, dir, runs);
+    const result = benchOne(c.owlFile, dir, runs, c.command ?? 'classification');
     if (result.error) {
       process.stderr.write(`ERROR: ${result.error}\n`);
     } else {

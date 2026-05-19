@@ -14,10 +14,6 @@ export function loadFixture(name: string): Quad[] {
     .join("\n");
 
   const parser = new Parser({ format: "N-Triples" });
-  const quads: Quad[] = [];
-  parser.parse(cleaned, (err, quad) => {
-    if (err) throw err;
-    if (quad) quads.push(quad as Quad);
-  });
-  return quads;
+  // Use synchronous form (no callback) so quads are available immediately.
+  return parser.parse(cleaned) as Quad[];
 }

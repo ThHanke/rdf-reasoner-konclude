@@ -4,6 +4,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { encodeTriplesForWasm, decodeWasmTripleBuffer } from '../bench/wasm-binary.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = join(__dirname, '../fixtures');
@@ -19,17 +20,23 @@ const NTriples_3class = `
 <http://example.org/B> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/C> .
 `.trim();
 
-async function classify(Module, name, nts) {
+async function runRealization(Module, name, nts) {
   console.log(`[${name}] creating reasoner...`);
   const reasoner = new Module.KoncludeReasoner();
   try {
-    console.log(`[${name}] loading NTriples...`);
-    for (const nt of nts) reasoner.loadNTriples(nt);
-    console.log(`[${name}] calling classify()...`);
-    const ok = reasoner.classify();
-    console.log(`[${name}] classify() returned: ${ok}`);
-    if (!ok) throw new Error('classify() returned false');
-    const inferred = reasoner.getInferredNTriples();
+    console.log(`[${name}] loading triples...`);
+    const { triplePtr, tripleCount, strTablePtr, strBytes } = encodeTriplesForWasm(Module, nts.join('\n'));
+    try {
+      reasoner.loadTripleBuffer(triplePtr, tripleCount, strTablePtr, strBytes);
+    } finally {
+      Module._free(triplePtr);
+      Module._free(strTablePtr);
+    }
+    console.log(`[${name}] calling realization()...`);
+    const ok = reasoner.realization();
+    console.log(`[${name}] realization() returned: ${ok}`);
+    if (!ok) throw new Error('realization() returned false');
+    const inferred = decodeWasmTripleBuffer(Module, reasoner);
     console.log(`PASS: ${name}`);
     return inferred;
   } finally {
@@ -44,7 +51,7 @@ async function main() {
 
   // 3-class transitive subsumption (inline ontology)
   {
-    const inferred = await classify(Module, '3-class transitivity', [NTriples_3class]);
+    const inferred = await runRealization(Module, '3-class transitivity', [NTriples_3class]);
     if (!inferred.includes('<http://example.org/A>') ||
         !inferred.includes('<http://example.org/C>') ||
         !inferred.includes('subClassOf')) {
@@ -53,10 +60,10 @@ async function main() {
     }
   }
 
-  // LUBM, GALEN, Roberts — all must classify without hanging
-  await classify(Module, 'LUBM', [readFileSync(join(FIXTURES, 'lubm.nt'), 'utf8')]);
-  await classify(Module, 'GALEN', [readFileSync(join(FIXTURES, 'galen.nt'), 'utf8')]);
-  await classify(Module, 'Roberts Family', [readFileSync(join(FIXTURES, 'roberts-family.nt'), 'utf8')]);
+  // LUBM, GALEN, Roberts — all must runRealization without hanging
+  await runRealization(Module, 'LUBM', [readFileSync(join(FIXTURES, 'lubm.nt'), 'utf8')]);
+  await runRealization(Module, 'GALEN', [readFileSync(join(FIXTURES, 'galen.nt'), 'utf8')]);
+  await runRealization(Module, 'Roberts Family', [readFileSync(join(FIXTURES, 'roberts-family.nt'), 'utf8')]);
 
   console.log('\nAll smoke tests passed.');
   process.exit(0);

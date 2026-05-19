@@ -8,10 +8,7 @@
  *      `KoncludeReasoner` instance, posts `{id, result}` or `{id, error}`
  *
  * The `KoncludeReasoner` instance is stateful within a single Worker lifetime:
- *   loadNTriples → classify (→ getInferredNTriples)
- *
- * Call `.delete()` (via the `reset` method) when the caller is finished to
- * release Embind-managed C++ memory.
+ *   loadTripleBuffer → classification | realization (→ getInferredTripleBuffer or consistency)
  */
 
 // At runtime this file lives in `dist/` alongside `dist/konclude.mjs`.
@@ -54,7 +51,7 @@ export interface WorkerInitErrorMessage {
 // Eager initialisation
 // ---------------------------------------------------------------------------
 
-const initPromise: Promise<KoncludeModule> = createKoncludeModule()
+const initPromise: Promise<KoncludeModule> = createKoncludeModule({ print: () => {}, printErr: () => {} })
   .then((mod) => {
     self.postMessage({ type: "ready" } as WorkerReadyMessage);
     return mod;
@@ -76,13 +73,6 @@ function getOrCreateReasoner(mod: KoncludeModule): KoncludeReasonerInstance {
     _reasoner = new mod.KoncludeReasoner();
   }
   return _reasoner;
-}
-
-function destroyReasoner(): void {
-  if (_reasoner !== null) {
-    _reasoner.delete();
-    _reasoner = null;
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -107,32 +97,58 @@ export async function handleMessage(
     const reasoner = getOrCreateReasoner(mod);
 
     switch (method) {
-      case "loadNTriples": {
-        // Destroy the old C++ instance before each load so each reason() call
-        // starts from a fully clean state (manager thread + ontology).
-        destroyReasoner();
-        const freshReasoner = getOrCreateReasoner(mod);
-        const ntriples = args[0] as string;
-        freshReasoner.loadNTriples(ntriples);
+      case "loadTripleBuffer": {
+        const r = getOrCreateReasoner(mod);
+        r.reset();
+        const tripleAB = args[0] as ArrayBuffer;
+        const strTableAB = args[1] as ArrayBuffer;
+        const tripleCount = tripleAB.byteLength / 12; // 3 × u32 per triple
+
+        const tripleBytes = tripleAB.byteLength;
+        const strBytes = strTableAB.byteLength;
+
+        const triplePtr = mod._malloc(tripleBytes);
+        const strTablePtr = mod._malloc(strBytes);
+        try {
+          mod.HEAPU8.set(new Uint8Array(tripleAB), triplePtr);
+          mod.HEAPU8.set(new Uint8Array(strTableAB), strTablePtr);
+          r.loadTripleBuffer(triplePtr, tripleCount, strTablePtr, strBytes);
+        } finally {
+          mod._free(triplePtr);
+          mod._free(strTablePtr);
+        }
         result = true;
         break;
       }
-      case "classify": {
-        result = reasoner.classify();
+      case "classification": {
+        result = reasoner.classification();
         break;
       }
-      case "isConsistent": {
-        result = reasoner.isConsistent();
+      case "realization": {
+        result = reasoner.realization();
         break;
       }
-      case "getInferredNTriples": {
-        result = reasoner.getInferredNTriples();
+      case "consistency": {
+        result = reasoner.consistency();
         break;
       }
-      case "reset": {
-        destroyReasoner();
-        result = true;
-        break;
+      case "getInferredTripleBuffer": {
+        const len = reasoner.buildInferredTripleBuffer();
+        if (len > 0) {
+          const ptr = reasoner.getInferredTripleBufferPtr();
+          // HEAPU8.buffer may be a SharedArrayBuffer — slice() copies to a plain AB
+          // so it can be transferred (postMessage transfer requires non-shared AB).
+          const plain = mod.HEAPU8.slice(ptr, ptr + len);
+          const response: WorkerResponse = { id, result: plain.buffer };
+          self.postMessage(response, [plain.buffer]);
+          return;
+        }
+        // Empty result — 8-byte combined buffer: [strTableLen=4][count=0]
+        const empty = new ArrayBuffer(8);
+        new DataView(empty).setUint32(0, 4, true);
+        const emptyResponse: WorkerResponse = { id, result: empty };
+        self.postMessage(emptyResponse, [empty]);
+        return;
       }
       default: {
         const response: WorkerResponse = {

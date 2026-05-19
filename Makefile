@@ -1,4 +1,4 @@
-.PHONY: build build-wasm test smoke reason shell patches fmt lint
+.PHONY: build build-wasm test test-browser smoke reason shell patches fmt lint
 
 build:
 	npm run build
@@ -8,6 +8,9 @@ build-wasm:
 
 test:
 	npm test
+
+test-browser:
+	npm run test:browser
 
 smoke:
 	docker compose run --rm smoke-test
