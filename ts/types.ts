@@ -34,6 +34,35 @@ export interface StoreReasoningOptions extends ReasoningOptions {
 }
 
 /**
+ * Options controlling how the materialize operation is performed.
+ */
+export interface MaterializeOptions {
+  /**
+   * When `true`, the returned quads include the class hierarchy
+   * (rdfs:subClassOf and owl:equivalentClass assertions) in addition to
+   * rdf:type assertions.
+   *
+   * Defaults to `false` — only rdf:type entailments are returned.
+   */
+  includeClassHierarchy?: boolean;
+}
+
+/**
+ * Options for Store-based materialize operations.
+ *
+ * Extends `MaterializeOptions` with a named-graph IRI for inferred triples.
+ */
+export interface MaterializeStoreOptions extends MaterializeOptions {
+  /**
+   * Named graph IRI where inferred triples are written.
+   *
+   * Defaults to `INFERRED_GRAPH_IRI` (`"urn:konclude:inferred"`).
+   * The graph is cleared before each call; do not store ontology triples here.
+   */
+  inferredGraph?: string;
+}
+
+/**
  * The result returned by a reasoning operation.
  *
  * @remarks Reserved for future use. When `mode:'full'` is fully implemented
