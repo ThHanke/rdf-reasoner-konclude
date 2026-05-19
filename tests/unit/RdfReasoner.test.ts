@@ -328,6 +328,11 @@ describe("RdfReasoner", () => {
       const result = await reasoner.reason([], { mode: "full" });
       expect(result).toHaveLength(1);
       expect(result[0].subject.value).toBe("http://example.org/A");
+
+      const methods = mocks.workerPostMessage.mock.calls.map(
+        (c) => (c[0] as { method: string }).method,
+      );
+      expect(methods).toEqual(["loadTripleBuffer", "realization", "getInferredTripleBuffer"]);
     });
   });
 
