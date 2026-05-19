@@ -197,6 +197,7 @@ export class RdfReasoner {
       const { tripleBuffer, strTableBuffer } = encodeToBuffers(store.getQuads(null, null, null, null));
 
       await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
+      // Always uses classification (TBox-only); opts.mode is reserved for future use.
       await this._call("classification", []);
 
       const resultBuf = (await this._call("getInferredTripleBuffer", [])) as ArrayBuffer;
