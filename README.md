@@ -221,6 +221,34 @@ Node.js 20 and Chromium 135 are within ~12% of each other on most ontologies; Ro
 
 Run `npm run bench` to reproduce (requires a built WASM binary — see [Build from source](#build-from-source)).
 
+### What each fixture tests
+
+**LUBM schema** (SHI, TBox-only) — a shallow university-domain ontology: 49 classes, 25 object
+properties, 36 subclass edges, one transitive property. No individuals. Konclude runs pure
+classification; actual tableau work is trivial. The 207 ms is almost entirely pthread pool
+startup on a 307-triple ontology.
+
+**GALEN** (SHIF, TBox-only) — a medical terminology ontology: 4 740 classes, 413 object
+properties, 150 functional properties, 26 transitive properties, and 3 446 existential
+restrictions (`someValuesFrom`) cross-connected to 3 237 subclass edges. No individuals.
+The dense restriction graph drives TBox saturation — constraints propagate across thousands
+of interleaved concept/role pairs. SHIF adds functional property reasoning on top. This is
+pure classification load.
+
+**Roberts family** (SROIQ, TBox + ABox) — a genealogy ontology: 171 classes, 80 object
+properties, 405 named individuals, 11 symmetric properties, 8 transitive properties, and
+24 property chain axioms (`owl:propertyChainAxiom`). SROIQ is the full OWL 2 DL
+expressiveness. The 405 individuals trigger ABox realization — Konclude computes the type
+of every individual under every applicable concept while propagating role chains across the
+family tree. Role chains require joining property paths, which multiplies the search space.
+This is why 3 866 triples takes 38 s.
+
+**LUBM schema + data** (SHI, TBox + ABox) — the same shallow TBox combined with ~25 000
+individuals (students, professors, courses across multiple universities). SHI has no property
+chains or nominals, so ABox realization is type propagation only: each individual is
+classified under the existing concept hierarchy. Cost scales roughly linearly with individual
+count rather than combinatorially, hence the 1.6× native ratio despite 25 000 instances.
+
 ## How it works
 
 ```text
