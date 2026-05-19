@@ -4,6 +4,10 @@ export const INFERRED_GRAPH_IRI = "urn:konclude:inferred";
 
 /**
  * Options controlling how the reasoning operation is performed.
+ *
+ * @remarks This interface is used by the deprecated `reason()` API. Prefer
+ * `classify()`, `materialize()`, or `checkConsistency()` instead, which do not
+ * require a `mode` parameter.
  */
 export interface ReasoningOptions {
   /**
@@ -26,6 +30,48 @@ export interface ReasoningOptions {
 export interface StoreReasoningOptions extends ReasoningOptions {
   /**
    * Named graph IRI where inferred triples are written.
+   *
+   * Defaults to `INFERRED_GRAPH_IRI` (`"urn:konclude:inferred"`).
+   * The graph is cleared before each call; do not store ontology triples here.
+   */
+  inferredGraph?: string;
+}
+
+/**
+ * Options controlling how the materialize operation is performed.
+ */
+export interface MaterializeOptions {
+  /**
+   * When `true`, the returned quads include the class hierarchy
+   * (rdfs:subClassOf and owl:equivalentClass assertions) in addition to
+   * rdf:type assertions.
+   *
+   * Defaults to `false` — only rdf:type entailments are returned.
+   */
+  includeClassHierarchy?: boolean;
+}
+
+/**
+ * Options for Store-based materialize operations.
+ *
+ * Extends `MaterializeOptions` with a named-graph IRI for inferred triples.
+ */
+export interface MaterializeStoreOptions extends MaterializeOptions {
+  /**
+   * Named graph IRI where inferred triples are written.
+   *
+   * Defaults to `INFERRED_GRAPH_IRI` (`"urn:konclude:inferred"`).
+   * The graph is cleared before each call; do not store ontology triples here.
+   */
+  inferredGraph?: string;
+}
+
+/**
+ * Options for Store-based classifyProperties operations.
+ */
+export interface ClassifyPropertiesStoreOptions {
+  /**
+   * Named graph IRI where inferred property triples are written.
    *
    * Defaults to `INFERRED_GRAPH_IRI` (`"urn:konclude:inferred"`).
    * The graph is cleared before each call; do not store ontology triples here.

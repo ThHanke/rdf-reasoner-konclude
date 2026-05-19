@@ -14,6 +14,7 @@ export interface KoncludeReasonerInstance {
   consistency(): boolean;
   processorCount(): number;
   buildInferredTripleBuffer(): number;
+  buildPropertyTripleBuffer(): number;
   getInferredTripleBufferPtr(): number;
   reset(): void;
   /** Release Embind-managed C++ memory. Must be called when done. */

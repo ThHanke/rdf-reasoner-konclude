@@ -150,6 +150,22 @@ export async function handleMessage(
         self.postMessage(emptyResponse, [empty]);
         return;
       }
+      case "getPropertyTripleBuffer": {
+        const len = reasoner.buildPropertyTripleBuffer();
+        if (len > 0) {
+          const ptr = reasoner.getInferredTripleBufferPtr();
+          const plain = mod.HEAPU8.slice(ptr, ptr + len);
+          const response: WorkerResponse = { id, result: plain.buffer };
+          self.postMessage(response, [plain.buffer]);
+          return;
+        }
+        // Empty result — 8-byte combined buffer: [strTableLen=4][count=0]
+        const empty = new ArrayBuffer(8);
+        new DataView(empty).setUint32(0, 4, true);
+        const emptyResponse: WorkerResponse = { id, result: empty };
+        self.postMessage(emptyResponse, [empty]);
+        return;
+      }
       default: {
         const response: WorkerResponse = {
           id,

@@ -149,6 +149,8 @@ function autoRespond(inferredQuads: Quad[] = []): void {
     const req = msg as { id: number; method: string };
     if (req.method === "loadTripleBuffer") {
       simulateWorkerMessage({ id: req.id, result: true });
+    } else if (req.method === "classification") {
+      simulateWorkerMessage({ id: req.id, result: true });
     } else if (req.method === "realization") {
       simulateWorkerMessage({ id: req.id, result: true });
     } else if (req.method === "getInferredTripleBuffer") {
@@ -202,7 +204,7 @@ describe("RdfReasoner", () => {
   // -------------------------------------------------------------------------
 
   describe("reason()", () => {
-    it("happy path: reason() calls loadTripleBuffer → realization → getInferredTripleBuffer and returns Quad[]", async () => {
+    it("happy path: reason() calls loadTripleBuffer → classification → getInferredTripleBuffer and returns Quad[]", async () => {
       const reasoner = await makeReadyReasoner();
 
       const A = namedNode("http://example.org/A");
@@ -224,7 +226,7 @@ describe("RdfReasoner", () => {
       const calls = mocks.workerPostMessage.mock.calls.map(
         (c) => (c[0] as { method: string }).method,
       );
-      expect(calls).toEqual(["loadTripleBuffer", "realization", "getInferredTripleBuffer"]);
+      expect(calls).toEqual(["loadTripleBuffer", "classification", "getInferredTripleBuffer"]);
 
       // Result should contain A subClassOf C
       expect(resultQuads).toHaveLength(1);
@@ -258,7 +260,7 @@ describe("RdfReasoner", () => {
         if (req.method === "loadTripleBuffer") {
           strEntries = decodeStrTableEntries(req.args[1] as ArrayBuffer);
           simulateWorkerMessage({ id: req.id, result: true });
-        } else if (req.method === "realization") {
+        } else if (req.method === "classification") {
           simulateWorkerMessage({ id: req.id, result: true });
         } else if (req.method === "getInferredTripleBuffer") {
           simulateWorkerMessage({ id: req.id, result: buildCombinedBuffer([]) });
@@ -326,6 +328,11 @@ describe("RdfReasoner", () => {
       const result = await reasoner.reason([], { mode: "full" });
       expect(result).toHaveLength(1);
       expect(result[0].subject.value).toBe("http://example.org/A");
+
+      const methods = mocks.workerPostMessage.mock.calls.map(
+        (c) => (c[0] as { method: string }).method,
+      );
+      expect(methods).toEqual(["loadTripleBuffer", "realization", "getInferredTripleBuffer"]);
     });
   });
 
@@ -346,7 +353,7 @@ describe("RdfReasoner", () => {
       const methods = mocks.workerPostMessage.mock.calls.map(
         (c) => (c[0] as { method: string }).method,
       );
-      expect(methods).toEqual(["loadTripleBuffer", "realization", "getInferredTripleBuffer"]);
+      expect(methods).toEqual(["loadTripleBuffer", "classification", "getInferredTripleBuffer"]);
     });
   });
 
