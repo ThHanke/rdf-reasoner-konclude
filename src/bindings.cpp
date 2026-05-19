@@ -12,6 +12,7 @@ EMSCRIPTEN_BINDINGS(konclude) {
         .function("consistency",         &KoncludeReasoner::consistency)
         .function("processorCount",      &KoncludeReasoner::processorCount)
         .function("buildInferredTripleBuffer",   &KoncludeReasoner::buildInferredTripleBuffer)
+        .function("buildPropertyTripleBuffer",   &KoncludeReasoner::buildPropertyTripleBuffer)
         .function("getInferredTripleBufferPtr",  &KoncludeReasoner::getInferredTripleBufferPtr)
         .function("reset",                       &KoncludeReasoner::reset);
 }

@@ -37,6 +37,7 @@ public:
     // getInferredTripleBufferPtr() returns the raw pointer into the internal
     // buffer — valid until the next call to loadTripleBuffer / reset.
     int buildInferredTripleBuffer();
+    int buildPropertyTripleBuffer();
     int getInferredTripleBufferPtr();
 
     void reset();
