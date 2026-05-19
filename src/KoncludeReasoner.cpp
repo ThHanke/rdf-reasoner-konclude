@@ -1117,3 +1117,137 @@ int KoncludeReasoner::buildInferredTripleBuffer() {
 int KoncludeReasoner::getInferredTripleBufferPtr() {
     return mImpl->mResultBufferPtr;
 }
+
+// buildPropertyTripleBuffer ───────────────────────────────────────────────────
+// Walks object-property and data-property hierarchies and emits
+// rdfs:subPropertyOf triples into mResultBuffer using the same binary wire
+// format as buildInferredTripleBuffer().
+
+int KoncludeReasoner::buildPropertyTripleBuffer() {
+    if (!mImpl->mClassified) {
+        return 0;
+    }
+
+    InternTable intern;
+    std::vector<uint32_t> tripleIds;
+    std::unordered_set<std::tuple<uint32_t,uint32_t,uint32_t>, TupleHash3> emittedTriples;
+
+    auto emitTriple = [&](uint32_t s, uint32_t p, uint32_t o) {
+        auto key = std::make_tuple(s, p, o);
+        if (emittedTriples.insert(key).second) {
+            tripleIds.push_back(s);
+            tripleIds.push_back(p);
+            tripleIds.push_back(o);
+        }
+    };
+
+    static const std::string rdfsSubPropertyOf =
+        "http://www.w3.org/2000/01/rdf-schema#subPropertyOf";
+    uint32_t pSubProp = intern.intern(rdfsSubPropertyOf);
+
+    CClassification* classif = mImpl->mOntology->getClassification();
+    if (classif) {
+        using Konclude::Reasoner::Classification::CPropertyRoleClassification;
+        using Konclude::Reasoner::Taxonomy::CRolePropertiesHierarchy;
+        using Konclude::Reasoner::Taxonomy::CRolePropertiesHierarchyNode;
+
+        // Lambda to walk one property hierarchy (object or data).
+        auto walkHierarchy = [&](CPropertyRoleClassification* roleClassif) {
+            if (!roleClassif || !roleClassif->hasRolePropertiesHierarchy()) return;
+            CRolePropertiesHierarchy* hierarchy = roleClassif->getRolePropertiesHierarchy();
+            if (!hierarchy) return;
+
+            CRolePropertiesHierarchyNode* topNode    = hierarchy->getTopHierarchyNode();
+            CRolePropertiesHierarchyNode* bottomNode = hierarchy->getBottomHierarchyNode();
+            if (!topNode) return;
+
+            // First pass: BFS to collect all nodes and their IRIs.
+            std::unordered_map<CRolePropertiesHierarchyNode*, std::vector<std::string>> nodeToIris;
+            QList<CRolePropertiesHierarchyNode*> queue;
+            QSet<CRolePropertiesHierarchyNode*> visited;
+            queue.append(topNode);
+            visited.insert(topNode);
+            while (!queue.isEmpty()) {
+                CRolePropertiesHierarchyNode* node = queue.takeFirst();
+                QStringList irisQ = node->getEquivalentRoleStringList(false);
+                for (const QString& iriQ : irisQ) {
+                    if (!iriQ.empty()) {
+                        nodeToIris[node].push_back(std::string(iriQ));
+                    }
+                }
+                QSet<CRolePropertiesHierarchyNode*>* children = node->getChildNodeSet();
+                if (children) {
+                    for (CRolePropertiesHierarchyNode* child : *children) {
+                        if (!visited.contains(child)) {
+                            visited.insert(child);
+                            queue.append(child);
+                        }
+                    }
+                }
+            }
+
+            // Second pass: emit rdfs:subPropertyOf triples (Hasse diagram edges).
+            // Skip top and bottom nodes. Use lex-min IRI as representative.
+            for (auto& [node, iris] : nodeToIris) {
+                if (node == topNode || node == bottomNode) continue;
+                if (iris.empty()) continue;
+
+                std::string childRep = *std::min_element(iris.begin(), iris.end());
+
+                QSet<CRolePropertiesHierarchyNode*>* parents = node->getParentNodeSet();
+                if (!parents) continue;
+
+                for (CRolePropertiesHierarchyNode* parentNode : *parents) {
+                    if (nodeToIris.count(parentNode) == 0) continue;
+                    if (parentNode == bottomNode) continue;
+                    const std::vector<std::string>& parentIris = nodeToIris.at(parentNode);
+                    if (parentIris.empty()) continue;
+
+                    std::string parentRep = *std::min_element(parentIris.begin(), parentIris.end());
+                    emitTriple(intern.intern(childRep), pSubProp, intern.intern(parentRep));
+                }
+            }
+        };
+
+        walkHierarchy(classif->getObjectPropertyRoleClassification());
+        walkHierarchy(classif->getDataPropertyRoleClassification());
+    }
+
+    // ── Assemble combined buffer [strTableLen:u32][strTable][tripleBuffer] ────
+
+    std::vector<uint8_t> strTable = intern.build();
+    uint32_t strTableLen = static_cast<uint32_t>(strTable.size());
+
+    size_t totalLen = 4 + strTableLen + tripleIds.size() * 4;
+    mImpl->mResultBuffer.resize(totalLen);
+    uint8_t* p = mImpl->mResultBuffer.data();
+
+    // Write strTableLen as little-endian u32
+    p[0] = strTableLen & 0xff;
+    p[1] = (strTableLen >> 8) & 0xff;
+    p[2] = (strTableLen >> 16) & 0xff;
+    p[3] = (strTableLen >> 24) & 0xff;
+    p += 4;
+
+    // Write strTable
+    std::memcpy(p, strTable.data(), strTableLen);
+    p += strTableLen;
+
+    // Write triple IDs
+    for (uint32_t id : tripleIds) {
+        p[0] = id & 0xff;
+        p[1] = (id >> 8) & 0xff;
+        p[2] = (id >> 16) & 0xff;
+        p[3] = (id >> 24) & 0xff;
+        p += 4;
+    }
+
+    mImpl->mResultBufferPtr = reinterpret_cast<int>(mImpl->mResultBuffer.data());
+
+#ifdef WASM_VERBOSE_LOGGING
+    fprintf(stderr, "{info} KoncludeReasoner >> buildPropertyTripleBuffer: %zu triples, %zu bytes\n",
+        tripleIds.size() / 3, totalLen);
+#endif
+
+    return static_cast<int>(totalLen);
+}
