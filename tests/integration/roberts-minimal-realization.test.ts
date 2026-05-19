@@ -75,14 +75,14 @@ describe.skipIf(!wasmExists)(
 
       const allQuads = loadFixture("roberts-family.nt");
       const filtered = stripABox(allQuads, KEEP);
-      inferred = await reasoner.classify(filtered);
+      inferred = await reasoner.materialize(filtered, { includeClassHierarchy: true });
     }, 30000);
 
     afterAll(() => {
       reasoner?.terminate();
     });
 
-    it("classify() returns inferred quads without crashing", () => {
+    it("materialize() returns inferred quads without crashing", () => {
       expect(Array.isArray(inferred)).toBe(true);
       expect(inferred.length).toBeGreaterThan(0);
     });
