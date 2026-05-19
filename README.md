@@ -206,7 +206,7 @@ Benchmarked on an 8-core Linux host. Native = Konclude v0.7.0 Docker image; WASM
 | LUBM schema        | SHI          | 307      | 34 ms    | 207 ms         | 202 ms         | ~6×        |
 | GALEN              | SHIF         | 30 817   | 286 ms   | 968 ms         | 852 ms         | ~3.4×      |
 | Roberts family     | SROIQ        | 3 866    | 2 118 ms | 38 769 ms      | 37 903 ms      | ~18×       |
-| LUBM schema + data | SHI          | 100 850  | 1 017 ms | 1 672 ms       | —              | ~1.6×      |
+| LUBM schema + data | SHI          | 100 850  | 1 017 ms | 1 672 ms       | 1 965 ms       | ~1.6×      |
 
 ¹ Native pipeline (OWL 2 XML parse + classify/realize). Native uses `classification` for
 TBox-only ontologies and `realization` for ontologies with individuals (Roberts family,
@@ -217,8 +217,7 @@ fixed WASM startup cost (pthreads pool init) on a tiny 307-triple ontology.
 + decode. Input RDF is pre-parsed into quads before the timing window — NTriples/Turtle parsing
 is excluded, matching what your application pays after data is already loaded into a Store.
 Node.js 20 and Chromium 135 are within ~12% of each other on most ontologies; Roberts family
-(SROIQ with ABox realization) is effectively equal. LUBM schema + data not measured in browser
-(17 MB fixture).
+(SROIQ with ABox realization) is effectively equal.
 
 Run `npm run bench` to reproduce (requires a built WASM binary — see [Build from source](#build-from-source)).
 
