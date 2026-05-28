@@ -1,0 +1,36 @@
+<?xml version='1.0'?>
+<!DOCTYPE Ontology>
+<Ontology xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"
+          xml:base="http://example.org/reasoner-test"
+          xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+          xmlns="http://www.w3.org/2002/07/owl#"
+          xmlns:xml="http://www.w3.org/XML/1998/namespace"
+          xmlns:xsd="http://www.w3.org/2001/XMLSchema#"
+          ontologyIRI="http://example.org/reasoner-test/case2">
+ <Prefix name="" IRI="http://example.org/reasoner-test#"/>
+ <Prefix name="owl" IRI="http://www.w3.org/2002/07/owl#"/>
+ <Prefix name="rdf" IRI="http://www.w3.org/1999/02/22-rdf-syntax-ns#"/>
+ <Prefix name="rdfs" IRI="http://www.w3.org/2000/01/rdf-schema#"/>
+ <Prefix name="xsd" IRI="http://www.w3.org/2001/XMLSchema#"/>
+ <Declaration><Class IRI="#Machine"/></Declaration>
+ <Declaration><Class IRI="#Component"/></Declaration>
+ <Declaration><ObjectProperty IRI="#hasPart"/></Declaration>
+ <Declaration><NamedIndividual IRI="#widget"/></Declaration>
+ <DisjointClasses>
+  <Class IRI="#Component"/>
+  <Class IRI="#Machine"/>
+ </DisjointClasses>
+ <ObjectPropertyDomain>
+  <ObjectProperty IRI="#hasPart"/>
+  <Class IRI="#Machine"/>
+ </ObjectPropertyDomain>
+ <ObjectPropertyRange>
+  <ObjectProperty IRI="#hasPart"/>
+  <Class IRI="#Component"/>
+ </ObjectPropertyRange>
+ <ObjectPropertyAssertion>
+  <ObjectProperty IRI="#hasPart"/>
+  <NamedIndividual IRI="#widget"/>
+  <NamedIndividual IRI="#widget"/>
+ </ObjectPropertyAssertion>
+</Ontology>

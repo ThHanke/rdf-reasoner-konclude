@@ -1,0 +1,54 @@
+<?xml version='1.0'?>
+<!DOCTYPE Ontology>
+<Ontology xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"
+          xml:base="http://example.org/reasoner-test"
+          xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+          xmlns="http://www.w3.org/2002/07/owl#"
+          xmlns:xml="http://www.w3.org/XML/1998/namespace"
+          xmlns:xsd="http://www.w3.org/2001/XMLSchema#"
+          ontologyIRI="http://example.org/reasoner-test/case5">
+ <Prefix name="" IRI="http://example.org/reasoner-test#"/>
+ <Prefix name="owl" IRI="http://www.w3.org/2002/07/owl#"/>
+ <Prefix name="rdf" IRI="http://www.w3.org/1999/02/22-rdf-syntax-ns#"/>
+ <Prefix name="rdfs" IRI="http://www.w3.org/2000/01/rdf-schema#"/>
+ <Prefix name="xsd" IRI="http://www.w3.org/2001/XMLSchema#"/>
+ <Declaration><Class IRI="#Vehicle"/></Declaration>
+ <Declaration><Class IRI="#VIN"/></Declaration>
+ <Declaration><ObjectProperty IRI="#hasVIN"/></Declaration>
+ <Declaration><NamedIndividual IRI="#car1"/></Declaration>
+ <Declaration><NamedIndividual IRI="#vinA"/></Declaration>
+ <Declaration><NamedIndividual IRI="#vinB"/></Declaration>
+ <SubClassOf>
+  <Class IRI="#Vehicle"/>
+  <ObjectMaxCardinality cardinality="1">
+   <ObjectProperty IRI="#hasVIN"/>
+   <Class IRI="#VIN"/>
+  </ObjectMaxCardinality>
+ </SubClassOf>
+ <ClassAssertion>
+  <Class IRI="#Vehicle"/>
+  <NamedIndividual IRI="#car1"/>
+ </ClassAssertion>
+ <ClassAssertion>
+  <Class IRI="#VIN"/>
+  <NamedIndividual IRI="#vinA"/>
+ </ClassAssertion>
+ <ClassAssertion>
+  <Class IRI="#VIN"/>
+  <NamedIndividual IRI="#vinB"/>
+ </ClassAssertion>
+ <ObjectPropertyAssertion>
+  <ObjectProperty IRI="#hasVIN"/>
+  <NamedIndividual IRI="#car1"/>
+  <NamedIndividual IRI="#vinA"/>
+ </ObjectPropertyAssertion>
+ <ObjectPropertyAssertion>
+  <ObjectProperty IRI="#hasVIN"/>
+  <NamedIndividual IRI="#car1"/>
+  <NamedIndividual IRI="#vinB"/>
+ </ObjectPropertyAssertion>
+ <DifferentIndividuals>
+  <NamedIndividual IRI="#vinA"/>
+  <NamedIndividual IRI="#vinB"/>
+ </DifferentIndividuals>
+</Ontology>
