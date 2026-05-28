@@ -573,6 +573,160 @@ export class RdfReasoner {
     return result;
   }
 
+  // -------------------------------------------------------------------------
+  // isEntailed()
+  // -------------------------------------------------------------------------
+
+  private _opForPredicate(iri: string): "classify" | "materialize" | "classifyProperties" | null {
+    switch (iri) {
+      case "http://www.w3.org/2000/01/rdf-schema#subClassOf":
+      case "http://www.w3.org/2002/07/owl#equivalentClass":
+        return "classify";
+      case "http://www.w3.org/1999/02/22-rdf-syntax-ns#type":
+        return "materialize";
+      case "http://www.w3.org/2000/01/rdf-schema#subPropertyOf":
+        return "classifyProperties";
+      default:
+        return null;
+    }
+  }
+
+  private async _classifyInline(store: Store, fingerprint: string): Promise<void> {
+    if (this._classifyCache?.hash === fingerprint) return;
+    const ig = DataFactory.namedNode(INFERRED_GRAPH_IRI);
+    store.removeQuads(store.getQuads(null, null, null, ig));
+    const { tripleBuffer, strTableBuffer } = encodeToBuffers(store.getQuads(null, null, null, null));
+    await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
+    await this._call("classification", []);
+    const buf = (await this._call("getInferredTripleBuffer", [])) as ArrayBuffer;
+    for (const q of decodeBuffers(buf))
+      store.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, ig));
+    this._classifyCache = { hash: fingerprint, result: undefined as void };
+    this._materializeCache = null;           // cross-invalidate
+    this._classifyPropertiesCache = null;    // cross-invalidate
+  }
+
+  private async _materializeInline(store: Store, fingerprint: string): Promise<void> {
+    if (this._materializeCache?.hash === fingerprint) return;
+    const ig = DataFactory.namedNode(INFERRED_GRAPH_IRI);
+    store.removeQuads(store.getQuads(null, null, null, ig));
+    const { tripleBuffer, strTableBuffer } = encodeToBuffers(store.getQuads(null, null, null, null));
+    await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
+    await this._call("realization", []);
+    const buf = (await this._call("getInferredTripleBuffer", [])) as ArrayBuffer;
+    // Write ALL results (including subClassOf) so rdf:type AND subClassOf checks work
+    for (const q of decodeBuffers(buf))
+      store.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, ig));
+    this._materializeCache = { hash: fingerprint, result: undefined as void };
+    this._classifyCache = null;              // cross-invalidate
+    this._classifyPropertiesCache = null;    // cross-invalidate
+  }
+
+  private async _classifyPropertiesInline(store: Store, fingerprint: string): Promise<void> {
+    if (this._classifyPropertiesCache?.hash === fingerprint) return;
+    const ig = DataFactory.namedNode(INFERRED_GRAPH_IRI);
+    store.removeQuads(store.getQuads(null, null, null, ig));
+    const { tripleBuffer, strTableBuffer } = encodeToBuffers(store.getQuads(null, null, null, null));
+    await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
+    await this._call("classification", []);
+    const buf = (await this._call("getPropertyTripleBuffer", [])) as ArrayBuffer;
+    for (const q of decodeBuffers(buf))
+      store.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, ig));
+    this._classifyPropertiesCache = { hash: fingerprint, result: undefined as void };
+    this._classifyCache = null;              // cross-invalidate
+    this._materializeCache = null;           // cross-invalidate
+  }
+
+  /** Check whether a single axiom is entailed by the store's ontology. Returns
+   *  null for unsupported predicates (a warning is logged). Triggers reasoning
+   *  internally if the store has changed since the last call. */
+  isEntailed(store: Store, axiom: Quad): Promise<boolean | null>;
+  /** Check whether each axiom in a batch is entailed. Returns null for
+   *  individual unsupported predicates. Reasoning is triggered at most once
+   *  per required operation type. */
+  isEntailed(store: Store, axioms: Quad[]): Promise<(boolean | null)[]>;
+  isEntailed(
+    store: Store,
+    axiomOrAxioms: Quad | Quad[],
+  ): Promise<boolean | null> | Promise<(boolean | null)[]> {
+    const isBatch = Array.isArray(axiomOrAxioms);
+    const axioms: Quad[] = isBatch ? (axiomOrAxioms as Quad[]) : [axiomOrAxioms as Quad];
+
+    // Fast-path unsupported check for single axiom (no queue entry needed)
+    if (!isBatch) {
+      const op = this._opForPredicate((axiomOrAxioms as Quad).predicate.value);
+      if (op === null) {
+        console.warn(`isEntailed: unsupported predicate <${(axiomOrAxioms as Quad).predicate.value}>`);
+        return Promise.resolve(null);
+      }
+    }
+
+    const result = this._queue.then(async () => {
+      const ig = DataFactory.namedNode(INFERRED_GRAPH_IRI);
+      const fingerprint = computeStoreFingerprint(store.getQuads(null, null, null, null));
+
+      // Determine which operations are needed
+      const needsClassify = axioms.some(a => this._opForPredicate(a.predicate.value) === "classify");
+      const needsMaterialize = axioms.some(a => this._opForPredicate(a.predicate.value) === "materialize");
+      const needsClassifyProps = axioms.some(a => this._opForPredicate(a.predicate.value) === "classifyProperties");
+
+      // Run needed operations in order; each cross-invalidates others
+      // Check classify axioms immediately after classify runs (before materialize overwrites INFERRED_GRAPH_IRI)
+      const classifyResults = new Map<Quad, boolean>();
+      if (needsClassify) {
+        await this._classifyInline(store, fingerprint);
+        for (const a of axioms) {
+          if (this._opForPredicate(a.predicate.value) === "classify") {
+            classifyResults.set(a, store.has(DataFactory.quad(a.subject, a.predicate, a.object, ig)));
+          }
+        }
+      }
+
+      const materializeResults = new Map<Quad, boolean>();
+      if (needsMaterialize) {
+        await this._materializeInline(store, fingerprint);
+        for (const a of axioms) {
+          if (this._opForPredicate(a.predicate.value) === "materialize") {
+            materializeResults.set(a, store.has(DataFactory.quad(a.subject, a.predicate, a.object, ig)));
+          }
+        }
+      }
+
+      const classifyPropsResults = new Map<Quad, boolean>();
+      if (needsClassifyProps) {
+        await this._classifyPropertiesInline(store, fingerprint);
+        for (const a of axioms) {
+          if (this._opForPredicate(a.predicate.value) === "classifyProperties") {
+            classifyPropsResults.set(a, store.has(DataFactory.quad(a.subject, a.predicate, a.object, ig)));
+          }
+        }
+      }
+
+      // Assemble results
+      if (!isBatch) {
+        const axiom = axioms[0];
+        const op = this._opForPredicate(axiom.predicate.value);
+        if (op === "classify") return classifyResults.get(axiom) ?? false;
+        if (op === "materialize") return materializeResults.get(axiom) ?? false;
+        if (op === "classifyProperties") return classifyPropsResults.get(axiom) ?? false;
+        return null;
+      }
+
+      return axioms.map(a => {
+        const op = this._opForPredicate(a.predicate.value);
+        if (op === null) {
+          console.warn(`isEntailed: unsupported predicate <${a.predicate.value}>`);
+          return null;
+        }
+        if (op === "classify") return classifyResults.get(a) ?? false;
+        if (op === "materialize") return materializeResults.get(a) ?? false;
+        return classifyPropsResults.get(a) ?? false;
+      });
+    });
+    this._queue = result.then(() => {}, () => {});
+    return result as Promise<boolean | null> | Promise<(boolean | null)[]>;
+  }
+
   /** Terminate the underlying Worker and reject all pending calls. */
   terminate(): void {
     this.worker.terminate();
