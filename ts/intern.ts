@@ -1,5 +1,6 @@
 import type { Quad, Term } from "@rdfjs/types";
 import { DataFactory } from "n3";
+import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI } from "./types.js";
 
 export interface EncodedBuffers {
   tripleBuffer: ArrayBuffer;
@@ -192,4 +193,55 @@ export function encodeToBuffers(quads: Iterable<Quad>): EncodedBuffers {
   const strTableBuffer = table.buildStrTableBuffer();
 
   return { tripleBuffer, strTableBuffer };
+}
+
+/**
+ * Compute a stable content hash (djb2, hex) for a collection of quads,
+ * ignoring quads in the INFERRED_GRAPH_IRI and HYPOTHETICAL_IRI graphs.
+ *
+ * The fingerprint is order-independent: quads are serialized to N-Triples
+ * canonical strings, sorted, concatenated, then hashed with djb2.
+ */
+export function computeStoreFingerprint(quads: Quad[]): string {
+  const strings: string[] = [];
+  for (const q of quads) {
+    const g = q.graph.value;
+    if (g === INFERRED_GRAPH_IRI || g === HYPOTHETICAL_IRI) continue;
+    strings.push(quadToNTriples(q));
+  }
+  strings.sort();
+  const combined = strings.join("");
+
+  // djb2 over the combined string, unsigned 32-bit arithmetic
+  let hash = 5381;
+  for (let i = 0; i < combined.length; i++) {
+    hash = (((hash << 5) + hash) ^ combined.charCodeAt(i)) >>> 0;
+  }
+
+  return hash.toString(16).padStart(8, "0");
+}
+
+function termToNTriples(term: Quad["subject"] | Quad["predicate"] | Quad["object"]): string {
+  switch (term.termType) {
+    case "NamedNode":
+      return `<${term.value}>`;
+    case "BlankNode":
+      return `_:${term.value}`;
+    case "Literal": {
+      const escaped = term.value
+        .replace(/\\/g, "\\\\")
+        .replace(/"/g, '\\"')
+        .replace(/\n/g, "\\n")
+        .replace(/\r/g, "\\r");
+      if (term.language) return `"${escaped}"@${term.language}`;
+      if (term.datatype?.value) return `"${escaped}"^^<${term.datatype.value}>`;
+      return `"${escaped}"`;
+    }
+    default:
+      return `<>`;
+  }
+}
+
+function quadToNTriples(q: Quad): string {
+  return `${termToNTriples(q.subject)} ${termToNTriples(q.predicate)} ${termToNTriples(q.object)} .`;
 }

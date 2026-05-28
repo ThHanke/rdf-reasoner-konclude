@@ -15,11 +15,11 @@
 
 import type { Quad } from "@rdfjs/types";
 import { Store, DataFactory } from "n3";
-import { encodeToBuffers, decodeBuffers } from "./intern.js";
+import { encodeToBuffers, decodeBuffers, computeStoreFingerprint } from "./intern.js";
 
-export type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions } from "./types.js";
-export { INFERRED_GRAPH_IRI } from "./types.js";
-import type { ReasoningOptions, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions } from "./types.js";
+export type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta } from "./types.js";
+export { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI } from "./types.js";
+import type { ReasoningOptions, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta } from "./types.js";
 import { INFERRED_GRAPH_IRI } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -73,6 +73,13 @@ export class RdfReasoner {
    * loadTripleBuffer → realization → getInferredTripleBuffer sequences.
    */
   private _queue: Promise<void> = Promise.resolve();
+
+  // Per-operation fingerprint caches. Each slot stores the last input hash and
+  // result so that identical consecutive calls skip the Worker round-trip.
+  private _classifyCache: { hash: string; result: void } | null = null;
+  private _materializeCache: { hash: string; result: void } | null = null;
+  private _classifyPropertiesCache: { hash: string; result: void } | null = null;
+  private _consistencyCache: { hash: string; result: boolean } | null = null;
 
   constructor() {
     this.worker = new Worker(new URL("./worker.js", import.meta.url), {
@@ -188,7 +195,13 @@ export class RdfReasoner {
   }
 
   private _reasonOnStore(store: Store, opts?: StoreReasoningOptions): Promise<void> {
+    const fingerprint = computeStoreFingerprint(store.getQuads(null, null, null, null));
     const result = this._queue.then(async () => {
+      // Cache hit: same store content as last classify call
+      if (this._classifyCache !== null && this._classifyCache.hash === fingerprint) {
+        return;
+      }
+
       const inferredGraphNode = DataFactory.namedNode(
         opts?.inferredGraph ?? INFERRED_GRAPH_IRI,
       );
@@ -208,6 +221,8 @@ export class RdfReasoner {
           DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode),
         );
       }
+
+      this._classifyCache = { hash: fingerprint, result: undefined as void };
     });
     this._queue = result.then(
       () => {},
@@ -288,14 +303,30 @@ export class RdfReasoner {
    */
   checkConsistency(quads: Iterable<Quad>): Promise<boolean>;
   checkConsistency(input: Store | Iterable<Quad>): Promise<boolean> {
-    const quads = input instanceof Store
-      ? input.getQuads(null, null, null, null)
-      : input;
+    const isStore = input instanceof Store;
+    // Compute fingerprint before entering the queue (snapshot of current store state)
+    const fingerprint = isStore
+      ? computeStoreFingerprint((input as Store).getQuads(null, null, null, null))
+      : null;
+    const quads = isStore
+      ? (input as Store).getQuads(null, null, null, null)
+      : input as Iterable<Quad>;
     const result = this._queue.then(async () => {
+      // Cache hit: only available for Store-based calls
+      if (fingerprint !== null && this._consistencyCache !== null && this._consistencyCache.hash === fingerprint) {
+        return this._consistencyCache.result;
+      }
+
       const { tripleBuffer, strTableBuffer } = encodeToBuffers(quads);
       await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
       await this._call("classification", []);
-      return (await this._call("consistency", [])) as boolean;
+      const consistent = (await this._call("consistency", [])) as boolean;
+
+      if (fingerprint !== null) {
+        this._consistencyCache = { hash: fingerprint, result: consistent };
+      }
+
+      return consistent;
     });
     this._queue = result.then(
       () => {},
@@ -312,7 +343,11 @@ export class RdfReasoner {
    *  written into `opts.inferredGraph` (default `INFERRED_GRAPH_IRI`). The
    *  graph is cleared before each call. When `opts.includeClassHierarchy` is
    *  `true`, rdfs:subClassOf and owl:equivalentClass triples are also included.
-   *  Concurrent calls are serialized. */
+   *  Concurrent calls are serialized.
+   *
+   *  Pass `{ returnDelta: true }` to receive `{ delta: InferenceDelta }` with the
+   *  quads added and removed compared to the previous inferred state. */
+  materialize(store: Store, opts: MaterializeStoreOptions & { returnDelta: true }): Promise<{ delta: InferenceDelta }>;
   materialize(store: Store, opts?: MaterializeStoreOptions): Promise<void>;
   /**
    * Materialize ABox entailments (rdf:type assertions) for the given quads.
@@ -331,18 +366,39 @@ export class RdfReasoner {
   materialize(
     input: Store | Iterable<Quad>,
     opts?: MaterializeStoreOptions | MaterializeOptions,
-  ): Promise<void> | Promise<Quad[]> {
+  ): Promise<void> | Promise<{ delta: InferenceDelta }> | Promise<Quad[]> {
     if (input instanceof Store) {
       return this._materializeOnStore(input, opts as MaterializeStoreOptions | undefined);
     }
     return this._materializeOnQuads(input as Iterable<Quad>, opts as MaterializeOptions | undefined);
   }
 
-  private _materializeOnStore(store: Store, opts?: MaterializeStoreOptions): Promise<void> {
+  private _materializeOnStore(store: Store, opts?: MaterializeStoreOptions): Promise<void> | Promise<{ delta: InferenceDelta }> {
+    const fingerprint = computeStoreFingerprint(store.getQuads(null, null, null, null));
+    const returnDelta = opts?.returnDelta === true;
     const result = this._queue.then(async () => {
       const inferredGraphNode = DataFactory.namedNode(
         opts?.inferredGraph ?? INFERRED_GRAPH_IRI,
       );
+
+      // Cache hit: same store content as last materialize call
+      if (this._materializeCache !== null && this._materializeCache.hash === fingerprint) {
+        if (returnDelta) {
+          return { delta: { added: [], removed: [] } as InferenceDelta };
+        }
+        return;
+      }
+
+      // Capture "before" snapshot of current inferred quads for delta computation.
+      // Must happen BEFORE removeQuads.
+      const beforeSet = new Map<string, Quad>();
+      if (returnDelta) {
+        for (const q of store.getQuads(null, null, null, inferredGraphNode)) {
+          const key = `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`;
+          beforeSet.set(key, q);
+        }
+      }
+
       store.removeQuads(store.getQuads(null, null, null, inferredGraphNode));
 
       const { tripleBuffer, strTableBuffer } = encodeToBuffers(store.getQuads(null, null, null, null));
@@ -366,12 +422,32 @@ export class RdfReasoner {
           DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode),
         );
       }
+
+      this._materializeCache = { hash: fingerprint, result: undefined as void };
+
+      if (returnDelta) {
+        // Build after set from what was just written
+        const afterSet = new Map<string, Quad>();
+        for (const q of inferredQuads) {
+          const key = `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`;
+          afterSet.set(key, q);
+        }
+        const added: Quad[] = [];
+        const removed: Quad[] = [];
+        for (const [key, q] of afterSet) {
+          if (!beforeSet.has(key)) added.push(q);
+        }
+        for (const [key, q] of beforeSet) {
+          if (!afterSet.has(key)) removed.push(q);
+        }
+        return { delta: { added, removed } };
+      }
     });
     this._queue = result.then(
       () => {},
       () => {},
     );
-    return result;
+    return result as Promise<void> | Promise<{ delta: InferenceDelta }>;
   }
 
   private _materializeOnQuads(quads: Iterable<Quad>, opts?: MaterializeOptions): Promise<Quad[]> {
@@ -431,7 +507,13 @@ export class RdfReasoner {
   }
 
   private _classifyPropertiesOnStore(store: Store, opts?: ClassifyPropertiesStoreOptions): Promise<void> {
+    const fingerprint = computeStoreFingerprint(store.getQuads(null, null, null, null));
     const result = this._queue.then(async () => {
+      // Cache hit: same store content as last classifyProperties call
+      if (this._classifyPropertiesCache !== null && this._classifyPropertiesCache.hash === fingerprint) {
+        return;
+      }
+
       const inferredGraphNode = DataFactory.namedNode(
         opts?.inferredGraph ?? INFERRED_GRAPH_IRI,
       );
@@ -450,6 +532,8 @@ export class RdfReasoner {
           DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode),
         );
       }
+
+      this._classifyPropertiesCache = { hash: fingerprint, result: undefined as void };
     });
     this._queue = result.then(
       () => {},
