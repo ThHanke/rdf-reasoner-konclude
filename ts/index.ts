@@ -17,9 +17,9 @@ import type { Quad } from "@rdfjs/types";
 import { Store, DataFactory } from "n3";
 import { encodeToBuffers, decodeBuffers, computeStoreFingerprint } from "./intern.js";
 
-export type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions } from "./types.js";
+export type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions } from "./types.js";
 export { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI } from "./types.js";
-import type { ReasoningOptions, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions } from "./types.js";
+import type { ReasoningOptions, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions } from "./types.js";
 import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -51,6 +51,22 @@ type WorkerInboundMessage =
   | WorkerReadyMessage
   | WorkerInitErrorMessage
   | WorkerResponse;
+
+// ---------------------------------------------------------------------------
+// OWL/RDF predicate IRIs used by explain
+// ---------------------------------------------------------------------------
+
+const RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+const RDFS_SUB_CLASS_OF = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
+const RDFS_SUB_PROPERTY_OF = "http://www.w3.org/2000/01/rdf-schema#subPropertyOf";
+const OWL_EQUIVALENT_CLASS = "http://www.w3.org/2002/07/owl#equivalentClass";
+const OWL_CLASS = "http://www.w3.org/2002/07/owl#Class";
+const OWL_OBJECT_PROPERTY = "http://www.w3.org/2002/07/owl#ObjectProperty";
+const OWL_DATATYPE_PROPERTY = "http://www.w3.org/2002/07/owl#DatatypeProperty";
+const OWL_ANNOTATION_PROPERTY = "http://www.w3.org/2002/07/owl#AnnotationProperty";
+const RDFS_CLASS = "http://www.w3.org/2000/01/rdf-schema#Class";
+const OWL_THING = "http://www.w3.org/2002/07/owl#Thing";
+const OWL_NOTHING = "http://www.w3.org/2002/07/owl#Nothing";
 
 // ---------------------------------------------------------------------------
 // RdfReasoner
@@ -818,6 +834,368 @@ export class RdfReasoner {
       this._consistencyCache = null;
 
       return { added, removed };
+    });
+    this._queue = result.then(() => {}, () => {});
+    return result;
+  }
+
+  // -------------------------------------------------------------------------
+  // _callDirect (safe for use inside _queue body)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Identical to _call. Named separately to mark it safe for use inside a
+   * _queue.then() body (no queue gating — callers must already hold the slot).
+   * Calling the public methods (classify, materialize, etc.) from inside a
+   * _queue body would deadlock.
+   */
+  private _callDirect(method: string, args: unknown[], transfer?: Transferable[]): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+      const id = this.nextId++;
+      this.pending.set(id, { resolve, reject });
+      const request: WorkerRequest = { id, method, args };
+      if (transfer && transfer.length > 0) {
+        this.worker.postMessage(request, transfer);
+      } else {
+        this.worker.postMessage(request);
+      }
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // explain helpers
+  // -------------------------------------------------------------------------
+
+  private _isBuiltInDeclaration(q: Quad): boolean {
+    if (q.predicate.value !== RDF_TYPE) return false;
+    const obj = q.object.value;
+    return (
+      obj === OWL_CLASS ||
+      obj === OWL_OBJECT_PROPERTY ||
+      obj === OWL_DATATYPE_PROPERTY ||
+      obj === OWL_ANNOTATION_PROPERTY ||
+      obj === RDFS_CLASS
+    );
+  }
+
+  private _opForAxiom(predicateIri: string): {
+    op: "classification" | "realization";
+    bufferMethod: "getInferredTripleBuffer" | "getPropertyTripleBuffer";
+  } | null {
+    switch (predicateIri) {
+      case RDFS_SUB_CLASS_OF:
+      case OWL_EQUIVALENT_CLASS:
+        return { op: "classification", bufferMethod: "getInferredTripleBuffer" };
+      case RDF_TYPE:
+        return { op: "realization", bufferMethod: "getInferredTripleBuffer" };
+      case RDFS_SUB_PROPERTY_OF:
+        return { op: "classification", bufferMethod: "getPropertyTripleBuffer" };
+      default:
+        return null;
+    }
+  }
+
+  private async _checkEntailmentDirect(
+    candidates: Quad[],
+    axiom: Quad,
+    opInfo: { op: "classification" | "realization"; bufferMethod: "getInferredTripleBuffer" | "getPropertyTripleBuffer" },
+  ): Promise<boolean> {
+    const { tripleBuffer, strTableBuffer } = encodeToBuffers(candidates);
+    await this._callDirect("loadTripleBuffer", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
+    await this._callDirect(opInfo.op, []);
+    const buf = (await this._callDirect(opInfo.bufferMethod, [])) as ArrayBuffer;
+    const quads = decodeBuffers(buf);
+    return quads.some(
+      q => q.subject.value === axiom.subject.value &&
+           q.predicate.value === axiom.predicate.value &&
+           q.object.value === axiom.object.value,
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // explain()
+  // -------------------------------------------------------------------------
+
+  /** Compute minimal justifications for an axiom using the BlackBox algorithm.
+   *
+   * Returns a list of minimal subsets of the store's base quads, each of which
+   * alone entails the axiom. Returns [] if the axiom is not entailed.
+   * Each inner Quad[] is a minimal justification.
+   *
+   * Throws for unsupported predicates (unlike isEntailed which returns null).
+   *
+   * All BlackBox sub-calls run inside this method's single _queue slot using
+   * _callDirect. Do NOT call the public methods classify/materialize from inside.
+   */
+  explain(store: Store, axiom: Quad, opts?: ExplainOptions): Promise<Quad[][]> {
+    const maxJustifications = opts?.maxJustifications ?? 1;
+
+    // Fast-path: maxJustifications === 0
+    if (maxJustifications === 0) {
+      return Promise.resolve([]);
+    }
+
+    const opInfo = this._opForAxiom(axiom.predicate.value);
+    if (opInfo === null) {
+      return Promise.reject(
+        new Error(`explain: unsupported predicate <${axiom.predicate.value}>`)
+      );
+    }
+
+    const result = this._queue.then(async () => {
+      // Build candidate set: base quads only (exclude inferred/hypothetical graphs),
+      // apply default declaration filter, apply user filter
+      const allCandidates = store.getQuads(null, null, null, null).filter(q => {
+        const g = q.graph.value;
+        if (g === INFERRED_GRAPH_IRI || g === HYPOTHETICAL_IRI) return false;
+        if (this._isBuiltInDeclaration(q)) return false;
+        if (opts?.axiomFilter && !opts.axiomFilter(q)) return false;
+        return true;
+      });
+
+      // Invalidate all caches (sub-calls use WASM directly)
+      this._classifyCache = null;
+      this._materializeCache = null;
+      this._classifyPropertiesCache = null;
+      this._consistencyCache = null;
+
+      // Fast-path: axiom not entailed at all
+      const entailedByAll = await this._checkEntailmentDirect(allCandidates, axiom, opInfo);
+      if (!entailedByAll) return [];
+
+      const justifications: Quad[][] = [];
+
+      // Find one MUS via binary-partition shrink + deletion pass
+      const findOneJustification = async (candidates: Quad[]): Promise<Quad[] | null> => {
+        let working = [...candidates];
+
+        // Shrink phase: binary partition
+        let changed = true;
+        while (changed && working.length > 1) {
+          changed = false;
+          const mid = Math.floor(working.length / 2);
+          const firstHalf = working.slice(0, mid);
+          const secondHalf = working.slice(mid);
+
+          const firstEntails = await this._checkEntailmentDirect(firstHalf, axiom, opInfo);
+          if (firstEntails) {
+            working = firstHalf;
+            changed = true;
+            continue;
+          }
+          const secondEntails = await this._checkEntailmentDirect(secondHalf, axiom, opInfo);
+          if (secondEntails) {
+            working = secondHalf;
+            changed = true;
+            continue;
+          }
+          // Neither half alone entails — need both; stop shrinking
+          break;
+        }
+
+        // Deletion pass: remove each axiom that is not individually required
+        let i = 0;
+        while (i < working.length) {
+          if (working.length === 1) break; // single axiom must stay
+          const without = [...working.slice(0, i), ...working.slice(i + 1)];
+          const stillEntails = await this._checkEntailmentDirect(without, axiom, opInfo);
+          if (stillEntails) {
+            working = without;
+            // don't increment i — next element shifted into position i
+          } else {
+            i++;
+          }
+        }
+
+        return working;
+      };
+
+      // First justification
+      const j1 = await findOneJustification(allCandidates);
+      if (!j1 || j1.length === 0) return [];
+      justifications.push(j1);
+
+      // HSDAG for additional justifications
+      if (maxJustifications > 1) {
+        const exploredExclusions = new Set<string>();
+        const queue: Set<string>[] = [new Set()];
+
+        while (queue.length > 0 && justifications.length < maxJustifications) {
+          const excluded = queue.shift()!;
+          const excludedKey = [...excluded].sort().join("|");
+          if (exploredExclusions.has(excludedKey)) continue;
+          exploredExclusions.add(excludedKey);
+
+          const lastJ = justifications[justifications.length - 1];
+          for (const axiomInJ of lastJ) {
+            const newExcluded = new Set(excluded);
+            const axKey = `${axiomInJ.subject.value}\0${axiomInJ.predicate.value}\0${axiomInJ.object.value}`;
+            newExcluded.add(axKey);
+
+            const newExcludedKey = [...newExcluded].sort().join("|");
+            if (exploredExclusions.has(newExcludedKey)) continue;
+
+            const reduced = allCandidates.filter(q => {
+              const k = `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`;
+              return !newExcluded.has(k);
+            });
+
+            const entailed = await this._checkEntailmentDirect(reduced, axiom, opInfo);
+            if (!entailed) continue;
+
+            const jNew = await findOneJustification(reduced);
+            if (jNew && jNew.length > 0) {
+              const jKey = jNew.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`).sort().join("|");
+              const alreadyFound = justifications.some(j => {
+                const k = j.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`).sort().join("|");
+                return k === jKey;
+              });
+              if (!alreadyFound) {
+                justifications.push(jNew);
+                if (justifications.length >= maxJustifications) break;
+              }
+              queue.push(newExcluded);
+            }
+          }
+        }
+      }
+
+      return justifications;
+    });
+    this._queue = result.then(() => {}, () => {});
+    return result;
+  }
+
+  // -------------------------------------------------------------------------
+  // explainInconsistency()
+  // -------------------------------------------------------------------------
+
+  /** Compute minimal inconsistent sub-ontologies (MIPS) for an inconsistent
+   *  ontology. Returns [] if the ontology is consistent.
+   *
+   * Equivalent to explain(store, owl:Thing rdfs:subClassOf owl:Nothing, opts).
+   * Uses a fast-path consistency check (no Worker call) before entering
+   * the BlackBox loop.
+   */
+  explainInconsistency(store: Store, opts?: ExplainOptions): Promise<Quad[][]> {
+    const result = this._queue.then(async () => {
+      // Fast-path: check consistency using existing cache or direct Worker call
+      const allBase = store.getQuads(null, null, null, null).filter(q => {
+        const g = q.graph.value;
+        return g !== INFERRED_GRAPH_IRI && g !== HYPOTHETICAL_IRI;
+      });
+
+      const fingerprint = computeStoreFingerprint(store.getQuads(null, null, null, null));
+      let consistent: boolean;
+      if (this._consistencyCache?.hash === fingerprint) {
+        consistent = this._consistencyCache.result;
+      } else {
+        const { tripleBuffer, strTableBuffer } = encodeToBuffers(allBase);
+        await this._callDirect("loadTripleBuffer", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
+        await this._callDirect("classification", []);
+        consistent = (await this._callDirect("consistency", [])) as boolean;
+        this._consistencyCache = { hash: fingerprint, result: consistent };
+        this._classifyCache = null;
+        this._materializeCache = null;
+        this._classifyPropertiesCache = null;
+      }
+
+      if (consistent) return [];
+
+      // Inconsistency anchor: owl:Thing rdfs:subClassOf owl:Nothing
+      const inconsistencyAxiom = DataFactory.quad(
+        DataFactory.namedNode(OWL_THING),
+        DataFactory.namedNode(RDFS_SUB_CLASS_OF),
+        DataFactory.namedNode(OWL_NOTHING),
+      );
+
+      const maxJustifications = opts?.maxJustifications ?? 1;
+      if (maxJustifications === 0) return [];
+
+      const opInfo = this._opForAxiom(RDFS_SUB_CLASS_OF)!; // always "classification"
+
+      const allCandidates = store.getQuads(null, null, null, null).filter(q => {
+        const g = q.graph.value;
+        if (g === INFERRED_GRAPH_IRI || g === HYPOTHETICAL_IRI) return false;
+        if (this._isBuiltInDeclaration(q)) return false;
+        if (opts?.axiomFilter && !opts.axiomFilter(q)) return false;
+        return true;
+      });
+
+      // Invalidate caches for sub-calls
+      this._classifyCache = null;
+      this._materializeCache = null;
+      this._classifyPropertiesCache = null;
+      this._consistencyCache = null;
+
+      // Verify inconsistency anchor is entailed
+      const entailed = await this._checkEntailmentDirect(allCandidates, inconsistencyAxiom, opInfo);
+      if (!entailed) return [];
+
+      const justifications: Quad[][] = [];
+
+      const findOneJustification = async (candidates: Quad[]): Promise<Quad[] | null> => {
+        let working = [...candidates];
+        let changed = true;
+        while (changed && working.length > 1) {
+          changed = false;
+          const mid = Math.floor(working.length / 2);
+          const firstHalf = working.slice(0, mid);
+          const secondHalf = working.slice(mid);
+          if (await this._checkEntailmentDirect(firstHalf, inconsistencyAxiom, opInfo)) {
+            working = firstHalf; changed = true; continue;
+          }
+          if (await this._checkEntailmentDirect(secondHalf, inconsistencyAxiom, opInfo)) {
+            working = secondHalf; changed = true; continue;
+          }
+          break;
+        }
+        let i = 0;
+        while (i < working.length) {
+          if (working.length === 1) break;
+          const without = [...working.slice(0, i), ...working.slice(i + 1)];
+          if (await this._checkEntailmentDirect(without, inconsistencyAxiom, opInfo)) {
+            working = without;
+          } else {
+            i++;
+          }
+        }
+        return working;
+      };
+
+      const j1 = await findOneJustification(allCandidates);
+      if (!j1 || j1.length === 0) return [];
+      justifications.push(j1);
+
+      if (maxJustifications > 1) {
+        const exploredExclusions = new Set<string>();
+        const queue: Set<string>[] = [new Set()];
+        while (queue.length > 0 && justifications.length < maxJustifications) {
+          const excluded = queue.shift()!;
+          const excludedKey = [...excluded].sort().join("|");
+          if (exploredExclusions.has(excludedKey)) continue;
+          exploredExclusions.add(excludedKey);
+          const lastJ = justifications[justifications.length - 1];
+          for (const axiomInJ of lastJ) {
+            const newExcluded = new Set(excluded);
+            newExcluded.add(`${axiomInJ.subject.value}\0${axiomInJ.predicate.value}\0${axiomInJ.object.value}`);
+            const newExcludedKey = [...newExcluded].sort().join("|");
+            if (exploredExclusions.has(newExcludedKey)) continue;
+            const reduced = allCandidates.filter(q => !newExcluded.has(`${q.subject.value}\0${q.predicate.value}\0${q.object.value}`));
+            if (!await this._checkEntailmentDirect(reduced, inconsistencyAxiom, opInfo)) continue;
+            const jNew = await findOneJustification(reduced);
+            if (!jNew || jNew.length === 0) continue;
+            const jKey = jNew.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`).sort().join("|");
+            if (!justifications.some(j => j.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`).sort().join("|") === jKey)) {
+              justifications.push(jNew);
+              if (justifications.length >= maxJustifications) break;
+            }
+            queue.push(newExcluded);
+          }
+        }
+      }
+
+      return justifications;
     });
     this._queue = result.then(() => {}, () => {});
     return result;
