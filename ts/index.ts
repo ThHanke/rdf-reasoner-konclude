@@ -195,6 +195,10 @@ export class RdfReasoner {
   }
 
   private _reasonOnStore(store: Store, opts?: StoreReasoningOptions): Promise<void> {
+    // Known limitation: fingerprint always covers all graphs, including any
+    // custom inferredGraph. If the caller uses a non-default inferredGraph,
+    // the cache may incorrectly report a hit when the inferred graph has
+    // changed between calls. Acceptable for the current use-cases.
     const fingerprint = computeStoreFingerprint(store.getQuads(null, null, null, null));
     const result = this._queue.then(async () => {
       // Cache hit: same store content as last classify call
@@ -374,6 +378,10 @@ export class RdfReasoner {
   }
 
   private _materializeOnStore(store: Store, opts?: MaterializeStoreOptions): Promise<void> | Promise<{ delta: InferenceDelta }> {
+    // Known limitation: fingerprint always covers all graphs, including any
+    // custom inferredGraph. If the caller uses a non-default inferredGraph,
+    // the cache may incorrectly report a hit when the inferred graph has
+    // changed between calls. Acceptable for the current use-cases.
     const fingerprint = computeStoreFingerprint(store.getQuads(null, null, null, null));
     const returnDelta = opts?.returnDelta === true;
     const result = this._queue.then(async () => {
@@ -426,11 +434,13 @@ export class RdfReasoner {
       this._materializeCache = { hash: fingerprint, result: undefined as void };
 
       if (returnDelta) {
-        // Build after set from what was just written
+        // Build after set from what was just written.
+        // Wrap each quad with inferredGraphNode so delta.added and delta.removed
+        // are both consistently in the inferred named graph.
         const afterSet = new Map<string, Quad>();
         for (const q of inferredQuads) {
           const key = `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`;
-          afterSet.set(key, q);
+          afterSet.set(key, DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode));
         }
         const added: Quad[] = [];
         const removed: Quad[] = [];
@@ -507,6 +517,10 @@ export class RdfReasoner {
   }
 
   private _classifyPropertiesOnStore(store: Store, opts?: ClassifyPropertiesStoreOptions): Promise<void> {
+    // Known limitation: fingerprint always covers all graphs, including any
+    // custom inferredGraph. If the caller uses a non-default inferredGraph,
+    // the cache may incorrectly report a hit when the inferred graph has
+    // changed between calls. Acceptable for the current use-cases.
     const fingerprint = computeStoreFingerprint(store.getQuads(null, null, null, null));
     const result = this._queue.then(async () => {
       // Cache hit: same store content as last classifyProperties call

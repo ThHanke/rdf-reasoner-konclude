@@ -531,7 +531,8 @@ describe("RdfReasoner — Store API", () => {
       expect(r1).toBe(true);
 
       // Second call — cache hit should return same result without Worker round-trip
-      await reasoner.checkConsistency(store);
+      const r2 = await reasoner.checkConsistency(store);
+      expect(r2).toBe(true);
 
       const loadCalls = mocks.workerPostMessage.mock.calls.filter(
         (c) => (c[0] as { method: string }).method === "loadTripleBuffer",
@@ -553,6 +554,41 @@ describe("RdfReasoner — Store API", () => {
         (c) => (c[0] as { method: string }).method === "loadTripleBuffer",
       );
       expect(loadCalls).toHaveLength(2);
+    });
+
+    /** Helper: set up mock for classifyProperties pipeline */
+    function mockClassifyPropertiesSequence(inferredQuads: Quad[]) {
+      const buf = buildCombinedBuffer(inferredQuads);
+      mocks.workerPostMessage.mockImplementation((msg: unknown) => {
+        const req = msg as { id: number; method: string };
+        if (req.method === "loadTripleBuffer") {
+          simulateWorkerMessage({ id: req.id, result: true });
+        } else if (req.method === "classification") {
+          simulateWorkerMessage({ id: req.id, result: true });
+        } else if (req.method === "getPropertyTripleBuffer") {
+          simulateWorkerMessage({ id: req.id, result: buf });
+        }
+      });
+    }
+
+    it("classifyProperties(store) called twice → Worker receives exactly one loadTripleBuffer (second is cache hit)", async () => {
+      const reasoner = await makeReadyReasoner();
+      const subPropertyOf = namedNode("http://www.w3.org/2000/01/rdf-schema#subPropertyOf");
+      const p1 = namedNode("http://example.org/p1");
+      const p2 = namedNode("http://example.org/p2");
+      const store = new Store([quad(A, subClassOf, B, defaultGraph())]);
+
+      mockClassifyPropertiesSequence([quad(p1, subPropertyOf, p2, defaultGraph())]);
+      await reasoner.classifyProperties(store);
+
+      // Second call with the same store content — should be a cache hit
+      mockClassifyPropertiesSequence([]);
+      await reasoner.classifyProperties(store);
+
+      const loadCalls = mocks.workerPostMessage.mock.calls.filter(
+        (c) => (c[0] as { method: string }).method === "loadTripleBuffer",
+      );
+      expect(loadCalls).toHaveLength(1);
     });
 
     it("materialize(store, { returnDelta: true }) first call → delta.added contains all inferred quads, delta.removed = []", async () => {
