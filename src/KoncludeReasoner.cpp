@@ -583,6 +583,7 @@ void KoncludeReasoner::loadTripleBuffer(int triplePtr, int tripleCount, int strT
 
     CConcreteOntologyRedlandTriplesDataExpressionMapper* mapper =
         new CConcreteOntologyRedlandTriplesDataExpressionMapper(builder);
+    mapper->setConfExtractSimpleABoxAssertions(true);
     mapper->mapTriples(mImpl->mOntology, mImpl->mOntology->getOntologyTriplesData());
     delete mapper;
 
