@@ -192,6 +192,47 @@ describe.skipIf(!wasmExists)("ABox realization integration", () => {
     ).toBe(true);
   });
 
+  // Regression: 3x materialize(ABOX) + classify(TBOX) → materialize(SAME_AS) returns 0
+  // owl:sameAs triples.  Root cause still under investigation (random-ID fix insufficient).
+  // it.fails documents the known-broken state; remove .fails when the root cause is fixed.
+  it.fails(
+    "regression — n=3 ABox materializations + classify → sameAs materialize returns correct output (BackendAssCache corruption; root cause TBD)",
+    async () => {
+      const fresh = new RdfReasoner();
+      await fresh.ready;
+      try {
+        const abox = parseNTriples(ABOX_NTRIPLES);
+        await fresh.materialize(abox);
+        await fresh.materialize(abox);
+        await fresh.materialize(abox);
+        const tbox = parseNTriples(TBOX_ONLY_NTRIPLES);
+        await fresh.classify(tbox);
+
+        const sameAsQuads = parseNTriples(SAME_AS_NTRIPLES);
+        const inferred = await fresh.materialize(sameAsQuads);
+
+        const sameAsTriples = inferred.filter((q) => q.predicate.value === OWL_SAME_AS);
+        expect(
+          sameAsTriples.length,
+          "at least one owl:sameAs triple must appear after n=3 prior ABox calls + classify",
+        ).toBeGreaterThan(0);
+
+        const aliceEve = sameAsTriples.some(
+          (q) => q.subject.value === EX("Alice") && q.object.value === EX("Eve"),
+        );
+        const eveAlice = sameAsTriples.some(
+          (q) => q.subject.value === EX("Eve") && q.object.value === EX("Alice"),
+        );
+        expect(
+          aliceEve || eveAlice,
+          "Alice owl:sameAs Eve (or Eve owl:sameAs Alice) must appear",
+        ).toBe(true);
+      } finally {
+        fresh.terminate();
+      }
+    },
+  );
+
   // owl:sameAs and data property tests use a fresh reasoner to avoid state
   // sensitivity from prior classify()+materialize() sequences in the shared instance.
   it("owl:sameAs pair appears in materialize() output", async () => {
