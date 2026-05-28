@@ -150,6 +150,65 @@ The default named graph where inferred triples are written by `reason(store)`.
 
 `reason(quads: Iterable<Quad>)` and `classify(quads)` / `checkConsistency(quads)` accept a raw `Iterable<Quad>` and return `Promise<Quad[]>` / `Promise<boolean>`. These overloads are deprecated — use the `Store`-based API instead.
 
+## OWL 2 DL coverage
+
+Konclude implements the full OWL 2 DL tableau (expressivity SROIQ(D)). The sections below
+document what has been verified to work, what is known not to work, and what the WASM port
+does not yet surface as output.
+
+### Consistency checking (`checkConsistency`)
+
+Violation detection verified against native Konclude v0.7.0 ground truth:
+
+| #   | Violation pattern                                   | Native         | WASM           | Status                  |
+| --- | --------------------------------------------------- | -------------- | -------------- | ----------------------- |
+| 1   | `owl:disjointWith` (direct)                         | inconsistent ✓ | inconsistent ✓ | **PARITY**              |
+| 2   | `owl:disjointWith` (via domain/range inference)     | inconsistent ✓ | inconsistent ✓ | **PARITY**              |
+| 3   | `owl:AsymmetricProperty` bidirectional assertion    | consistent ✗   | consistent ✗   | **UPSTREAM_LIMITATION** |
+| 4   | `owl:IrreflexiveProperty` self-reference            | consistent ✗   | consistent ✗   | **UPSTREAM_LIMITATION** |
+| 5   | `owl:maxQualifiedCardinality` + `owl:differentFrom` | inconsistent ✓ | inconsistent ✓ | **PARITY**              |
+| 6   | `owl:allValuesFrom` + `owl:disjointWith`            | inconsistent ✓ | inconsistent ✓ | **PARITY**              |
+
+**UPSTREAM_LIMITATION** means native Konclude v0.7.0 also misses the violation — this is not a
+WASM port defect. Cases 3 and 4 cannot be fixed in this package without upstream changes to the
+Konclude reasoning kernel.
+
+### Classification (`classify`)
+
+Verified working:
+
+- `rdfs:subClassOf` — transitive closure, with `owl:equivalentClass` folding
+- `owl:intersectionOf`, `owl:unionOf`, `owl:complementOf`
+- `owl:someValuesFrom`, `owl:allValuesFrom`
+- `owl:minCardinality`, `owl:maxCardinality`, `owl:exactCardinality`
+- `owl:minQualifiedCardinality`, `owl:maxQualifiedCardinality`, `owl:qualifiedCardinality`
+- `owl:ObjectProperty` with `rdfs:domain`, `rdfs:range`, `owl:inverseOf`
+- `owl:TransitiveProperty`, `owl:FunctionalProperty`, `owl:InverseFunctionalProperty`
+- `owl:ReflexiveProperty`, `owl:SymmetricProperty`
+- `owl:propertyChainAxiom`
+
+### ABox realization (`materialize`)
+
+`materialize(store)` infers `rdf:type` entailments for named individuals under the
+class hierarchy. Verified working on ontologies up to ~25 000 individuals (LUBM + data).
+
+Input ABox axioms accepted:
+
+- `rdf:type` assertions
+- Object property assertions (`owl:ObjectProperty`)
+- `owl:differentFrom` / `owl:AllDifferent`
+
+### Known output gaps
+
+These are computed by Konclude internally but not yet surfaced by the TypeScript API:
+
+| Feature                                   | Status                                    |
+| ----------------------------------------- | ----------------------------------------- |
+| `rdfs:subPropertyOf` (property hierarchy) | Available via `classifyProperties(store)` |
+| `owl:sameAs` entailments                  | Not emitted                               |
+| `owl:differentFrom` entailments           | Not emitted (accepted as input ✓)         |
+| Data property assertions                  | Not emitted                               |
+
 ## Browser deployment
 
 The WASM binary uses pthreads, which requires `SharedArrayBuffer`. Browsers
@@ -214,10 +273,11 @@ LUBM + data) — matching WASM's operation selection. LUBM schema ratio is domin
 fixed WASM startup cost (pthreads pool init) on a tiny 307-triple ontology.
 
 ² WASM timing covers binary buffer encode (Quads → buffer) + `loadTripleBuffer` + realization
-+ decode. Input RDF is pre-parsed into quads before the timing window — NTriples/Turtle parsing
-is excluded, matching what your application pays after data is already loaded into a Store.
-Node.js 20 and Chromium 135 are within ~12% of each other on most ontologies; Roberts family
-(SROIQ with ABox realization) is effectively equal.
+
+- decode. Input RDF is pre-parsed into quads before the timing window — NTriples/Turtle parsing
+  is excluded, matching what your application pays after data is already loaded into a Store.
+  Node.js 20 and Chromium 135 are within ~12% of each other on most ontologies; Roberts family
+  (SROIQ with ABox realization) is effectively equal.
 
 Run `npm run bench` to reproduce (requires a built WASM binary — see [Build from source](#build-from-source)).
 
