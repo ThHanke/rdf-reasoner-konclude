@@ -90,12 +90,37 @@ const TBOX_ONLY_NTRIPLES = `
 <http://example.org/Dog> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/Mammal> .
 `.trim();
 
+/**
+ * owl:sameAs fixture: two individuals declared sameAs.
+ * Class and type assertions ensure the saturation processes Alice and Eve
+ * deeply enough for the same-individual merging to be recorded in the
+ * BackendAssCache, which the same-realization reads.
+ */
+const SAME_AS_NTRIPLES = `
+<http://example.org/Person> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<http://example.org/Alice> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#NamedIndividual> .
+<http://example.org/Alice> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/Person> .
+<http://example.org/Eve> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#NamedIndividual> .
+<http://example.org/Eve> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/Person> .
+<http://example.org/Alice> <http://www.w3.org/2002/07/owl#sameAs> <http://example.org/Eve> .
+`.trim();
+
+/**
+ * Data property fixture: one individual with a typed literal assertion.
+ */
+const DATA_PROP_NTRIPLES = `
+<http://example.org/Alice> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#NamedIndividual> .
+<http://example.org/age> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<http://example.org/Alice> <http://example.org/age> "30"^^<http://www.w3.org/2001/XMLSchema#integer> .
+`.trim();
+
 // ---------------------------------------------------------------------------
 // IRIs used in assertions
 // ---------------------------------------------------------------------------
 
 const RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
 const RDFS_SUB_CLASS_OF = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
+const OWL_SAME_AS = "http://www.w3.org/2002/07/owl#sameAs";
 
 const EX = (local: string) => `http://example.org/${local}`;
 
@@ -165,5 +190,54 @@ describe.skipIf(!wasmExists)("ABox realization integration", () => {
       hasTriple(inferred, EX("Mammal"), RDFS_SUB_CLASS_OF, EX("Animal")),
       "Mammal rdfs:subClassOf Animal must appear in TBox-only run",
     ).toBe(true);
+  });
+
+  // owl:sameAs and data property tests use a fresh reasoner to avoid state
+  // sensitivity from prior classify()+materialize() sequences in the shared instance.
+  it("owl:sameAs pair appears in materialize() output", async () => {
+    const fresh = new RdfReasoner();
+    await fresh.ready;
+    try {
+      const quads = parseNTriples(SAME_AS_NTRIPLES);
+      const inferred = await fresh.materialize(quads);
+
+      const sameAsTriples = inferred.filter((q) => q.predicate.value === OWL_SAME_AS);
+      expect(sameAsTriples.length, "at least one owl:sameAs triple must appear").toBeGreaterThan(0);
+
+      const aliceEve = sameAsTriples.some(
+        (q) => q.subject.value === EX("Alice") && q.object.value === EX("Eve"),
+      );
+      const eveAlice = sameAsTriples.some(
+        (q) => q.subject.value === EX("Eve") && q.object.value === EX("Alice"),
+      );
+      expect(
+        aliceEve || eveAlice,
+        "Alice owl:sameAs Eve (or Eve owl:sameAs Alice) must appear",
+      ).toBe(true);
+    } finally {
+      fresh.terminate();
+    }
+  });
+
+  it("data property literal triple appears in materialize() output", async () => {
+    const fresh = new RdfReasoner();
+    await fresh.ready;
+    try {
+      const quads = parseNTriples(DATA_PROP_NTRIPLES);
+      const inferred = await fresh.materialize(quads);
+
+      expect(
+        hasTriple(inferred, EX("Alice"), EX("age"), "30"),
+        "Alice age 30 (data property assertion) must appear in output",
+      ).toBe(true);
+
+      const ageTriples = inferred.filter(
+        (q) => q.subject.value === EX("Alice") && q.predicate.value === EX("age"),
+      );
+      expect(ageTriples).toHaveLength(1);
+      expect(ageTriples[0].object.termType).toBe("Literal");
+    } finally {
+      fresh.terminate();
+    }
   });
 });
