@@ -227,6 +227,8 @@ export class RdfReasoner {
       }
 
       this._classifyCache = { hash: fingerprint, result: undefined as void };
+      this._materializeCache = null;
+      this._classifyPropertiesCache = null;
     });
     this._queue = result.then(
       () => {},
@@ -432,6 +434,8 @@ export class RdfReasoner {
       }
 
       this._materializeCache = { hash: fingerprint, result: undefined as void };
+      this._classifyCache = null;
+      this._classifyPropertiesCache = null;
 
       if (returnDelta) {
         // Build after set from what was just written.
@@ -548,6 +552,8 @@ export class RdfReasoner {
       }
 
       this._classifyPropertiesCache = { hash: fingerprint, result: undefined as void };
+      this._classifyCache = null;
+      this._materializeCache = null;
     });
     this._queue = result.then(
       () => {},
