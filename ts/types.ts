@@ -112,7 +112,7 @@ export interface WhatIfOptions {
   /** Quads to remove from the base ontology before reasoning. */
   removals?: Quad[];
   /** Named graph IRI where hypothetical inferences are written in the store.
-   *  Must not equal INFERRED_GRAPH_IRI (throws if equal). */
+   *  Must not equal INFERRED_GRAPH_IRI or HYPOTHETICAL_IRI (throws if equal). */
   outputGraph?: string;
 }
 

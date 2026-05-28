@@ -810,9 +810,12 @@ export class RdfReasoner {
         }
       }
 
-      // IMPORTANT: Do NOT touch INFERRED_GRAPH_IRI. Do NOT update any cache slots.
-      // whatIf runs the WASM but the result is hypothetical — the real store state
-      // is unchanged, so all caches remain valid.
+      // Invalidate all operation caches: WASM state now reflects hypothetical input,
+      // not the real store. Next real call must re-load.
+      this._classifyCache = null;
+      this._materializeCache = null;
+      this._classifyPropertiesCache = null;
+      this._consistencyCache = null;
 
       return { added, removed };
     });
