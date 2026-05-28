@@ -5,6 +5,7 @@
  * BGP reasoner cannot:
  *   - owl:equivalentClass with owl:intersectionOf
  *   - owl:equivalentClass with owl:minCardinality restrictions
+ *   - owl:someValuesFrom existential restrictions (TBox + ABox)
  *
  * Expected DL inferences (none of these appear in OWL-RL output):
  *   Father rdfs:subClassOf Male     (via equivalentClass: Father ≡ Male ⊓ Parent)
@@ -125,5 +126,95 @@ describe.skipIf(!wasmExists)("OWL 2 DL capabilities — classify()", () => {
       (q) => q.predicate.value === "http://www.w3.org/1999/02/22-rdf-syntax-ns#type",
     );
     expect(typeTriples).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// owl:someValuesFrom — existential restriction
+// ---------------------------------------------------------------------------
+
+/**
+ * Fixture:
+ *   Animal, Dog ⊑ Animal
+ *   DogOwner ≡ ∃hasAnimal.Dog     (someValuesFrom)
+ *   PetOwner ≡ ∃hasAnimal.Animal  (someValuesFrom)
+ *   Alice hasAnimal Fido, Fido rdf:type Dog
+ *
+ * Expected TBox:
+ *   DogOwner ⊑ PetOwner   (because Dog ⊑ Animal ⟹ ∃hasAnimal.Dog ⊑ ∃hasAnimal.Animal)
+ *
+ * Expected ABox (materialize):
+ *   Alice rdf:type DogOwner  (she has a hasAnimal value that is a Dog)
+ *   Alice rdf:type PetOwner  (via DogOwner ⊑ PetOwner)
+ */
+const SVF_TURTLE = `
+@prefix ex:   <http://example.org/svf#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+
+<http://example.org/svf> a owl:Ontology .
+
+ex:Animal a owl:Class .
+ex:Dog    a owl:Class ; rdfs:subClassOf ex:Animal .
+
+ex:hasAnimal a owl:ObjectProperty .
+
+# DogOwner ≡ ∃hasAnimal.Dog
+ex:DogOwner a owl:Class ;
+    owl:equivalentClass [ a owl:Restriction ; owl:onProperty ex:hasAnimal ; owl:someValuesFrom ex:Dog ] .
+
+# PetOwner ≡ ∃hasAnimal.Animal
+ex:PetOwner a owl:Class ;
+    owl:equivalentClass [ a owl:Restriction ; owl:onProperty ex:hasAnimal ; owl:someValuesFrom ex:Animal ] .
+
+# ABox
+ex:Fido  a owl:NamedIndividual, ex:Dog .
+ex:Alice a owl:NamedIndividual ;
+    ex:hasAnimal ex:Fido .
+`;
+
+const SVF  = (s: string) => `http://example.org/svf#${s}`;
+const RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+
+function hasType(quads: Quad[], ind: string, cls: string): boolean {
+  return quads.some((q) => q.subject.value === ind && q.predicate.value === RDF_TYPE && q.object.value === cls);
+}
+
+describe.skipIf(!wasmExists)("OWL 2 DL — owl:someValuesFrom", () => {
+  let reasoner: RdfReasoner;
+  let svfQuads: Quad[];
+
+  beforeAll(async () => {
+    reasoner = new RdfReasoner();
+    await reasoner.ready;
+    const parser = new Parser({ format: "Turtle" });
+    svfQuads = parser.parse(SVF_TURTLE) as Quad[];
+  }, 30000);
+
+  afterAll(() => reasoner?.terminate());
+
+  it("TBox: DogOwner ⊑ PetOwner (∃hasAnimal.Dog ⊑ ∃hasAnimal.Animal because Dog ⊑ Animal)", async () => {
+    const inferred = await reasoner.classify(svfQuads);
+    expect(
+      hasSub(inferred, SVF("DogOwner"), SVF("PetOwner")),
+      "DogOwner must be a subclass of PetOwner via someValuesFrom range subsumption",
+    ).toBe(true);
+  });
+
+  it("ABox: Alice rdf:type DogOwner (hasAnimal Fido, Fido rdf:type Dog → ∃hasAnimal.Dog)", async () => {
+    const inferred = await reasoner.materialize(svfQuads);
+    expect(
+      hasType(inferred, SVF("Alice"), SVF("DogOwner")),
+      "Alice must be inferred as DogOwner via someValuesFrom",
+    ).toBe(true);
+  });
+
+  it("ABox: Alice rdf:type PetOwner (via DogOwner ⊑ PetOwner)", async () => {
+    const inferred = await reasoner.materialize(svfQuads);
+    expect(
+      hasType(inferred, SVF("Alice"), SVF("PetOwner")),
+      "Alice must be inferred as PetOwner via DogOwner ⊑ PetOwner",
+    ).toBe(true);
   });
 });
