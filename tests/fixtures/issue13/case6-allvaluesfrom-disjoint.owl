@@ -1,0 +1,45 @@
+<?xml version='1.0'?>
+<!DOCTYPE Ontology>
+<Ontology xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"
+          xml:base="http://example.org/reasoner-test"
+          xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+          xmlns="http://www.w3.org/2002/07/owl#"
+          xmlns:xml="http://www.w3.org/XML/1998/namespace"
+          xmlns:xsd="http://www.w3.org/2001/XMLSchema#"
+          ontologyIRI="http://example.org/reasoner-test/case6">
+ <Prefix name="" IRI="http://example.org/reasoner-test#"/>
+ <Prefix name="owl" IRI="http://www.w3.org/2002/07/owl#"/>
+ <Prefix name="rdf" IRI="http://www.w3.org/1999/02/22-rdf-syntax-ns#"/>
+ <Prefix name="rdfs" IRI="http://www.w3.org/2000/01/rdf-schema#"/>
+ <Prefix name="xsd" IRI="http://www.w3.org/2001/XMLSchema#"/>
+ <Declaration><Class IRI="#CleanRoom"/></Declaration>
+ <Declaration><Class IRI="#DirtyRoom"/></Declaration>
+ <Declaration><Class IRI="#CleanRoomOnlyDevice"/></Declaration>
+ <Declaration><ObjectProperty IRI="#locatedIn"/></Declaration>
+ <Declaration><NamedIndividual IRI="#device1"/></Declaration>
+ <Declaration><NamedIndividual IRI="#room9"/></Declaration>
+ <DisjointClasses>
+  <Class IRI="#DirtyRoom"/>
+  <Class IRI="#CleanRoom"/>
+ </DisjointClasses>
+ <SubClassOf>
+  <Class IRI="#CleanRoomOnlyDevice"/>
+  <ObjectAllValuesFrom>
+   <ObjectProperty IRI="#locatedIn"/>
+   <Class IRI="#CleanRoom"/>
+  </ObjectAllValuesFrom>
+ </SubClassOf>
+ <ClassAssertion>
+  <Class IRI="#CleanRoomOnlyDevice"/>
+  <NamedIndividual IRI="#device1"/>
+ </ClassAssertion>
+ <ClassAssertion>
+  <Class IRI="#DirtyRoom"/>
+  <NamedIndividual IRI="#room9"/>
+ </ClassAssertion>
+ <ObjectPropertyAssertion>
+  <ObjectProperty IRI="#locatedIn"/>
+  <NamedIndividual IRI="#device1"/>
+  <NamedIndividual IRI="#room9"/>
+ </ObjectPropertyAssertion>
+</Ontology>

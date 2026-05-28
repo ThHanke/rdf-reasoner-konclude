@@ -401,7 +401,7 @@ describe("RdfReasoner", () => {
         if (req.method === "loadTripleBuffer") {
           simulateWorkerMessage({ id: req.id, result: true });
         } else if (req.method === "classification") {
-          simulateWorkerMessage({ id: req.id, result: false });
+          simulateWorkerMessage({ id: req.id, result: true });
         } else if (req.method === "consistency") {
           simulateWorkerMessage({ id: req.id, result: false });
         }

@@ -2,6 +2,9 @@
 .worktrees/
 .claude/worktrees/
 
+# Native Konclude binary (download via scripts/acquire-native-konclude.sh)
+vendor/konclude/Binaries/
+
 # Playwright MCP and test artifacts
 .playwright-mcp/
 test-results/

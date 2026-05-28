@@ -1,0 +1,30 @@
+<?xml version='1.0'?>
+<!DOCTYPE Ontology>
+<Ontology xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"
+          xml:base="http://example.org/reasoner-test"
+          xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+          xmlns="http://www.w3.org/2002/07/owl#"
+          xmlns:xml="http://www.w3.org/XML/1998/namespace"
+          xmlns:xsd="http://www.w3.org/2001/XMLSchema#"
+          ontologyIRI="http://example.org/reasoner-test/case1">
+ <Prefix name="" IRI="http://example.org/reasoner-test#"/>
+ <Prefix name="owl" IRI="http://www.w3.org/2002/07/owl#"/>
+ <Prefix name="rdf" IRI="http://www.w3.org/1999/02/22-rdf-syntax-ns#"/>
+ <Prefix name="rdfs" IRI="http://www.w3.org/2000/01/rdf-schema#"/>
+ <Prefix name="xsd" IRI="http://www.w3.org/2001/XMLSchema#"/>
+ <Declaration><Class IRI="#Person"/></Declaration>
+ <Declaration><Class IRI="#Organization"/></Declaration>
+ <Declaration><NamedIndividual IRI="#alice"/></Declaration>
+ <DisjointClasses>
+  <Class IRI="#Organization"/>
+  <Class IRI="#Person"/>
+ </DisjointClasses>
+ <ClassAssertion>
+  <Class IRI="#Person"/>
+  <NamedIndividual IRI="#alice"/>
+ </ClassAssertion>
+ <ClassAssertion>
+  <Class IRI="#Organization"/>
+  <NamedIndividual IRI="#alice"/>
+ </ClassAssertion>
+</Ontology>

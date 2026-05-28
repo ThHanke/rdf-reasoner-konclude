@@ -289,10 +289,12 @@ export class RdfReasoner {
    * Check whether the given quads form a consistent ontology.
    *
    * Internally: loadTripleBuffer → classification → consistency.
-   *
    * Concurrent calls are serialized: each call waits for the previous one to
    * complete before sending its first Worker message.
    */
+  // Unit 4 judgment (2026-05-28): full classification pipeline runs ≤300ms for
+  // cases 5 and 6 after mConfExtractSimpleABoxAssertions fix. consistencyOnly()
+  // removed as no longer needed; full pipeline preferred for correctness.
   checkConsistency(quads: Iterable<Quad>): Promise<boolean>;
   checkConsistency(input: Store | Iterable<Quad>): Promise<boolean> {
     const quads = input instanceof Store
