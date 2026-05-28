@@ -3,6 +3,17 @@ import type { Quad } from "@rdfjs/types";
 export const INFERRED_GRAPH_IRI = "urn:konclude:inferred";
 
 /**
+ * Options controlling how `explain()` and `explainInconsistency()` operate.
+ */
+export interface ExplainOptions {
+  /** Maximum number of justifications to return. Defaults to 1. */
+  maxJustifications?: number;
+  /** Optional filter to restrict the candidate axiom set. Applied AFTER the
+   *  built-in declaration filter. */
+  axiomFilter?: (q: Quad) => boolean;
+}
+
+/**
  * Named graph IRI used to hold hypothetical (what-if) triples.
  * Quads in this graph are excluded from store fingerprints.
  */
