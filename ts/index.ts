@@ -17,10 +17,10 @@ import type { Quad } from "@rdfjs/types";
 import { Store, DataFactory } from "n3";
 import { encodeToBuffers, decodeBuffers, computeStoreFingerprint } from "./intern.js";
 
-export type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta } from "./types.js";
+export type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions } from "./types.js";
 export { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI } from "./types.js";
-import type { ReasoningOptions, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta } from "./types.js";
-import { INFERRED_GRAPH_IRI } from "./types.js";
+import type { ReasoningOptions, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions } from "./types.js";
+import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Internal message types (mirroring ts/worker.ts)
@@ -731,6 +731,93 @@ export class RdfReasoner {
     });
     this._queue = result.then(() => {}, () => {});
     return result as Promise<boolean | null> | Promise<(boolean | null)[]>;
+  }
+
+  // -------------------------------------------------------------------------
+  // whatIf()
+  // -------------------------------------------------------------------------
+
+  /** Reason over a hypothetical extension of the store without mutating it.
+   *
+   * Computes full-materialize inferences over `store ∪ additions \ removals`
+   * without changing the store's base triples or INFERRED_GRAPH_IRI.
+   *
+   * Returns `{ added, removed }` relative to the current INFERRED_GRAPH_IRI
+   * content (both quads carry `graph = INFERRED_GRAPH_IRI` named node).
+   *
+   * If `opts.outputGraph` is provided the hypothetical inferences are also
+   * written to that named graph in the store (must not equal INFERRED_GRAPH_IRI).
+   */
+  whatIf(store: Store, additions: Quad[], opts?: WhatIfOptions): Promise<{ added: Quad[]; removed: Quad[] }> {
+    if (opts?.outputGraph === INFERRED_GRAPH_IRI) {
+      return Promise.reject(new Error(`whatIf: outputGraph must not equal INFERRED_GRAPH_IRI`));
+    }
+    if (opts?.outputGraph === HYPOTHETICAL_IRI) {
+      return Promise.reject(new Error(`whatIf: outputGraph must not equal HYPOTHETICAL_IRI`));
+    }
+
+    const result = this._queue.then(async () => {
+      const ig = DataFactory.namedNode(INFERRED_GRAPH_IRI);
+
+      // Snapshot before: current INFERRED_GRAPH_IRI quads (these quads have graph=ig)
+      const before: Quad[] = store.getQuads(null, null, null, ig);
+
+      // Build hypothetical quad set: base quads excluding INFERRED/HYPOTHETICAL graphs
+      const removalKeys = new Set(
+        (opts?.removals ?? []).map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`)
+      );
+      const baseQuads = store.getQuads(null, null, null, null).filter(q => {
+        const g = q.graph.value;
+        if (g === INFERRED_GRAPH_IRI || g === HYPOTHETICAL_IRI) return false;
+        const key = `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`;
+        return !removalKeys.has(key);
+      });
+
+      // Merge additions (deduplicate by SPO key)
+      const seen = new Set(baseQuads.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`));
+      const hypothetical: Quad[] = [...baseQuads];
+      for (const a of additions) {
+        const key = `${a.subject.value}\0${a.predicate.value}\0${a.object.value}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          hypothetical.push(a);
+        }
+      }
+
+      // Encode and run the full materialize pipeline
+      const { tripleBuffer, strTableBuffer } = encodeToBuffers(hypothetical);
+      await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
+      await this._call("realization", []);
+      const buf = (await this._call("getInferredTripleBuffer", [])) as ArrayBuffer;
+      const afterQuads = decodeBuffers(buf);
+
+      // Wrap after quads with ig so both sides have consistent graph
+      const after: Quad[] = afterQuads.map(q =>
+        DataFactory.quad(q.subject, q.predicate, q.object, ig)
+      );
+
+      // Compute delta relative to before (keyed by SPO)
+      const beforeKeys = new Set(before.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`));
+      const afterKeys = new Set(after.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`));
+      const added = after.filter(q => !beforeKeys.has(`${q.subject.value}\0${q.predicate.value}\0${q.object.value}`));
+      const removed = before.filter(q => !afterKeys.has(`${q.subject.value}\0${q.predicate.value}\0${q.object.value}`));
+
+      // Write to outputGraph if provided (never touch INFERRED_GRAPH_IRI)
+      if (opts?.outputGraph) {
+        const outNode = DataFactory.namedNode(opts.outputGraph);
+        for (const q of after) {
+          store.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, outNode));
+        }
+      }
+
+      // IMPORTANT: Do NOT touch INFERRED_GRAPH_IRI. Do NOT update any cache slots.
+      // whatIf runs the WASM but the result is hypothetical — the real store state
+      // is unchanged, so all caches remain valid.
+
+      return { added, removed };
+    });
+    this._queue = result.then(() => {}, () => {});
+    return result;
   }
 
   /** Terminate the underlying Worker and reject all pending calls. */

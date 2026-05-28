@@ -717,6 +717,200 @@ describe("RdfReasoner — Store API", () => {
   });
 
   // -------------------------------------------------------------------------
+  // whatIf()
+  // -------------------------------------------------------------------------
+
+  describe("whatIf", () => {
+    const rdfType = namedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#type");
+    const penguin = namedNode("http://example.org/penguin");
+    const Penguin = namedNode("http://example.org/Penguin");
+    const Bird = namedNode("http://example.org/Bird");
+
+    function mockRealizationSequence(inferredQuads: Quad[]) {
+      const buf = buildCombinedBuffer(inferredQuads);
+      mocks.workerPostMessage.mockImplementation((msg: unknown) => {
+        const req = msg as { id: number; method: string };
+        if (req.method === "loadTripleBuffer") simulateWorkerMessage({ id: req.id, result: true });
+        else if (req.method === "realization") simulateWorkerMessage({ id: req.id, result: true });
+        else if (req.method === "getInferredTripleBuffer") simulateWorkerMessage({ id: req.id, result: buf });
+      });
+    }
+
+    // Test 1: Happy path — additions trigger new entailments
+    it("happy path: additions trigger new entailments", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(Penguin, subClassOf, Bird, defaultGraph())]);
+
+      mockRealizationSequence([quad(penguin, rdfType, Bird, defaultGraph())]);
+
+      const result = await reasoner.whatIf(store, [quad(penguin, rdfType, Penguin, defaultGraph())]);
+
+      expect(result.removed).toHaveLength(0);
+      expect(result.added).toHaveLength(1);
+      expect(result.added[0].subject.value).toBe("http://example.org/penguin");
+      expect(result.added[0].predicate.value).toBe("http://www.w3.org/1999/02/22-rdf-syntax-ns#type");
+      expect(result.added[0].object.value).toBe("http://example.org/Bird");
+      expect(result.added[0].graph.value).toBe(INFERRED_GRAPH_IRI);
+    });
+
+    // Test 2: Store base triples NOT mutated
+    it("store base triples are not mutated after whatIf", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(Penguin, subClassOf, Bird, defaultGraph())]);
+      const baseQuadsBefore = store.getQuads(null, null, null, defaultGraph()).map(q => q.value);
+
+      mockRealizationSequence([quad(penguin, rdfType, Bird, defaultGraph())]);
+
+      await reasoner.whatIf(store, [quad(penguin, rdfType, Penguin, defaultGraph())]);
+
+      const baseQuadsAfter = store.getQuads(null, null, null, defaultGraph()).map(q => q.value);
+      expect(baseQuadsAfter).toEqual(baseQuadsBefore);
+    });
+
+    // Test 3: INFERRED_GRAPH_IRI NOT mutated
+    it("INFERRED_GRAPH_IRI is not mutated after whatIf", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(Penguin, subClassOf, Bird, defaultGraph())]);
+
+      // Pre-populate INFERRED_GRAPH_IRI with prior inferred quads
+      const ig = namedNode(INFERRED_GRAPH_IRI);
+      const priorInferred = quad(A, subClassOf, C, ig);
+      store.addQuad(priorInferred);
+
+      mockRealizationSequence([quad(penguin, rdfType, Bird, defaultGraph())]);
+
+      await reasoner.whatIf(store, [quad(penguin, rdfType, Penguin, defaultGraph())]);
+
+      // INFERRED_GRAPH_IRI should still only have the prior quad, not hypothetical ones
+      const inferredAfter = store.getQuads(null, null, null, ig);
+      expect(inferredAfter).toHaveLength(1);
+      expect(inferredAfter[0].subject.value).toBe("http://example.org/A");
+      expect(inferredAfter[0].predicate.value).toBe("http://www.w3.org/2000/01/rdf-schema#subClassOf");
+      expect(inferredAfter[0].object.value).toBe("http://example.org/C");
+    });
+
+    // Test 4: outputGraph option writes to named graph
+    it("outputGraph option: writes hypothetical inferences to named graph, not INFERRED_GRAPH_IRI", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(Penguin, subClassOf, Bird, defaultGraph())]);
+
+      mockRealizationSequence([quad(penguin, rdfType, Bird, defaultGraph())]);
+
+      await reasoner.whatIf(
+        store,
+        [quad(penguin, rdfType, Penguin, defaultGraph())],
+        { outputGraph: "urn:hyp" }
+      );
+
+      // Hypothetical inferences appear in the outputGraph
+      const hypGraph = namedNode("urn:hyp");
+      const hypQuads = store.getQuads(null, null, null, hypGraph);
+      expect(hypQuads).toHaveLength(1);
+      expect(hypQuads[0].subject.value).toBe("http://example.org/penguin");
+      expect(hypQuads[0].predicate.value).toBe("http://www.w3.org/1999/02/22-rdf-syntax-ns#type");
+      expect(hypQuads[0].object.value).toBe("http://example.org/Bird");
+
+      // INFERRED_GRAPH_IRI unchanged (empty)
+      const ig = namedNode(INFERRED_GRAPH_IRI);
+      expect(store.getQuads(null, null, null, ig)).toHaveLength(0);
+    });
+
+    // Test 5: removals: excluded axiom → entailment absent
+    it("removals: excluded base axiom results in empty inferences", async () => {
+      const reasoner = await makeReadyReasoner();
+      const penguinTypeQuad = quad(penguin, rdfType, Penguin, defaultGraph());
+      const store = new Store([
+        quad(Penguin, subClassOf, Bird, defaultGraph()),
+        penguinTypeQuad,
+      ]);
+
+      // Worker returns empty buffer (penguin type removed, no instances → no entailments)
+      mockRealizationSequence([]);
+
+      const result = await reasoner.whatIf(store, [], { removals: [penguinTypeQuad] });
+
+      expect(result.added).toHaveLength(0);
+
+      // Verify the removed triple's object value is not present in the loadTripleBuffer args
+      const loadCall = mocks.workerPostMessage.mock.calls.find(
+        (c) => (c[0] as { method: string }).method === "loadTripleBuffer"
+      );
+      expect(loadCall).toBeDefined();
+      const strTableBuf = (loadCall![0] as { args: unknown[] }).args[1] as ArrayBuffer;
+      const entries = decodeStrTableEntries(strTableBuf);
+      // "Penguin" class may still appear (from the subClassOf axiom), but the
+      // penguin *individual* (lowercase) should NOT appear as a subject
+      // because its rdf:type assertion was removed
+      // The subject value "http://example.org/penguin" (lowercase) was only in the removed quad
+      expect(entries).not.toContain("http://example.org/penguin");
+    });
+
+    // Test 6: Empty additions, no removals: delta equivalent to materialize
+    it("empty additions and no removals: Worker receives all base quads; result includes inferred quads", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(Penguin, subClassOf, Bird, defaultGraph())]);
+
+      const expectedInferred = quad(penguin, rdfType, Bird, defaultGraph());
+      mockRealizationSequence([expectedInferred]);
+
+      const result = await reasoner.whatIf(store, []);
+
+      // The added array should contain the inferred quad
+      expect(result.added).toHaveLength(1);
+      expect(result.added[0].subject.value).toBe("http://example.org/penguin");
+
+      // Worker should have been called
+      const methods = mocks.workerPostMessage.mock.calls.map(
+        (c) => (c[0] as { method: string }).method,
+      );
+      expect(methods).toContain("loadTripleBuffer");
+      expect(methods).toContain("realization");
+      expect(methods).toContain("getInferredTripleBuffer");
+    });
+
+    // Test 7: outputGraph === INFERRED_GRAPH_IRI → throws before Worker call
+    it("outputGraph === INFERRED_GRAPH_IRI → rejects without calling Worker", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(Penguin, subClassOf, Bird, defaultGraph())]);
+
+      await expect(
+        reasoner.whatIf(store, [], { outputGraph: INFERRED_GRAPH_IRI })
+      ).rejects.toThrow("whatIf: outputGraph must not equal INFERRED_GRAPH_IRI");
+
+      expect(mocks.workerPostMessage).not.toHaveBeenCalled();
+    });
+
+    // Test 8: Integration-style: whatIf does not corrupt subsequent materialize
+    it("whatIf followed by materialize: materialize uses real base state, not hypothetical", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(Penguin, subClassOf, Bird, defaultGraph())]);
+
+      // whatIf: returns hypothetical result (penguin is Bird)
+      mockRealizationSequence([quad(penguin, rdfType, Bird, defaultGraph())]);
+      const whatIfResult = await reasoner.whatIf(store, [quad(penguin, rdfType, Penguin, defaultGraph())]);
+      expect(whatIfResult.added).toHaveLength(1);
+
+      // INFERRED_GRAPH_IRI should still be empty after whatIf
+      const ig = namedNode(INFERRED_GRAPH_IRI);
+      expect(store.getQuads(null, null, null, ig)).toHaveLength(0);
+
+      // Now call materialize on the real store (no individuals → no rdf:type inferences)
+      mocks.workerPostMessage.mockClear();
+      mockRealizationSequence([]);
+      await reasoner.materialize(store);
+
+      // After materialize, INFERRED_GRAPH_IRI should be empty (no individuals in base store)
+      expect(store.getQuads(null, null, null, ig)).toHaveLength(0);
+
+      // materialize should have been called (not a cache hit from whatIf)
+      const loadCalls = mocks.workerPostMessage.mock.calls.filter(
+        (c) => (c[0] as { method: string }).method === "loadTripleBuffer",
+      );
+      expect(loadCalls).toHaveLength(1);
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // isEntailed()
   // -------------------------------------------------------------------------
 

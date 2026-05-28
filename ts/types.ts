@@ -106,6 +106,17 @@ export interface ClassifyPropertiesStoreOptions {
 }
 
 /**
+ * Options for `whatIf` hypothetical reasoning.
+ */
+export interface WhatIfOptions {
+  /** Quads to remove from the base ontology before reasoning. */
+  removals?: Quad[];
+  /** Named graph IRI where hypothetical inferences are written in the store.
+   *  Must not equal INFERRED_GRAPH_IRI (throws if equal). */
+  outputGraph?: string;
+}
+
+/**
  * The result returned by a reasoning operation.
  *
  * @remarks Reserved for future use. When `mode:'full'` is fully implemented
