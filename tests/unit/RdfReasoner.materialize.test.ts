@@ -7,7 +7,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DataFactory, Store } from "n3";
-import type { Quad } from "@rdfjs/types";
+import type { Quad, Literal as RdfLiteral } from "@rdfjs/types";
 import { encodeToBuffers } from "../../ts/intern.js";
 
 // ---------------------------------------------------------------------------
@@ -70,6 +70,10 @@ const A = namedNode("http://example.org/A");
 const B = namedNode("http://example.org/B");
 const C = namedNode("http://example.org/C");
 const alice = namedNode("http://example.org/alice");
+const bob = namedNode("http://example.org/bob");
+const owlSameAs = namedNode("http://www.w3.org/2002/07/owl#sameAs");
+const age = namedNode("http://example.org/age");
+const xsdInteger = namedNode("http://www.w3.org/2001/XMLSchema#integer");
 
 function simulateWorkerMessage(data: unknown) {
   mocks.dispatchToListeners("message", { data } as MessageEvent);
@@ -234,6 +238,45 @@ describe("RdfReasoner.materialize()", () => {
       const result = await reasoner.materialize([]);
 
       expect(result).toEqual([]);
+    });
+
+    it("happy path: owl:sameAs pair passes through default filter unchanged", async () => {
+      const reasoner = await makeReadyReasoner();
+
+      mockRealizationSequence([
+        quad(alice, owlSameAs, bob, defaultGraph()),
+      ]);
+
+      const result = await reasoner.materialize([
+        quad(alice, owlSameAs, bob, defaultGraph()),
+      ]);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].predicate.value).toBe("http://www.w3.org/2002/07/owl#sameAs");
+      expect(result[0].subject.value).toBe("http://example.org/alice");
+      expect(result[0].object.value).toBe("http://example.org/bob");
+    });
+
+    it("happy path: data property literal triple passes through default filter unchanged", async () => {
+      const reasoner = await makeReadyReasoner();
+
+      const ageLiteral = literal("30", xsdInteger);
+      mockRealizationSequence([
+        quad(alice, age, ageLiteral, defaultGraph()),
+      ]);
+
+      const result = await reasoner.materialize([
+        quad(alice, age, ageLiteral, defaultGraph()),
+      ]);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].subject.value).toBe("http://example.org/alice");
+      expect(result[0].predicate.value).toBe("http://example.org/age");
+      expect(result[0].object.termType).toBe("Literal");
+      expect(result[0].object.value).toBe("30");
+      expect((result[0].object as RdfLiteral).datatype.value).toBe(
+        "http://www.w3.org/2001/XMLSchema#integer",
+      );
     });
 
     it("error path: Worker error → materialize(quads) rejects", async () => {

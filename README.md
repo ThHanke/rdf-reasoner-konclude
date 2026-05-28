@@ -114,26 +114,41 @@ The browser build requires COOP/COEP HTTP headers for `SharedArrayBuffer` (used 
 const reasoner = new RdfReasoner();
 await reasoner.ready; // resolves when WASM module is loaded
 
-await reasoner.reason(store); // classify + write inferred triples into store
-await reasoner.classify(store); // alias for reason(store)
-const ok = await reasoner.checkConsistency(store); // returns boolean
+// TBox: class hierarchy (rdfs:subClassOf, owl:equivalentClass)
+await reasoner.classify(store);
+
+// ABox: individual type entailments (rdf:type)
+await reasoner.materialize(store);
+await reasoner.materialize(store, { includeClassHierarchy: true }); // TBox + ABox
+
+// Property hierarchy (rdfs:subPropertyOf)
+await reasoner.classifyProperties(store);
+
+// Consistency
+const ok = await reasoner.checkConsistency(store); // true = consistent
 
 reasoner.terminate(); // shut down the Worker
 ```
 
-`reason(store)` and `classify(store)` write inferred triples into the
-`INFERRED_GRAPH_IRI` named graph inside the store. The graph is cleared before
-each call — do not store ontology triples there.
+`classify(store)`, `materialize(store)`, and `classifyProperties(store)` write
+inferred triples into the `INFERRED_GRAPH_IRI` named graph inside the store.
+The graph is cleared before each call — do not store ontology triples there.
 
 Named graphs in the input are dropped at the WASM boundary (NTriples wire
 format is triple-only). Reasoning runs over the union of all graphs.
 
-Options for `reason(store, opts)` and `classify(store, opts)`:
+Options for `classify(store, opts)`, `materialize(store, opts)`, and `classifyProperties(store, opts)`:
 
 ```typescript
+// classify, classifyProperties
 interface StoreReasoningOptions {
-  inferredGraph?: string; // IRI of the named graph for inferred triples
-  // default: INFERRED_GRAPH_IRI
+  inferredGraph?: string; // default: INFERRED_GRAPH_IRI
+}
+
+// materialize
+interface MaterializeStoreOptions {
+  inferredGraph?: string;          // default: INFERRED_GRAPH_IRI
+  includeClassHierarchy?: boolean; // also emit subClassOf/equivalentClass; default false
 }
 ```
 
@@ -144,11 +159,137 @@ import { INFERRED_GRAPH_IRI } from "rdf-reasoner-konclude";
 // "urn:konclude:inferred"
 ```
 
-The default named graph where inferred triples are written by `reason(store)`.
+The default named graph where inferred triples are written.
 
 ### Deprecated overloads
 
-`reason(quads: Iterable<Quad>)` and `classify(quads)` / `checkConsistency(quads)` accept a raw `Iterable<Quad>` and return `Promise<Quad[]>` / `Promise<boolean>`. These overloads are deprecated — use the `Store`-based API instead.
+`reason(quads)`, `classify(quads)`, `checkConsistency(quads)`, and `materialize(quads)` accept a raw `Iterable<Quad>` and return `Promise<Quad[]>` / `Promise<boolean>`. These overloads are deprecated — use the `Store`-based API instead.
+
+## Common workflows
+
+All examples assume a single `RdfReasoner` instance:
+
+```typescript
+import { RdfReasoner, INFERRED_GRAPH_IRI } from "rdf-reasoner-konclude";
+import { Store, Parser, DataFactory } from "n3";
+
+const reasoner = new RdfReasoner();
+await reasoner.ready;
+```
+
+### TBox only: classify a class hierarchy
+
+Use `classify(store)` when the ontology has no named individuals. Returns
+`rdfs:subClassOf` and `owl:equivalentClass` entailments.
+
+```typescript
+await reasoner.classify(store);
+const subClasses = store.getQuads(null, "http://www.w3.org/2000/01/rdf-schema#subClassOf", null, INFERRED_GRAPH_IRI);
+```
+
+### ABox: derive individual types
+
+Use `materialize(store)` when the ontology includes named individuals. Returns
+`rdf:type` entailments for every individual that can be classified under the
+TBox. Classification runs internally as part of realization — no separate call
+needed.
+
+```typescript
+await reasoner.materialize(store);
+const types = store.getQuads(null, "http://www.w3.org/1999/02/22-rdf-syntax-ns#type", null, INFERRED_GRAPH_IRI);
+```
+
+To also receive the class hierarchy in the same call:
+
+```typescript
+await reasoner.materialize(store, { includeClassHierarchy: true });
+```
+
+### Property hierarchy
+
+Use `classifyProperties(store)` to infer `rdfs:subPropertyOf` entailments.
+Requires `owl:ObjectProperty` / `owl:DatatypeProperty` declarations in the
+ontology.
+
+```typescript
+await reasoner.classifyProperties(store);
+const subProps = store.getQuads(null, "http://www.w3.org/2000/01/rdf-schema#subPropertyOf", null, INFERRED_GRAPH_IRI);
+```
+
+### Combine class hierarchy + property hierarchy
+
+`INFERRED_GRAPH_IRI` is cleared by each call, so write results to separate
+named graphs if you need both at once:
+
+```typescript
+await reasoner.classify(store, { inferredGraph: "urn:myapp:class-inferred" });
+await reasoner.classifyProperties(store, { inferredGraph: "urn:myapp:prop-inferred" });
+```
+
+Or if storing them together is fine, call in sequence and read after both:
+
+```typescript
+await reasoner.classify(store);
+const classTriples = store.getQuads(null, null, null, INFERRED_GRAPH_IRI);
+
+await reasoner.classifyProperties(store); // clears + repopulates INFERRED_GRAPH_IRI
+const propTriples = store.getQuads(null, null, null, INFERRED_GRAPH_IRI);
+```
+
+### Consistency checking
+
+```typescript
+const consistent = await reasoner.checkConsistency(store);
+if (!consistent) {
+  console.error("Ontology is inconsistent");
+}
+```
+
+### Incremental ontology evolution
+
+The reasoner resets and re-loads the full store on every call. To reason over
+an evolving ontology, mutate the store and call again:
+
+```typescript
+await reasoner.classify(store);
+// → first inference written to INFERRED_GRAPH_IRI
+
+// Add new axioms
+store.addQuad(DataFactory.quad(
+  DataFactory.namedNode("http://example.org/Cat"),
+  DataFactory.namedNode("http://www.w3.org/2000/01/rdf-schema#subClassOf"),
+  DataFactory.namedNode("http://example.org/Animal"),
+));
+
+// Re-reason: INFERRED_GRAPH_IRI is cleared and fully repopulated
+await reasoner.classify(store);
+```
+
+Concurrent calls on the same `RdfReasoner` instance are serialized
+automatically — queued calls run in order, never interleaved.
+
+### Separate inferred graph per operation
+
+The `INFERRED_GRAPH_IRI` graph is cleared before each call. If you need to
+preserve results from a previous call while re-reasoning with a different
+operation, use separate named graphs:
+
+```typescript
+await reasoner.classify(store, { inferredGraph: "urn:myapp:class-hierarchy" });
+await reasoner.materialize(store, { inferredGraph: "urn:myapp:abox-types" });
+
+// Both named graphs now coexist in the store
+const classTriples = store.getQuads(null, null, null, "urn:myapp:class-hierarchy");
+const typeTriples  = store.getQuads(null, null, null, "urn:myapp:abox-types");
+```
+
+### Node.js and browser: same API
+
+`RdfReasoner` is identical in both environments. Under Node.js the `"node"`
+export condition in `package.json` loads `index.node.mjs`, which installs a
+`NodeWorkerShim` over `node:worker_threads` that matches the browser `Worker`
+interface. The worker dispatch code (`dist/worker.js`) and all protocol messages
+are shared. No code changes are needed when porting between environments.
 
 ## OWL 2 DL coverage
 
@@ -200,14 +341,12 @@ Input ABox axioms accepted:
 
 ### Known output gaps
 
-These are computed by Konclude internally but not yet surfaced by the TypeScript API:
-
 | Feature                                   | Status                                    |
 | ----------------------------------------- | ----------------------------------------- |
 | `rdfs:subPropertyOf` (property hierarchy) | Available via `classifyProperties(store)` |
-| `owl:sameAs` entailments                  | Not emitted                               |
+| `owl:sameAs` entailments                  | Emitted by `materialize()` ✓              |
 | `owl:differentFrom` entailments           | Not emitted (accepted as input ✓)         |
-| Data property assertions                  | Not emitted                               |
+| Data property assertions                  | Emitted by `materialize()` ✓              |
 
 ## Browser deployment
 

@@ -1085,6 +1085,73 @@ int KoncludeReasoner::buildInferredTripleBuffer() {
                     roleReal->visitSourceIndividualRoles(srcRef, &riv);
                 }
             }
+
+            // ── owl:sameAs entailments ────────────────────────────────────────
+            CSameRealization* sameReal = real->getSameRealization();
+            if (sameReal) {
+                static const std::string owlSameAs =
+                    "http://www.w3.org/2002/07/owl#sameAs";
+                uint32_t pSameAs = intern.intern(owlSameAs);
+
+                struct SameGroupVisitor : CSameRealizationIndividualVisitor {
+                    std::vector<std::string> iris;
+                    CIndividualVector* indiVec;
+
+                    bool visitIndividual(const CIndividualReference& indiRef,
+                                         CSameRealization*) override {
+                        qint64 id = indiRef.getIndividualID();
+                        if (id < 0 || id >= indiVec->getItemCount()) return true;
+                        CIndividual* tgt = indiVec->getData(id);
+                        if (!tgt) return true;
+                        QString q = CIRIName::getRecentIRIName(tgt->getIndividualNameLinker());
+                        if (!q.empty()) iris.emplace_back(std::string(q));
+                        return true;
+                    }
+                };
+
+                for (qint64 i = 0; i < indiCount; ++i) {
+                    CIndividual* indi = indiVec->getData(i);
+                    if (!indi) continue;
+                    QString indiQ = CIRIName::getRecentIRIName(indi->getIndividualNameLinker());
+                    if (indiQ.empty()) continue;
+                    std::string srcIri(indiQ);
+
+                    SameGroupVisitor sgv;
+                    sgv.indiVec = indiVec;
+                    sameReal->visitSameIndividuals(indi, &sgv);
+
+                    if (sgv.iris.size() < 2) continue;
+                    uint32_t srcId = intern.intern(srcIri);
+                    for (const auto& otherIri : sgv.iris) {
+                        if (otherIri == srcIri) continue;
+                        emitTriple(srcId, pSameAs, intern.intern(otherIri));
+                    }
+                }
+            }
+
+            // ── Data property assertions (from ABox individual linkers) ───────
+            for (qint64 i = 0; i < indiCount; ++i) {
+                CIndividual* indi = indiVec->getData(i);
+                if (!indi) continue;
+                QString indiQ = CIRIName::getRecentIRIName(indi->getIndividualNameLinker());
+                if (indiQ.empty()) continue;
+                uint32_t srcId = intern.intern(std::string(indiQ));
+                for (CDataAssertionLinker* dal = indi->getAssertionDataLinker(); dal; dal = dal->getNext()) {
+                    CRole* role = dal->getData();
+                    CDataLiteral* dataLiteral = dal->getDataLiteral();
+                    if (!role || !dataLiteral) continue;
+                    QString roleQ = CIRIName::getRecentIRIName(role->getPropertyNameLinker());
+                    if (roleQ.empty()) continue;
+                    CDatatype* dt = dataLiteral->getDatatype();
+                    std::string litStr = std::string(dataLiteral->getLexicalDataLiteralValueString());
+                    litStr += '\0';
+                    if (dt) litStr += std::string(dt->getDatatypeIRI());
+                    litStr += '\0'; // language = empty for datatype literals
+                    emitTriple(srcId,
+                               intern.intern(std::string(roleQ)),
+                               intern.intern(litStr, 2));
+                }
+            }
         }
     }
 
