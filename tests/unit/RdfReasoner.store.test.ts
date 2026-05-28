@@ -715,4 +715,155 @@ describe("RdfReasoner — Store API", () => {
       expect(loadCalls).toHaveLength(1);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // isEntailed()
+  // -------------------------------------------------------------------------
+
+  describe("isEntailed", () => {
+    const rdfType = namedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#type");
+    const penguin = namedNode("http://example.org/penguin");
+    const Penguin = namedNode("http://example.org/Penguin");
+    const Bird = namedNode("http://example.org/Bird");
+    const unknown = namedNode("http://example.org/unknown");
+
+    /** Mock for realization (materialize) pipeline within isEntailed */
+    function mockRealizationSequence(inferredQuads: Quad[]) {
+      const buf = buildCombinedBuffer(inferredQuads);
+      mocks.workerPostMessage.mockImplementation((msg: unknown) => {
+        const req = msg as { id: number; method: string };
+        if (req.method === "loadTripleBuffer") simulateWorkerMessage({ id: req.id, result: true });
+        else if (req.method === "realization") simulateWorkerMessage({ id: req.id, result: true });
+        else if (req.method === "getInferredTripleBuffer") simulateWorkerMessage({ id: req.id, result: buf });
+      });
+    }
+
+    it("happy path: entailed rdf:type returns true", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(Penguin, subClassOf, Bird, defaultGraph())]);
+
+      mockRealizationSequence([quad(penguin, rdfType, Bird, defaultGraph())]);
+
+      const result = await reasoner.isEntailed(store, quad(penguin, rdfType, Bird));
+
+      expect(result).toBe(true);
+
+      const methods = mocks.workerPostMessage.mock.calls.map(
+        (c) => (c[0] as { method: string }).method,
+      );
+      expect(methods).toContain("realization");
+    });
+
+    it("happy path: not-entailed rdf:type returns false", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(Penguin, subClassOf, Bird, defaultGraph())]);
+
+      // Worker returns penguin as Bird but not unknown as Bird
+      mockRealizationSequence([quad(penguin, rdfType, Bird, defaultGraph())]);
+
+      const result = await reasoner.isEntailed(store, quad(unknown, rdfType, Bird));
+
+      expect(result).toBe(false);
+    });
+
+    it("happy path: batch returns [true, false, null]", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(Penguin, subClassOf, Bird, defaultGraph())]);
+
+      // Worker returns only penguin as Bird
+      mockRealizationSequence([quad(penguin, rdfType, Bird, defaultGraph())]);
+
+      const unsupportedPred = namedNode("http://www.w3.org/2004/02/skos/core#prefLabel");
+      const results = await reasoner.isEntailed(store, [
+        quad(penguin, rdfType, Bird),      // supported + entailed → true
+        quad(unknown, rdfType, Bird),       // supported + not entailed → false
+        quad(A, unsupportedPred, B),        // unsupported predicate → null
+      ]);
+
+      expect(results).toEqual([true, false, null]);
+    });
+
+    it("unsupported predicate returns null, no Worker call", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(A, subClassOf, B, defaultGraph())]);
+
+      const skosLabel = namedNode("http://www.w3.org/2004/02/skos/core#prefLabel");
+      const result = await reasoner.isEntailed(store, quad(A, skosLabel, B));
+
+      expect(result).toBeNull();
+      expect(mocks.workerPostMessage).not.toHaveBeenCalled();
+    });
+
+    it("called before any reasoning: triggers reasoning internally", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(Penguin, subClassOf, Bird, defaultGraph())]);
+
+      // No prior reasoning — fresh reasoner
+      mockRealizationSequence([quad(penguin, rdfType, Bird, defaultGraph())]);
+
+      const result = await reasoner.isEntailed(store, quad(penguin, rdfType, Bird));
+
+      expect(result).toBe(true);
+      // Worker must have been called (reasoning triggered internally)
+      expect(mocks.workerPostMessage).toHaveBeenCalled();
+      const methods = mocks.workerPostMessage.mock.calls.map(
+        (c) => (c[0] as { method: string }).method,
+      );
+      expect(methods).toContain("loadTripleBuffer");
+      expect(methods).toContain("realization");
+    });
+
+    it("store changes → cache miss → re-reasons: Worker receives two loadTripleBuffer calls", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(Penguin, subClassOf, Bird, defaultGraph())]);
+
+      mockRealizationSequence([quad(penguin, rdfType, Bird, defaultGraph())]);
+      await reasoner.isEntailed(store, quad(penguin, rdfType, Bird));
+
+      // Add a triple to change the store fingerprint
+      store.addQuad(quad(B, subClassOf, C, defaultGraph()));
+      mocks.workerPostMessage.mockClear();
+
+      mockRealizationSequence([quad(penguin, rdfType, Bird, defaultGraph())]);
+      await reasoner.isEntailed(store, quad(penguin, rdfType, Bird));
+
+      const loadCalls = mocks.workerPostMessage.mock.calls.filter(
+        (c) => (c[0] as { method: string }).method === "loadTripleBuffer",
+      );
+      expect(loadCalls).toHaveLength(1); // one in second call after cache miss
+    });
+
+    it("concurrent with materialize: queued correctly, both complete without hang", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(Penguin, subClassOf, Bird, defaultGraph())]);
+      const store2 = new Store([quad(A, subClassOf, B, defaultGraph())]);
+
+      const buf = buildCombinedBuffer([quad(penguin, rdfType, Bird, defaultGraph())]);
+      const emptyBuf = buildCombinedBuffer([]);
+
+      // Set up mock to handle both operations sequentially
+      mocks.workerPostMessage.mockImplementation((msg: unknown) => {
+        const req = msg as { id: number; method: string };
+        if (req.method === "loadTripleBuffer") simulateWorkerMessage({ id: req.id, result: true });
+        else if (req.method === "realization") simulateWorkerMessage({ id: req.id, result: true });
+        else if (req.method === "getInferredTripleBuffer") {
+          // First call (from materialize) returns empty; second (from isEntailed) returns entailed quad
+          const callCount = mocks.workerPostMessage.mock.calls.filter(
+            (c) => (c[0] as { method: string }).method === "getInferredTripleBuffer"
+          ).length;
+          simulateWorkerMessage({ id: req.id, result: callCount <= 1 ? emptyBuf : buf });
+        }
+      });
+
+      const [materializeResult, isEntailedResult] = await Promise.all([
+        reasoner.materialize(store2),
+        reasoner.isEntailed(store, quad(penguin, rdfType, Bird)),
+      ]);
+
+      // Both should complete
+      expect(materializeResult).toBeUndefined(); // materialize returns void
+      // isEntailed result depends on store2 having different fingerprint; both ran independently
+      expect(typeof isEntailedResult).toBe("boolean");
+    });
+  });
 });
