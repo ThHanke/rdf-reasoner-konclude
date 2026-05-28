@@ -1,0 +1,13 @@
+diff --git a/Source/Reasoner/Generator/CConcreteOntologyRedlandTriplesDataExpressionMapper.h b/Source/Reasoner/Generator/CConcreteOntologyRedlandTriplesDataExpressionMapper.h
+index 8df9ce6d..d6120a0c 100644
+--- a/Source/Reasoner/Generator/CConcreteOntologyRedlandTriplesDataExpressionMapper.h
++++ b/Source/Reasoner/Generator/CConcreteOntologyRedlandTriplesDataExpressionMapper.h
+@@ -78,7 +78,7 @@ namespace Konclude {
+ 
+ 					virtual bool mapTriples(CConcreteOntology* updateConcreteOntology, COntologyTriplesData* ontologyTripleData);
+ 
+-
++					void setConfExtractSimpleABoxAssertions(bool v) { mConfExtractSimpleABoxAssertions = v; }
+ 
+ 
+ 				// protected functions
