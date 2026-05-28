@@ -865,5 +865,60 @@ describe("RdfReasoner — Store API", () => {
       // isEntailed result depends on store2 having different fingerprint; both ran independently
       expect(typeof isEntailedResult).toBe("boolean");
     });
+
+    it("subClassOf axiom routes to _classifyInline: Worker receives 'classification', not 'realization'", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(A, subClassOf, B, defaultGraph())]);
+
+      // Mock the classify pipeline (classification + getInferredTripleBuffer)
+      const inferredSubClassOf = quad(A, subClassOf, C, defaultGraph());
+      const buf = buildCombinedBuffer([inferredSubClassOf]);
+      mocks.workerPostMessage.mockImplementation((msg: unknown) => {
+        const req = msg as { id: number; method: string };
+        if (req.method === "loadTripleBuffer") simulateWorkerMessage({ id: req.id, result: true });
+        else if (req.method === "classification") simulateWorkerMessage({ id: req.id, result: true });
+        else if (req.method === "getInferredTripleBuffer") simulateWorkerMessage({ id: req.id, result: buf });
+      });
+
+      const result = await reasoner.isEntailed(store, quad(A, subClassOf, C));
+
+      expect(result).toBe(true);
+
+      const methods = mocks.workerPostMessage.mock.calls.map(
+        (c) => (c[0] as { method: string }).method,
+      );
+      expect(methods).toContain("classification");
+      expect(methods).not.toContain("realization");
+    });
+
+    it("subPropertyOf axiom routes to _classifyPropertiesInline: Worker receives 'getPropertyTripleBuffer'", async () => {
+      const reasoner = await makeReadyReasoner();
+      const subPropertyOf = namedNode("http://www.w3.org/2000/01/rdf-schema#subPropertyOf");
+      const p1 = namedNode("http://example.org/p1");
+      const p2 = namedNode("http://example.org/p2");
+      const store = new Store([quad(A, subClassOf, B, defaultGraph())]);
+
+      // Mock the classifyProperties pipeline (classification + getPropertyTripleBuffer)
+      const inferredSubProp = quad(p1, subPropertyOf, p2, defaultGraph());
+      const buf = buildCombinedBuffer([inferredSubProp]);
+      mocks.workerPostMessage.mockImplementation((msg: unknown) => {
+        const req = msg as { id: number; method: string };
+        if (req.method === "loadTripleBuffer") simulateWorkerMessage({ id: req.id, result: true });
+        else if (req.method === "classification") simulateWorkerMessage({ id: req.id, result: true });
+        else if (req.method === "getPropertyTripleBuffer") simulateWorkerMessage({ id: req.id, result: buf });
+      });
+
+      const result = await reasoner.isEntailed(store, quad(p1, subPropertyOf, p2));
+
+      expect(result).toBe(true);
+
+      const methods = mocks.workerPostMessage.mock.calls.map(
+        (c) => (c[0] as { method: string }).method,
+      );
+      expect(methods).toContain("classification");
+      expect(methods).toContain("getPropertyTripleBuffer");
+      expect(methods).not.toContain("realization");
+      expect(methods).not.toContain("getInferredTripleBuffer");
+    });
   });
 });
