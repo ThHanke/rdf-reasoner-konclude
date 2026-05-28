@@ -1017,17 +1017,19 @@ export class RdfReasoner {
 
       // HSDAG for additional justifications
       if (maxJustifications > 1) {
+        // HSDAG queue: pairs of (excluded set, justification to expand from)
+        const hsQueue: Array<{ excluded: Set<string>; justification: Quad[] }> = [
+          { excluded: new Set(), justification: j1 },
+        ];
         const exploredExclusions = new Set<string>();
-        const queue: Set<string>[] = [new Set()];
 
-        while (queue.length > 0 && justifications.length < maxJustifications) {
-          const excluded = queue.shift()!;
+        while (hsQueue.length > 0 && justifications.length < maxJustifications) {
+          const { excluded, justification: currentJ } = hsQueue.shift()!;
           const excludedKey = [...excluded].sort().join("|");
           if (exploredExclusions.has(excludedKey)) continue;
           exploredExclusions.add(excludedKey);
 
-          const lastJ = justifications[justifications.length - 1];
-          for (const axiomInJ of lastJ) {
+          for (const axiomInJ of currentJ) {
             const newExcluded = new Set(excluded);
             const axKey = `${axiomInJ.subject.value}\0${axiomInJ.predicate.value}\0${axiomInJ.object.value}`;
             newExcluded.add(axKey);
@@ -1044,17 +1046,17 @@ export class RdfReasoner {
             if (!entailed) continue;
 
             const jNew = await findOneJustification(reduced);
-            if (jNew && jNew.length > 0) {
-              const jKey = jNew.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`).sort().join("|");
-              const alreadyFound = justifications.some(j => {
-                const k = j.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`).sort().join("|");
-                return k === jKey;
-              });
-              if (!alreadyFound) {
-                justifications.push(jNew);
-                if (justifications.length >= maxJustifications) break;
-              }
-              queue.push(newExcluded);
+            if (!jNew || jNew.length === 0) continue;
+
+            const jKey = jNew.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`).sort().join("|");
+            const alreadyFound = justifications.some(j => {
+              const k = j.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`).sort().join("|");
+              return k === jKey;
+            });
+            if (!alreadyFound) {
+              justifications.push(jNew);
+              if (justifications.length >= maxJustifications) break;
+              hsQueue.push({ excluded: newExcluded, justification: jNew });
             }
           }
         }
@@ -1095,10 +1097,12 @@ export class RdfReasoner {
         await this._callDirect("classification", []);
         consistent = (await this._callDirect("consistency", [])) as boolean;
         this._consistencyCache = { hash: fingerprint, result: consistent };
-        this._classifyCache = null;
-        this._materializeCache = null;
-        this._classifyPropertiesCache = null;
       }
+
+      // Invalidate caches before BlackBox sub-calls (WASM state will be modified)
+      this._classifyCache = null;
+      this._materializeCache = null;
+      this._classifyPropertiesCache = null;
 
       if (consistent) return [];
 
@@ -1168,17 +1172,20 @@ export class RdfReasoner {
       justifications.push(j1);
 
       if (maxJustifications > 1) {
+        // HSDAG queue: pairs of (excluded set, justification to expand from)
+        const hsQueue: Array<{ excluded: Set<string>; justification: Quad[] }> = [
+          { excluded: new Set(), justification: j1 },
+        ];
         const exploredExclusions = new Set<string>();
-        const queue: Set<string>[] = [new Set()];
-        while (queue.length > 0 && justifications.length < maxJustifications) {
-          const excluded = queue.shift()!;
+        while (hsQueue.length > 0 && justifications.length < maxJustifications) {
+          const { excluded, justification: currentJ } = hsQueue.shift()!;
           const excludedKey = [...excluded].sort().join("|");
           if (exploredExclusions.has(excludedKey)) continue;
           exploredExclusions.add(excludedKey);
-          const lastJ = justifications[justifications.length - 1];
-          for (const axiomInJ of lastJ) {
+          for (const axiomInJ of currentJ) {
             const newExcluded = new Set(excluded);
-            newExcluded.add(`${axiomInJ.subject.value}\0${axiomInJ.predicate.value}\0${axiomInJ.object.value}`);
+            const axKey = `${axiomInJ.subject.value}\0${axiomInJ.predicate.value}\0${axiomInJ.object.value}`;
+            newExcluded.add(axKey);
             const newExcludedKey = [...newExcluded].sort().join("|");
             if (exploredExclusions.has(newExcludedKey)) continue;
             const reduced = allCandidates.filter(q => !newExcluded.has(`${q.subject.value}\0${q.predicate.value}\0${q.object.value}`));
@@ -1186,11 +1193,12 @@ export class RdfReasoner {
             const jNew = await findOneJustification(reduced);
             if (!jNew || jNew.length === 0) continue;
             const jKey = jNew.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`).sort().join("|");
-            if (!justifications.some(j => j.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`).sort().join("|") === jKey)) {
+            const alreadyFound = justifications.some(j => j.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`).sort().join("|") === jKey);
+            if (!alreadyFound) {
               justifications.push(jNew);
               if (justifications.length >= maxJustifications) break;
+              hsQueue.push({ excluded: newExcluded, justification: jNew });
             }
-            queue.push(newExcluded);
           }
         }
       }
