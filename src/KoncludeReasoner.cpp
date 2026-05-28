@@ -17,6 +17,7 @@
 #include <chrono>
 #include <cstdio>
 #include <mutex>
+#include <random>
 
 // ─── Konclude kernel headers ────────────────────────────────────────────────
 
@@ -332,12 +333,28 @@ struct KoncludeReasoner::Impl {
         mOntology = new CConcreteOntology(mBasementConfig);
         // Each call must have a unique ontology ID.  CTerminology::CTerminology()
         // initialises mTerminologyID = 0 for every new object.  BackendAssCache keys
-        // its per-ontology state by this ID: once OntologyData[0] is "completed" after
-        // call 1, call 2 finds it "already complete" and ignores all new updates →
-        // realization returns no individuals.  A monotonically increasing ID gives each
-        // call its own fresh OntologyData slot.
-        static qint64 sNextOntologyID = 1;
-        mOntology->setOntologyID(sNextOntologyID++);
+        // its per-ontology state by this ID (mOntologyIdentifierDataHash and
+        // mFixedOntologyIdentifierDataHash are both hash-maps keyed by cint64 ontologyID).
+        // A sequential counter is provably unsafe: any mechanism keyed on ID values
+        // (hash bucket distribution, stale-entry lookup, saturation concept hashing, etc.)
+        // can produce periodic collisions at predictable call counts.  A 63-bit random ID
+        // eliminates collision as a root cause.
+        //
+        // Single-caller note: buildFreshOntology() is always called from the Worker's
+        // single JS dispatch thread; all WASM calls are serialised by the Worker.  No mutex
+        // is needed here.  If future architecture ever calls this from multiple threads,
+        // add a std::mutex guard around gen().
+        static std::mt19937_64 gen = []() {
+            try {
+                return std::mt19937_64(std::random_device{}());
+            } catch (...) {
+                auto t = std::chrono::steady_clock::now().time_since_epoch().count();
+                auto a = std::hash<void*>{}(reinterpret_cast<void*>(&gen));
+                return std::mt19937_64(static_cast<uint64_t>(t) ^ a);
+            }
+        }();
+        // Mask high bit: cint64 is int64_t; keep IDs positive.
+        mOntology->setOntologyID(static_cast<qint64>(gen() & 0x7FFFFFFFFFFFFFFFull));
         CConcreteOntologyBasementBuilder* bb =
             new CConcreteOntologyBasementBuilder(mOntology);
         bb->initializeBuilding();
