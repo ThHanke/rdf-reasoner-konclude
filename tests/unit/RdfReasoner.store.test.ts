@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DataFactory, Store } from "n3";
 import type { Quad } from "@rdfjs/types";
 import { encodeToBuffers } from "../../ts/intern.js";
+import { HYPOTHETICAL_IRI } from "../../ts/types.js";
 
 // ---------------------------------------------------------------------------
 // Step 1: Hoist mock state
@@ -431,6 +432,687 @@ describe("RdfReasoner — Store API", () => {
       const g = namedNode(INFERRED_GRAPH_IRI);
       expect(store1.getQuads(null, null, null, g)).toHaveLength(1);
       expect(store2.getQuads(null, null, null, g)).toHaveLength(1);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Fingerprint cache
+  // -------------------------------------------------------------------------
+
+  describe("fingerprint cache", () => {
+    const rdfType = namedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#type");
+    const alice = namedNode("http://example.org/alice");
+
+    /** Helper: set up mock for realization (materialize) pipeline */
+    function mockRealizationSequence(inferredQuads: Quad[]) {
+      const buf = buildCombinedBuffer(inferredQuads);
+      mocks.workerPostMessage.mockImplementation((msg: unknown) => {
+        const req = msg as { id: number; method: string };
+        if (req.method === "loadTripleBuffer") {
+          simulateWorkerMessage({ id: req.id, result: true });
+        } else if (req.method === "realization") {
+          simulateWorkerMessage({ id: req.id, result: true });
+        } else if (req.method === "getInferredTripleBuffer") {
+          simulateWorkerMessage({ id: req.id, result: buf });
+        }
+      });
+    }
+
+    /** Helper: set up mock for classification pipeline */
+    function mockClassifySequence(inferredQuads: Quad[]) {
+      const buf = buildCombinedBuffer(inferredQuads);
+      mocks.workerPostMessage.mockImplementation((msg: unknown) => {
+        const req = msg as { id: number; method: string };
+        if (req.method === "loadTripleBuffer") {
+          simulateWorkerMessage({ id: req.id, result: true });
+        } else if (req.method === "classification") {
+          simulateWorkerMessage({ id: req.id, result: true });
+        } else if (req.method === "getInferredTripleBuffer") {
+          simulateWorkerMessage({ id: req.id, result: buf });
+        }
+      });
+    }
+
+    /** Helper: set up mock for checkConsistency pipeline */
+    function mockConsistencySequence(consistent: boolean) {
+      mocks.workerPostMessage.mockImplementation((msg: unknown) => {
+        const req = msg as { id: number; method: string };
+        if (req.method === "loadTripleBuffer") {
+          simulateWorkerMessage({ id: req.id, result: true });
+        } else if (req.method === "classification") {
+          simulateWorkerMessage({ id: req.id, result: true });
+        } else if (req.method === "consistency") {
+          simulateWorkerMessage({ id: req.id, result: consistent });
+        }
+      });
+    }
+
+    it("materialize(store) called twice → Worker receives exactly one loadTripleBuffer (second is cache hit)", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(A, subClassOf, B, defaultGraph())]);
+
+      mockRealizationSequence([quad(alice, rdfType, B, defaultGraph())]);
+
+      await reasoner.materialize(store);
+
+      // Second call with the same store content — should be a cache hit
+      mockRealizationSequence([]);
+      await reasoner.materialize(store);
+
+      const loadCalls = mocks.workerPostMessage.mock.calls.filter(
+        (c) => (c[0] as { method: string }).method === "loadTripleBuffer",
+      );
+      expect(loadCalls).toHaveLength(1);
+    });
+
+    it("classify(store) and materialize(store) with same store → each triggers its own Worker call (separate cache slots)", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(A, subClassOf, B, defaultGraph())]);
+
+      mockClassifySequence([quad(A, subClassOf, C, defaultGraph())]);
+      await reasoner.classify(store);
+
+      mockRealizationSequence([quad(alice, rdfType, B, defaultGraph())]);
+      await reasoner.materialize(store);
+
+      const loadCalls = mocks.workerPostMessage.mock.calls.filter(
+        (c) => (c[0] as { method: string }).method === "loadTripleBuffer",
+      );
+      // Both operations go to the Worker — different cache slots
+      expect(loadCalls).toHaveLength(2);
+    });
+
+    it("checkConsistency(store) called twice → Worker receives exactly one loadTripleBuffer (second is cache hit)", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(A, subClassOf, B, defaultGraph())]);
+
+      mockConsistencySequence(true);
+      const r1 = await reasoner.checkConsistency(store);
+      expect(r1).toBe(true);
+
+      // Second call — cache hit should return same result without Worker round-trip
+      const r2 = await reasoner.checkConsistency(store);
+      expect(r2).toBe(true);
+
+      const loadCalls = mocks.workerPostMessage.mock.calls.filter(
+        (c) => (c[0] as { method: string }).method === "loadTripleBuffer",
+      );
+      expect(loadCalls).toHaveLength(1);
+    });
+
+    it("checkConsistency(store) and classify(store) with same store → each triggers own Worker call (separate slots)", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(A, subClassOf, B, defaultGraph())]);
+
+      mockConsistencySequence(true);
+      await reasoner.checkConsistency(store);
+
+      mockClassifySequence([quad(A, subClassOf, C, defaultGraph())]);
+      await reasoner.classify(store);
+
+      const loadCalls = mocks.workerPostMessage.mock.calls.filter(
+        (c) => (c[0] as { method: string }).method === "loadTripleBuffer",
+      );
+      expect(loadCalls).toHaveLength(2);
+    });
+
+    /** Helper: set up mock for classifyProperties pipeline */
+    function mockClassifyPropertiesSequence(inferredQuads: Quad[]) {
+      const buf = buildCombinedBuffer(inferredQuads);
+      mocks.workerPostMessage.mockImplementation((msg: unknown) => {
+        const req = msg as { id: number; method: string };
+        if (req.method === "loadTripleBuffer") {
+          simulateWorkerMessage({ id: req.id, result: true });
+        } else if (req.method === "classification") {
+          simulateWorkerMessage({ id: req.id, result: true });
+        } else if (req.method === "getPropertyTripleBuffer") {
+          simulateWorkerMessage({ id: req.id, result: buf });
+        }
+      });
+    }
+
+    it("classifyProperties(store) called twice → Worker receives exactly one loadTripleBuffer (second is cache hit)", async () => {
+      const reasoner = await makeReadyReasoner();
+      const subPropertyOf = namedNode("http://www.w3.org/2000/01/rdf-schema#subPropertyOf");
+      const p1 = namedNode("http://example.org/p1");
+      const p2 = namedNode("http://example.org/p2");
+      const store = new Store([quad(A, subClassOf, B, defaultGraph())]);
+
+      mockClassifyPropertiesSequence([quad(p1, subPropertyOf, p2, defaultGraph())]);
+      await reasoner.classifyProperties(store);
+
+      // Second call with the same store content — should be a cache hit
+      mockClassifyPropertiesSequence([]);
+      await reasoner.classifyProperties(store);
+
+      const loadCalls = mocks.workerPostMessage.mock.calls.filter(
+        (c) => (c[0] as { method: string }).method === "loadTripleBuffer",
+      );
+      expect(loadCalls).toHaveLength(1);
+    });
+
+    it("materialize(store, { returnDelta: true }) first call → delta.added contains all inferred quads, delta.removed = []", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(A, subClassOf, B, defaultGraph())]);
+      const inferredQuad = quad(alice, rdfType, B, defaultGraph());
+
+      mockRealizationSequence([inferredQuad]);
+
+      const result = await reasoner.materialize(store, { returnDelta: true });
+      expect(result.delta.removed).toHaveLength(0);
+      expect(result.delta.added).toHaveLength(1);
+      expect(result.delta.added[0].subject.value).toBe("http://example.org/alice");
+      expect(result.delta.added[0].predicate.value).toBe("http://www.w3.org/1999/02/22-rdf-syntax-ns#type");
+      expect(result.delta.added[0].object.value).toBe("http://example.org/B");
+    });
+
+    it("materialize(store, { returnDelta: true }) after adding a triple → delta shows diff", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(A, subClassOf, B, defaultGraph())]);
+      const alice2 = namedNode("http://example.org/alice2");
+      const inferredQuad1 = quad(alice, rdfType, B, defaultGraph());
+      const inferredQuad2 = quad(alice2, rdfType, B, defaultGraph());
+
+      // First call: Worker returns inferredQuad1
+      mockRealizationSequence([inferredQuad1]);
+      await reasoner.materialize(store);
+
+      // Now modify the store to change its fingerprint
+      store.addQuad(quad(alice2, rdfType, A, defaultGraph()));
+
+      // Second call: Worker returns inferredQuad2 (alice2 is now typed as B, alice is gone)
+      // We need to clear the mock and set up new responses
+      mocks.workerPostMessage.mockClear();
+      const buf2 = buildCombinedBuffer([inferredQuad2]);
+      mocks.workerPostMessage.mockImplementation((msg: unknown) => {
+        const req = msg as { id: number; method: string };
+        if (req.method === "loadTripleBuffer") {
+          simulateWorkerMessage({ id: req.id, result: true });
+        } else if (req.method === "realization") {
+          simulateWorkerMessage({ id: req.id, result: true });
+        } else if (req.method === "getInferredTripleBuffer") {
+          simulateWorkerMessage({ id: req.id, result: buf2 });
+        }
+      });
+
+      const result = await reasoner.materialize(store, { returnDelta: true });
+
+      // alice2 is newly inferred; alice was inferred before but now gone
+      expect(result.delta.added.some((q) => q.subject.value === "http://example.org/alice2")).toBe(true);
+      expect(result.delta.removed.some((q) => q.subject.value === "http://example.org/alice")).toBe(true);
+    });
+
+    it("materialize(store) without returnDelta → return value has no delta property (backward compat)", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(A, subClassOf, B, defaultGraph())]);
+
+      mockRealizationSequence([]);
+
+      const result = await reasoner.materialize(store);
+
+      // result is void (undefined); no delta property
+      expect(result).toBeUndefined();
+    });
+
+    it("Store contains only INFERRED_GRAPH_IRI quads (no base triples) → fingerprint is stable; cache hit on second call", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store();
+      // Add only inferred quads — these are filtered from fingerprint
+      const inferredNode = namedNode(INFERRED_GRAPH_IRI);
+      store.addQuad(quad(A, subClassOf, C, inferredNode));
+
+      mockRealizationSequence([]);
+      await reasoner.materialize(store);
+
+      // Second call — still no base triples, same fingerprint → cache hit
+      mockRealizationSequence([]);
+      await reasoner.materialize(store);
+
+      const loadCalls = mocks.workerPostMessage.mock.calls.filter(
+        (c) => (c[0] as { method: string }).method === "loadTripleBuffer",
+      );
+      expect(loadCalls).toHaveLength(1);
+    });
+
+    it("Store contains only HYPOTHETICAL_IRI quads → fingerprint is stable; cache hit on second call", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store();
+      // Add only hypothetical quads — these are also filtered from fingerprint
+      const hypotheticalNode = namedNode(HYPOTHETICAL_IRI);
+      store.addQuad(quad(A, subClassOf, C, hypotheticalNode));
+
+      mockRealizationSequence([]);
+      await reasoner.materialize(store);
+
+      // Second call — same hypothetical-only content → cache hit
+      mockRealizationSequence([]);
+      await reasoner.materialize(store);
+
+      const loadCalls = mocks.workerPostMessage.mock.calls.filter(
+        (c) => (c[0] as { method: string }).method === "loadTripleBuffer",
+      );
+      expect(loadCalls).toHaveLength(1);
+    });
+
+    it("Store changes between calls → cache miss; Worker receives new loadTripleBuffer", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(A, subClassOf, B, defaultGraph())]);
+
+      mockRealizationSequence([quad(alice, rdfType, B, defaultGraph())]);
+      await reasoner.materialize(store);
+
+      // Modify the store — different fingerprint
+      store.addQuad(quad(B, subClassOf, C, defaultGraph()));
+      mocks.workerPostMessage.mockClear();
+
+      mockRealizationSequence([]);
+      await reasoner.materialize(store);
+
+      const loadCalls = mocks.workerPostMessage.mock.calls.filter(
+        (c) => (c[0] as { method: string }).method === "loadTripleBuffer",
+      );
+      // Cache was invalidated; a new Worker call was made
+      expect(loadCalls).toHaveLength(1);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // whatIf()
+  // -------------------------------------------------------------------------
+
+  describe("whatIf", () => {
+    const rdfType = namedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#type");
+    const penguin = namedNode("http://example.org/penguin");
+    const Penguin = namedNode("http://example.org/Penguin");
+    const Bird = namedNode("http://example.org/Bird");
+
+    function mockRealizationSequence(inferredQuads: Quad[]) {
+      const buf = buildCombinedBuffer(inferredQuads);
+      mocks.workerPostMessage.mockImplementation((msg: unknown) => {
+        const req = msg as { id: number; method: string };
+        if (req.method === "loadTripleBuffer") simulateWorkerMessage({ id: req.id, result: true });
+        else if (req.method === "realization") simulateWorkerMessage({ id: req.id, result: true });
+        else if (req.method === "getInferredTripleBuffer") simulateWorkerMessage({ id: req.id, result: buf });
+      });
+    }
+
+    // Test 1: Happy path — additions trigger new entailments
+    it("happy path: additions trigger new entailments", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(Penguin, subClassOf, Bird, defaultGraph())]);
+
+      mockRealizationSequence([quad(penguin, rdfType, Bird, defaultGraph())]);
+
+      const result = await reasoner.whatIf(store, [quad(penguin, rdfType, Penguin, defaultGraph())]);
+
+      expect(result.removed).toHaveLength(0);
+      expect(result.added).toHaveLength(1);
+      expect(result.added[0].subject.value).toBe("http://example.org/penguin");
+      expect(result.added[0].predicate.value).toBe("http://www.w3.org/1999/02/22-rdf-syntax-ns#type");
+      expect(result.added[0].object.value).toBe("http://example.org/Bird");
+      expect(result.added[0].graph.value).toBe(INFERRED_GRAPH_IRI);
+    });
+
+    // Test 2: Store base triples NOT mutated
+    it("store base triples are not mutated after whatIf", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(Penguin, subClassOf, Bird, defaultGraph())]);
+      const baseQuadsBefore = store.getQuads(null, null, null, defaultGraph()).map(q => q.value);
+
+      mockRealizationSequence([quad(penguin, rdfType, Bird, defaultGraph())]);
+
+      await reasoner.whatIf(store, [quad(penguin, rdfType, Penguin, defaultGraph())]);
+
+      const baseQuadsAfter = store.getQuads(null, null, null, defaultGraph()).map(q => q.value);
+      expect(baseQuadsAfter).toEqual(baseQuadsBefore);
+    });
+
+    // Test 3: INFERRED_GRAPH_IRI NOT mutated
+    it("INFERRED_GRAPH_IRI is not mutated after whatIf", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(Penguin, subClassOf, Bird, defaultGraph())]);
+
+      // Pre-populate INFERRED_GRAPH_IRI with prior inferred quads
+      const ig = namedNode(INFERRED_GRAPH_IRI);
+      const priorInferred = quad(A, subClassOf, C, ig);
+      store.addQuad(priorInferred);
+
+      mockRealizationSequence([quad(penguin, rdfType, Bird, defaultGraph())]);
+
+      await reasoner.whatIf(store, [quad(penguin, rdfType, Penguin, defaultGraph())]);
+
+      // INFERRED_GRAPH_IRI should still only have the prior quad, not hypothetical ones
+      const inferredAfter = store.getQuads(null, null, null, ig);
+      expect(inferredAfter).toHaveLength(1);
+      expect(inferredAfter[0].subject.value).toBe("http://example.org/A");
+      expect(inferredAfter[0].predicate.value).toBe("http://www.w3.org/2000/01/rdf-schema#subClassOf");
+      expect(inferredAfter[0].object.value).toBe("http://example.org/C");
+    });
+
+    // Test 4: outputGraph option writes to named graph
+    it("outputGraph option: writes hypothetical inferences to named graph, not INFERRED_GRAPH_IRI", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(Penguin, subClassOf, Bird, defaultGraph())]);
+
+      mockRealizationSequence([quad(penguin, rdfType, Bird, defaultGraph())]);
+
+      await reasoner.whatIf(
+        store,
+        [quad(penguin, rdfType, Penguin, defaultGraph())],
+        { outputGraph: "urn:hyp" }
+      );
+
+      // Hypothetical inferences appear in the outputGraph
+      const hypGraph = namedNode("urn:hyp");
+      const hypQuads = store.getQuads(null, null, null, hypGraph);
+      expect(hypQuads).toHaveLength(1);
+      expect(hypQuads[0].subject.value).toBe("http://example.org/penguin");
+      expect(hypQuads[0].predicate.value).toBe("http://www.w3.org/1999/02/22-rdf-syntax-ns#type");
+      expect(hypQuads[0].object.value).toBe("http://example.org/Bird");
+
+      // INFERRED_GRAPH_IRI unchanged (empty)
+      const ig = namedNode(INFERRED_GRAPH_IRI);
+      expect(store.getQuads(null, null, null, ig)).toHaveLength(0);
+    });
+
+    // Test 5: removals: excluded axiom → entailment absent
+    it("removals: excluded base axiom results in empty inferences", async () => {
+      const reasoner = await makeReadyReasoner();
+      const penguinTypeQuad = quad(penguin, rdfType, Penguin, defaultGraph());
+      const store = new Store([
+        quad(Penguin, subClassOf, Bird, defaultGraph()),
+        penguinTypeQuad,
+      ]);
+
+      // Worker returns empty buffer (penguin type removed, no instances → no entailments)
+      mockRealizationSequence([]);
+
+      const result = await reasoner.whatIf(store, [], { removals: [penguinTypeQuad] });
+
+      expect(result.added).toHaveLength(0);
+
+      // Verify the removed triple's object value is not present in the loadTripleBuffer args
+      const loadCall = mocks.workerPostMessage.mock.calls.find(
+        (c) => (c[0] as { method: string }).method === "loadTripleBuffer"
+      );
+      expect(loadCall).toBeDefined();
+      const strTableBuf = (loadCall![0] as { args: unknown[] }).args[1] as ArrayBuffer;
+      const entries = decodeStrTableEntries(strTableBuf);
+      // "Penguin" class may still appear (from the subClassOf axiom), but the
+      // penguin *individual* (lowercase) should NOT appear as a subject
+      // because its rdf:type assertion was removed
+      // The subject value "http://example.org/penguin" (lowercase) was only in the removed quad
+      expect(entries).not.toContain("http://example.org/penguin");
+    });
+
+    // Test 6: Empty additions, no removals: delta equivalent to materialize
+    it("empty additions and no removals: Worker receives all base quads; result includes inferred quads", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(Penguin, subClassOf, Bird, defaultGraph())]);
+
+      const expectedInferred = quad(penguin, rdfType, Bird, defaultGraph());
+      mockRealizationSequence([expectedInferred]);
+
+      const result = await reasoner.whatIf(store, []);
+
+      // The added array should contain the inferred quad
+      expect(result.added).toHaveLength(1);
+      expect(result.added[0].subject.value).toBe("http://example.org/penguin");
+
+      // Worker should have been called
+      const methods = mocks.workerPostMessage.mock.calls.map(
+        (c) => (c[0] as { method: string }).method,
+      );
+      expect(methods).toContain("loadTripleBuffer");
+      expect(methods).toContain("realization");
+      expect(methods).toContain("getInferredTripleBuffer");
+    });
+
+    // Test 7: outputGraph === INFERRED_GRAPH_IRI → throws before Worker call
+    it("outputGraph === INFERRED_GRAPH_IRI → rejects without calling Worker", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(Penguin, subClassOf, Bird, defaultGraph())]);
+
+      await expect(
+        reasoner.whatIf(store, [], { outputGraph: INFERRED_GRAPH_IRI })
+      ).rejects.toThrow("whatIf: outputGraph must not equal INFERRED_GRAPH_IRI");
+
+      expect(mocks.workerPostMessage).not.toHaveBeenCalled();
+    });
+
+    // Test 8: Integration-style: whatIf does not corrupt subsequent materialize
+    it("whatIf followed by materialize: materialize uses real base state, not hypothetical", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(Penguin, subClassOf, Bird, defaultGraph())]);
+
+      // whatIf: returns hypothetical result (penguin is Bird)
+      mockRealizationSequence([quad(penguin, rdfType, Bird, defaultGraph())]);
+      const whatIfResult = await reasoner.whatIf(store, [quad(penguin, rdfType, Penguin, defaultGraph())]);
+      expect(whatIfResult.added).toHaveLength(1);
+
+      // INFERRED_GRAPH_IRI should still be empty after whatIf
+      const ig = namedNode(INFERRED_GRAPH_IRI);
+      expect(store.getQuads(null, null, null, ig)).toHaveLength(0);
+
+      // Now call materialize on the real store (no individuals → no rdf:type inferences)
+      mocks.workerPostMessage.mockClear();
+      mockRealizationSequence([]);
+      await reasoner.materialize(store);
+
+      // After materialize, INFERRED_GRAPH_IRI should be empty (no individuals in base store)
+      expect(store.getQuads(null, null, null, ig)).toHaveLength(0);
+
+      // materialize should have been called (not a cache hit from whatIf)
+      const loadCalls = mocks.workerPostMessage.mock.calls.filter(
+        (c) => (c[0] as { method: string }).method === "loadTripleBuffer",
+      );
+      expect(loadCalls).toHaveLength(1);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // isEntailed()
+  // -------------------------------------------------------------------------
+
+  describe("isEntailed", () => {
+    const rdfType = namedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#type");
+    const penguin = namedNode("http://example.org/penguin");
+    const Penguin = namedNode("http://example.org/Penguin");
+    const Bird = namedNode("http://example.org/Bird");
+    const unknown = namedNode("http://example.org/unknown");
+
+    /** Mock for realization (materialize) pipeline within isEntailed */
+    function mockRealizationSequence(inferredQuads: Quad[]) {
+      const buf = buildCombinedBuffer(inferredQuads);
+      mocks.workerPostMessage.mockImplementation((msg: unknown) => {
+        const req = msg as { id: number; method: string };
+        if (req.method === "loadTripleBuffer") simulateWorkerMessage({ id: req.id, result: true });
+        else if (req.method === "realization") simulateWorkerMessage({ id: req.id, result: true });
+        else if (req.method === "getInferredTripleBuffer") simulateWorkerMessage({ id: req.id, result: buf });
+      });
+    }
+
+    it("happy path: entailed rdf:type returns true", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(Penguin, subClassOf, Bird, defaultGraph())]);
+
+      mockRealizationSequence([quad(penguin, rdfType, Bird, defaultGraph())]);
+
+      const result = await reasoner.isEntailed(store, quad(penguin, rdfType, Bird));
+
+      expect(result).toBe(true);
+
+      const methods = mocks.workerPostMessage.mock.calls.map(
+        (c) => (c[0] as { method: string }).method,
+      );
+      expect(methods).toContain("realization");
+    });
+
+    it("happy path: not-entailed rdf:type returns false", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(Penguin, subClassOf, Bird, defaultGraph())]);
+
+      // Worker returns penguin as Bird but not unknown as Bird
+      mockRealizationSequence([quad(penguin, rdfType, Bird, defaultGraph())]);
+
+      const result = await reasoner.isEntailed(store, quad(unknown, rdfType, Bird));
+
+      expect(result).toBe(false);
+    });
+
+    it("happy path: batch returns [true, false, null]", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(Penguin, subClassOf, Bird, defaultGraph())]);
+
+      // Worker returns only penguin as Bird
+      mockRealizationSequence([quad(penguin, rdfType, Bird, defaultGraph())]);
+
+      const unsupportedPred = namedNode("http://www.w3.org/2004/02/skos/core#prefLabel");
+      const results = await reasoner.isEntailed(store, [
+        quad(penguin, rdfType, Bird),      // supported + entailed → true
+        quad(unknown, rdfType, Bird),       // supported + not entailed → false
+        quad(A, unsupportedPred, B),        // unsupported predicate → null
+      ]);
+
+      expect(results).toEqual([true, false, null]);
+    });
+
+    it("unsupported predicate returns null, no Worker call", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(A, subClassOf, B, defaultGraph())]);
+
+      const skosLabel = namedNode("http://www.w3.org/2004/02/skos/core#prefLabel");
+      const result = await reasoner.isEntailed(store, quad(A, skosLabel, B));
+
+      expect(result).toBeNull();
+      expect(mocks.workerPostMessage).not.toHaveBeenCalled();
+    });
+
+    it("called before any reasoning: triggers reasoning internally", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(Penguin, subClassOf, Bird, defaultGraph())]);
+
+      // No prior reasoning — fresh reasoner
+      mockRealizationSequence([quad(penguin, rdfType, Bird, defaultGraph())]);
+
+      const result = await reasoner.isEntailed(store, quad(penguin, rdfType, Bird));
+
+      expect(result).toBe(true);
+      // Worker must have been called (reasoning triggered internally)
+      expect(mocks.workerPostMessage).toHaveBeenCalled();
+      const methods = mocks.workerPostMessage.mock.calls.map(
+        (c) => (c[0] as { method: string }).method,
+      );
+      expect(methods).toContain("loadTripleBuffer");
+      expect(methods).toContain("realization");
+    });
+
+    it("store changes → cache miss → re-reasons: Worker receives two loadTripleBuffer calls", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(Penguin, subClassOf, Bird, defaultGraph())]);
+
+      mockRealizationSequence([quad(penguin, rdfType, Bird, defaultGraph())]);
+      await reasoner.isEntailed(store, quad(penguin, rdfType, Bird));
+
+      // Add a triple to change the store fingerprint
+      store.addQuad(quad(B, subClassOf, C, defaultGraph()));
+      mocks.workerPostMessage.mockClear();
+
+      mockRealizationSequence([quad(penguin, rdfType, Bird, defaultGraph())]);
+      await reasoner.isEntailed(store, quad(penguin, rdfType, Bird));
+
+      const loadCalls = mocks.workerPostMessage.mock.calls.filter(
+        (c) => (c[0] as { method: string }).method === "loadTripleBuffer",
+      );
+      expect(loadCalls).toHaveLength(1); // one in second call after cache miss
+    });
+
+    it("concurrent with materialize: queued correctly, both complete without hang", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(Penguin, subClassOf, Bird, defaultGraph())]);
+      const store2 = new Store([quad(A, subClassOf, B, defaultGraph())]);
+
+      const buf = buildCombinedBuffer([quad(penguin, rdfType, Bird, defaultGraph())]);
+      const emptyBuf = buildCombinedBuffer([]);
+
+      // Set up mock to handle both operations sequentially
+      mocks.workerPostMessage.mockImplementation((msg: unknown) => {
+        const req = msg as { id: number; method: string };
+        if (req.method === "loadTripleBuffer") simulateWorkerMessage({ id: req.id, result: true });
+        else if (req.method === "realization") simulateWorkerMessage({ id: req.id, result: true });
+        else if (req.method === "getInferredTripleBuffer") {
+          // First call (from materialize) returns empty; second (from isEntailed) returns entailed quad
+          const callCount = mocks.workerPostMessage.mock.calls.filter(
+            (c) => (c[0] as { method: string }).method === "getInferredTripleBuffer"
+          ).length;
+          simulateWorkerMessage({ id: req.id, result: callCount <= 1 ? emptyBuf : buf });
+        }
+      });
+
+      const [materializeResult, isEntailedResult] = await Promise.all([
+        reasoner.materialize(store2),
+        reasoner.isEntailed(store, quad(penguin, rdfType, Bird)),
+      ]);
+
+      // Both should complete
+      expect(materializeResult).toBeUndefined(); // materialize returns void
+      // isEntailed result depends on store2 having different fingerprint; both ran independently
+      expect(typeof isEntailedResult).toBe("boolean");
+    });
+
+    it("subClassOf axiom routes to _classifyInline: Worker receives 'classification', not 'realization'", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(A, subClassOf, B, defaultGraph())]);
+
+      // Mock the classify pipeline (classification + getInferredTripleBuffer)
+      const inferredSubClassOf = quad(A, subClassOf, C, defaultGraph());
+      const buf = buildCombinedBuffer([inferredSubClassOf]);
+      mocks.workerPostMessage.mockImplementation((msg: unknown) => {
+        const req = msg as { id: number; method: string };
+        if (req.method === "loadTripleBuffer") simulateWorkerMessage({ id: req.id, result: true });
+        else if (req.method === "classification") simulateWorkerMessage({ id: req.id, result: true });
+        else if (req.method === "getInferredTripleBuffer") simulateWorkerMessage({ id: req.id, result: buf });
+      });
+
+      const result = await reasoner.isEntailed(store, quad(A, subClassOf, C));
+
+      expect(result).toBe(true);
+
+      const methods = mocks.workerPostMessage.mock.calls.map(
+        (c) => (c[0] as { method: string }).method,
+      );
+      expect(methods).toContain("classification");
+      expect(methods).not.toContain("realization");
+    });
+
+    it("subPropertyOf axiom routes to _classifyPropertiesInline: Worker receives 'getPropertyTripleBuffer'", async () => {
+      const reasoner = await makeReadyReasoner();
+      const subPropertyOf = namedNode("http://www.w3.org/2000/01/rdf-schema#subPropertyOf");
+      const p1 = namedNode("http://example.org/p1");
+      const p2 = namedNode("http://example.org/p2");
+      const store = new Store([quad(A, subClassOf, B, defaultGraph())]);
+
+      // Mock the classifyProperties pipeline (classification + getPropertyTripleBuffer)
+      const inferredSubProp = quad(p1, subPropertyOf, p2, defaultGraph());
+      const buf = buildCombinedBuffer([inferredSubProp]);
+      mocks.workerPostMessage.mockImplementation((msg: unknown) => {
+        const req = msg as { id: number; method: string };
+        if (req.method === "loadTripleBuffer") simulateWorkerMessage({ id: req.id, result: true });
+        else if (req.method === "classification") simulateWorkerMessage({ id: req.id, result: true });
+        else if (req.method === "getPropertyTripleBuffer") simulateWorkerMessage({ id: req.id, result: buf });
+      });
+
+      const result = await reasoner.isEntailed(store, quad(p1, subPropertyOf, p2));
+
+      expect(result).toBe(true);
+
+      const methods = mocks.workerPostMessage.mock.calls.map(
+        (c) => (c[0] as { method: string }).method,
+      );
+      expect(methods).toContain("classification");
+      expect(methods).toContain("getPropertyTripleBuffer");
+      expect(methods).not.toContain("realization");
+      expect(methods).not.toContain("getInferredTripleBuffer");
     });
   });
 });
