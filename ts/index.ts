@@ -250,14 +250,21 @@ export class RdfReasoner {
   // classify()
   // -------------------------------------------------------------------------
 
-  /** Classify a Store (alias for `reason(store)`). */
+  /** Classify a Store. Inferred rdfs:subClassOf and owl:equivalentClass triples
+   *  are written into `opts.inferredGraph` (default `INFERRED_GRAPH_IRI`). The
+   *  graph is cleared before each call. Concurrent calls are serialized.
+   *
+   *  Internally sends a single `classification` command to the WASM worker, which
+   *  runs TBox-only reasoning (class hierarchy + property hierarchy). No ABox
+   *  realization is performed. For individual rdf:type entailments use
+   *  `materialize(store)` instead. */
   classify(store: Store, opts?: StoreReasoningOptions): Promise<void>;
   /**
    * @deprecated Use `classify(store)` instead. For ABox/rdf:type results, use `materialize(store)`.
    *
-   * Classify the given quads (alias for `reason(quads, { mode: 'classify' })`).
-   *
-   * Returns the inferred rdfs:subClassOf quads in the default graph.
+   * Classify the given quads. Returns the inferred rdfs:subClassOf quads in the
+   * default graph. Internally sends a single `classification` command to the
+   * WASM worker (TBox-only; no ABox realization).
    */
   classify(quads: Iterable<Quad>): Promise<Quad[]>;
   classify(
@@ -312,12 +319,22 @@ export class RdfReasoner {
    *  written into `opts.inferredGraph` (default `INFERRED_GRAPH_IRI`). The
    *  graph is cleared before each call. When `opts.includeClassHierarchy` is
    *  `true`, rdfs:subClassOf and owl:equivalentClass triples are also included.
-   *  Concurrent calls are serialized. */
+   *  Concurrent calls are serialized.
+   *
+   *  Internally sends a single `realization` command to the WASM worker.
+   *  Classification (TBox: class hierarchy + property hierarchy) is always a
+   *  prerequisite inside the realization pipeline — it is NOT a separate call.
+   *  Both TBox and ABox steps are submitted together in one `prepareOntology()`
+   *  invocation at the C++ level. Use `classify(store)` when ABox individuals
+   *  are absent or rdf:type entailments are not needed. */
   materialize(store: Store, opts?: MaterializeStoreOptions): Promise<void>;
   /**
    * Materialize ABox entailments (rdf:type assertions) for the given quads.
    *
-   * Runs the full TBox+ABox realization pipeline. By default only rdf:type
+   * Internally sends a single `realization` command to the WASM worker.
+   * Classification (TBox: class hierarchy + property hierarchy) is always a
+   * prerequisite inside the realization pipeline — it runs as part of the same
+   * `prepareOntology()` call, not as a separate step. By default only rdf:type
    * entailments are returned. Pass `{ includeClassHierarchy: true }` to also
    * receive rdfs:subClassOf and owl:equivalentClass triples.
    *

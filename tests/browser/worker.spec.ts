@@ -8,7 +8,7 @@
  * Primary goals:
  *   1. COOP/COEP headers are present → window.crossOriginIsolated === true
  *      → SharedArrayBuffer available → pthreads initialise.
- *   2. RdfReasoner.reason(store) pipeline works end-to-end in a real browser
+ *   2. RdfReasoner.classify(store) pipeline works end-to-end in a real browser
  *      worker (would have deadlocked under the pre-plan-016 single-thread bug).
  *   3. Consistency check via checkConsistency(store) returns the correct boolean.
  *
@@ -48,10 +48,10 @@ test("SharedArrayBuffer is available — COOP/COEP headers correct", async ({
 });
 
 // ---------------------------------------------------------------------------
-// Test 2: reason(store) — subclass chain produces transitive inference
+// Test 2: classify(store) — subclass chain produces direct subClassOf edges
 // ---------------------------------------------------------------------------
 
-test("reason(store): A→B→C chain returns direct subClassOf edges via realization", async ({
+test("classify(store): A→B→C chain returns direct subClassOf edges", async ({
   page,
 }) => {
   const result = await page.evaluate(async () => {
@@ -76,7 +76,7 @@ test("reason(store): A→B→C chain returns direct subClassOf edges via realiza
 
     const reasoner = new RdfReasoner();
     await reasoner.ready;
-    await reasoner.reason(store);
+    await reasoner.classify(store);
     reasoner.terminate();
 
     const inferredGraph = namedNode(INFERRED_GRAPH_IRI);
@@ -134,10 +134,10 @@ test("checkConsistency(store): simple subclass chain is consistent", async ({
 });
 
 // ---------------------------------------------------------------------------
-// Test 4: reason(store) with Turtle parsed via n3.Parser
+// Test 4: classify(store) with Turtle parsed via n3.Parser
 // ---------------------------------------------------------------------------
 
-test("reason(store): parse Turtle via n3.Parser, run classification", async ({
+test("classify(store): parse Turtle via n3.Parser, run classification", async ({
   page,
 }) => {
   const result = await page.evaluate(async () => {
@@ -166,7 +166,7 @@ test("reason(store): parse Turtle via n3.Parser, run classification", async ({
 
     const reasoner = new RdfReasoner();
     await reasoner.ready;
-    await reasoner.reason(store);
+    await reasoner.classify(store);
     reasoner.terminate();
 
     const inferredGraph = namedNode(INFERRED_GRAPH_IRI);
@@ -182,4 +182,127 @@ test("reason(store): parse Turtle via n3.Parser, run classification", async ({
   expect(result.some((t) => t.s === ex + "Mammal" && t.p === RDFS_SUB && t.o === ex + "Animal")).toBe(true);
   expect(result.some((t) => t.s === ex + "Dog"    && t.p === RDFS_SUB && t.o === ex + "Mammal")).toBe(true);
   expect(result.some((t) => t.s === ex + "Poodle" && t.p === RDFS_SUB && t.o === ex + "Dog")).toBe(true);
+});
+
+// ---------------------------------------------------------------------------
+// Test 5: someValuesFrom — TBox subsumption + ABox realization
+// ---------------------------------------------------------------------------
+
+test("someValuesFrom TBox: DogOwner ⊑ PetOwner via classify(store)", async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    const { RdfReasoner, INFERRED_GRAPH_IRI, DataFactory, Store, Parser } = window;
+    const { namedNode } = DataFactory;
+
+    const turtle = `
+      @prefix ex:   <http://example.org/svf#> .
+      @prefix owl:  <http://www.w3.org/2002/07/owl#> .
+      @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+      @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+
+      <http://example.org/svf> a owl:Ontology .
+
+      ex:Animal a owl:Class .
+      ex:Dog    a owl:Class ; rdfs:subClassOf ex:Animal .
+      ex:hasAnimal a owl:ObjectProperty .
+
+      ex:DogOwner a owl:Class ;
+          owl:equivalentClass [ a owl:Restriction ; owl:onProperty ex:hasAnimal ; owl:someValuesFrom ex:Dog ] .
+
+      ex:PetOwner a owl:Class ;
+          owl:equivalentClass [ a owl:Restriction ; owl:onProperty ex:hasAnimal ; owl:someValuesFrom ex:Animal ] .
+    `;
+
+    const store = new Store();
+    await new Promise<void>((resolve, reject) => {
+      new Parser({ format: "text/turtle" }).parse(turtle, (err: Error | null, quad: any) => {
+        if (err) { reject(err); return; }
+        if (quad) store.addQuad(quad);
+        else resolve();
+      });
+    });
+
+    const reasoner = new RdfReasoner();
+    await reasoner.ready;
+    await reasoner.classify(store);
+    reasoner.terminate();
+
+    const inferredGraph = namedNode(INFERRED_GRAPH_IRI);
+    return store
+      .getQuads(null, null, null, inferredGraph)
+      .map((q: any) => ({ s: q.subject.value, p: q.predicate.value, o: q.object.value }));
+  });
+
+  const SUB = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
+  const svf = "http://example.org/svf#";
+
+  expect(
+    result.some((t) => t.s === svf + "DogOwner" && t.p === SUB && t.o === svf + "PetOwner"),
+    `Expected DogOwner subClassOf PetOwner.\nGot:\n${result.map((t) => `  <${t.s}> <${t.p}> <${t.o}>`).join("\n")}`,
+  ).toBe(true);
+});
+
+test("someValuesFrom ABox: Alice rdf:type DogOwner/PetOwner via materialize(store)", async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    const { RdfReasoner, INFERRED_GRAPH_IRI, DataFactory, Store, Parser } = window;
+    const { namedNode } = DataFactory;
+
+    const turtle = `
+      @prefix ex:   <http://example.org/svf#> .
+      @prefix owl:  <http://www.w3.org/2002/07/owl#> .
+      @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+      @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+
+      <http://example.org/svf> a owl:Ontology .
+
+      ex:Animal a owl:Class .
+      ex:Dog    a owl:Class ; rdfs:subClassOf ex:Animal .
+      ex:hasAnimal a owl:ObjectProperty .
+
+      ex:DogOwner a owl:Class ;
+          owl:equivalentClass [ a owl:Restriction ; owl:onProperty ex:hasAnimal ; owl:someValuesFrom ex:Dog ] .
+
+      ex:PetOwner a owl:Class ;
+          owl:equivalentClass [ a owl:Restriction ; owl:onProperty ex:hasAnimal ; owl:someValuesFrom ex:Animal ] .
+
+      ex:Fido  a owl:NamedIndividual, ex:Dog .
+      ex:Alice a owl:NamedIndividual ;
+          ex:hasAnimal ex:Fido .
+    `;
+
+    const store = new Store();
+    await new Promise<void>((resolve, reject) => {
+      new Parser({ format: "text/turtle" }).parse(turtle, (err: Error | null, quad: any) => {
+        if (err) { reject(err); return; }
+        if (quad) store.addQuad(quad);
+        else resolve();
+      });
+    });
+
+    const reasoner = new RdfReasoner();
+    await reasoner.ready;
+    await reasoner.materialize(store);
+    reasoner.terminate();
+
+    const inferredGraph = namedNode(INFERRED_GRAPH_IRI);
+    return store
+      .getQuads(null, null, null, inferredGraph)
+      .map((q: any) => ({ s: q.subject.value, p: q.predicate.value, o: q.object.value }));
+  });
+
+  const RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+  const svf      = "http://example.org/svf#";
+
+  expect(
+    result.some((t) => t.s === svf + "Alice" && t.p === RDF_TYPE && t.o === svf + "DogOwner"),
+    `Expected Alice rdf:type DogOwner via someValuesFrom.\nGot:\n${result.map((t) => `  <${t.s}> <${t.p}> <${t.o}>`).join("\n")}`,
+  ).toBe(true);
+
+  expect(
+    result.some((t) => t.s === svf + "Alice" && t.p === RDF_TYPE && t.o === svf + "PetOwner"),
+    "Expected Alice rdf:type PetOwner via DogOwner ⊑ PetOwner",
+  ).toBe(true);
 });

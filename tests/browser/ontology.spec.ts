@@ -81,7 +81,7 @@ function assertNativeMatch(triples: Triple[], predicates: string[], fixtureFile:
 }
 
 /**
- * Fetch one or more NT fixtures, parse them, run reason(), return all inferred triples.
+ * Fetch one or more NT fixtures, parse them, run classify(), return all inferred triples.
  */
 async function classifyFixtures(page: any, fixtures: string[]): Promise<Triple[]> {
   return page.evaluate(async (fixturePaths: string[]) => {
@@ -101,7 +101,7 @@ async function classifyFixtures(page: any, fixtures: string[]): Promise<Triple[]
 
     const reasoner = new RdfReasoner();
     await reasoner.ready;
-    await reasoner.reason(store);
+    await reasoner.classify(store);
     reasoner.terminate();
 
     const inferredGraph = DataFactory.namedNode(INFERRED_GRAPH_IRI);

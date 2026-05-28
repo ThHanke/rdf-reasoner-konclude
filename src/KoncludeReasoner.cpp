@@ -599,6 +599,14 @@ void KoncludeReasoner::loadTripleBuffer(int triplePtr, int tripleCount, int strT
 }
 
 // ── shared pipeline helper ─────────────────────────────────────────────────────
+// Both classification() and realization() go through runPipeline().
+// buildBaseRequirements() always adds the full TBox pipeline:
+//   triples-mapping → active-count → build → preprocess → consistency →
+//   precompute-saturation → class-classify → object-property-classify → data-property-classify
+// realization() appends four ABox steps on top of that same requirement list
+// and submits everything in one prepareOntology() call.  Classification is
+// therefore never a separate round-trip when realizing — it is a prerequisite
+// that Konclude satisfies as part of the same run.
 
 static void buildBaseRequirements(QList<COntologyProcessingRequirement*>& reqList) { // file-local helper
     COntologyProcessingStepVector* stepVec =
@@ -680,6 +688,7 @@ bool KoncludeReasoner::runPipeline(KoncludeReasoner::Impl* impl, bool includeRea
 
 // classification ───────────────────────────────────────────────────────────────
 // TBox only: class hierarchy + property hierarchy. No ABox realization.
+// Exposed to JS as the "classification" worker command (called by classify()).
 bool KoncludeReasoner::classification() {
     if (mImpl->mLoadError) return false;
 #ifdef WASM_VERBOSE_LOGGING
@@ -694,7 +703,12 @@ bool KoncludeReasoner::classification() {
 }
 
 // realization ──────────────────────────────────────────────────────────────────
-// TBox + ABox: classification followed by individual type realization.
+// TBox + ABox in one shot: classification is always a prerequisite (see
+// buildBaseRequirements), then OPSINITREALIZE / OPSCONCEPTREALIZE /
+// OPSROLEREALIZE / OPSSAMEINDIVIDUALSREALIZE are appended and all submitted
+// together via a single prepareOntology() call.  There is no separate
+// classification round-trip.
+// Exposed to JS as the "realization" worker command (called by materialize()).
 bool KoncludeReasoner::realization() {
     if (mImpl->mLoadError) return false;
 #ifdef WASM_VERBOSE_LOGGING

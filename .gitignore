@@ -1,5 +1,10 @@
 # Git worktrees
 .worktrees/
+.claude/worktrees/
+
+# Playwright MCP and test artifacts
+.playwright-mcp/
+test-results/
 
 # WASM build artifacts
 wasm-libs/
