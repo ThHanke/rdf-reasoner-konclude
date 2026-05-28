@@ -3,6 +3,34 @@ import type { Quad } from "@rdfjs/types";
 export const INFERRED_GRAPH_IRI = "urn:konclude:inferred";
 
 /**
+ * Options controlling how `explain()` and `explainInconsistency()` operate.
+ */
+export interface ExplainOptions {
+  /** Maximum number of justifications to return. Defaults to 1. */
+  maxJustifications?: number;
+  /** Optional filter to restrict the candidate axiom set. Applied AFTER the
+   *  built-in declaration filter. */
+  axiomFilter?: (q: Quad) => boolean;
+}
+
+/**
+ * Named graph IRI used to hold hypothetical (what-if) triples.
+ * Quads in this graph are excluded from store fingerprints.
+ */
+export const HYPOTHETICAL_IRI = "urn:konclude:hypothetical";
+
+/**
+ * The set of quads added or removed from the inferred graph between two
+ * consecutive materialize() calls on the same store.
+ */
+export interface InferenceDelta {
+  /** Quads newly inferred that were not present before. */
+  added: Quad[];
+  /** Quads that were inferred before but are no longer inferred. */
+  removed: Quad[];
+}
+
+/**
  * Options controlling how the reasoning operation is performed.
  *
  * @remarks This interface is used by the deprecated `reason()` API. Prefer
@@ -64,6 +92,15 @@ export interface MaterializeStoreOptions extends MaterializeOptions {
    * The graph is cleared before each call; do not store ontology triples here.
    */
   inferredGraph?: string;
+
+  /**
+   * When `true`, the returned Promise resolves to `{ delta: InferenceDelta }`
+   * containing the quads added and removed from the inferred graph compared
+   * to the previous inferred state.
+   *
+   * When absent or `false`, the Promise resolves to `void` (backward compatible).
+   */
+  returnDelta?: boolean;
 }
 
 /**
@@ -77,6 +114,17 @@ export interface ClassifyPropertiesStoreOptions {
    * The graph is cleared before each call; do not store ontology triples here.
    */
   inferredGraph?: string;
+}
+
+/**
+ * Options for `whatIf` hypothetical reasoning.
+ */
+export interface WhatIfOptions {
+  /** Quads to remove from the base ontology before reasoning. */
+  removals?: Quad[];
+  /** Named graph IRI where hypothetical inferences are written in the store.
+   *  Must not equal INFERRED_GRAPH_IRI or HYPOTHETICAL_IRI (throws if equal). */
+  outputGraph?: string;
 }
 
 /**
