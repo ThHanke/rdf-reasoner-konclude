@@ -371,30 +371,22 @@ describe("RdfReasoner — explainInconsistency", () => {
       quad(Person, owlDisjointWith, Organization, defaultGraph()),
     ]);
 
-    const inconsistencyAxiom = quad(owlThing, subClassOf, owlNothing, defaultGraph());
-
-    // Mock: first call is consistency check (returns false = inconsistent)
-    // Subsequent calls: classification + getInferredTripleBuffer for BlackBox iterations
+    // Mock: all sub-calls use the consistency oracle.
+    // Inconsistent when >= 3 quads loaded (full set); consistent otherwise.
     let consistencyChecked = false;
     let lastTripleCount = 0;
     mocks.workerPostMessage.mockImplementation((msg: unknown) => {
       const req = msg as { id: number; method: string; args: unknown[] };
       if (req.method === "loadTripleBuffer") {
         // Each triple = 3 × uint32 = 12 bytes; args[0] is tripleBuffer
-        lastTripleCount = (req.args[0] as ArrayBuffer).byteLength / 12;
+        lastTripleCount = Math.floor((req.args[0] as ArrayBuffer).byteLength / 12);
         simulateWorkerMessage({ id: req.id, result: true });
       } else if (req.method === "classification") {
         simulateWorkerMessage({ id: req.id, result: true });
       } else if (req.method === "consistency") {
         consistencyChecked = true;
-        simulateWorkerMessage({ id: req.id, result: false }); // inconsistent
-      } else if (req.method === "getInferredTripleBuffer") {
-        // Return owl:Thing subClassOf owl:Nothing iff >= 3 triples loaded (all axioms present)
-        const isFullSet = lastTripleCount >= 3;
-        const buf = isFullSet
-          ? buildCombinedBuffer([inconsistencyAxiom])
-          : buildCombinedBuffer([]);
-        simulateWorkerMessage({ id: req.id, result: buf });
+        // Full set (>= 3 quads) is inconsistent; subsets are consistent
+        simulateWorkerMessage({ id: req.id, result: lastTripleCount < 3 });
       }
     });
 
