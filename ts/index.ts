@@ -912,6 +912,19 @@ export class RdfReasoner {
     );
   }
 
+  /**
+   * Returns true if the candidate subset is inconsistent.
+   * Uses the consistency Worker pipeline (not triple lookup).
+   * Safe to call from inside a _queue body.
+   */
+  private async _checkInconsistencyDirect(candidates: Quad[]): Promise<boolean> {
+    const { tripleBuffer, strTableBuffer } = encodeToBuffers(candidates);
+    await this._callDirect("loadTripleBuffer", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
+    await this._callDirect("classification", []);
+    const consistent = (await this._callDirect("consistency", [])) as boolean;
+    return !consistent;
+  }
+
   // -------------------------------------------------------------------------
   // explain()
   // -------------------------------------------------------------------------
@@ -1075,66 +1088,57 @@ export class RdfReasoner {
   /** Compute minimal inconsistent sub-ontologies (MIPS) for an inconsistent
    *  ontology. Returns [] if the ontology is consistent.
    *
-   * Equivalent to explain(store, owl:Thing rdfs:subClassOf owl:Nothing, opts).
-   * Uses a fast-path consistency check (no Worker call) before entering
-   * the BlackBox loop.
+   * Uses the consistency oracle directly (loadTripleBuffer → classification →
+   * consistency) for all BlackBox iterations. Does not depend on
+   * owl:Thing rdfs:subClassOf owl:Nothing being emitted as an inferred triple.
    */
   explainInconsistency(store: Store, opts?: ExplainOptions): Promise<Quad[][]> {
     const result = this._queue.then(async () => {
-      // Fast-path: check consistency using existing cache or direct Worker call
+      // Build base quads (exclude inferred/hypothetical graphs)
       const allBase = store.getQuads(null, null, null, null).filter(q => {
         const g = q.graph.value;
         return g !== INFERRED_GRAPH_IRI && g !== HYPOTHETICAL_IRI;
       });
 
+      // Fast-path: check consistency using existing cache or direct Worker call
       const fingerprint = computeStoreFingerprint(store.getQuads(null, null, null, null));
       let consistent: boolean;
       if (this._consistencyCache?.hash === fingerprint) {
         consistent = this._consistencyCache.result;
       } else {
-        const { tripleBuffer, strTableBuffer } = encodeToBuffers(allBase);
-        await this._callDirect("loadTripleBuffer", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
-        await this._callDirect("classification", []);
-        consistent = (await this._callDirect("consistency", [])) as boolean;
+        consistent = !(await this._checkInconsistencyDirect(allBase));
         this._consistencyCache = { hash: fingerprint, result: consistent };
       }
 
-      // Invalidate caches before BlackBox sub-calls (WASM state will be modified)
+      // Invalidate other caches (sub-calls modify WASM state)
       this._classifyCache = null;
       this._materializeCache = null;
       this._classifyPropertiesCache = null;
 
       if (consistent) return [];
 
-      // Inconsistency anchor: owl:Thing rdfs:subClassOf owl:Nothing
-      const inconsistencyAxiom = DataFactory.quad(
-        DataFactory.namedNode(OWL_THING),
-        DataFactory.namedNode(RDFS_SUB_CLASS_OF),
-        DataFactory.namedNode(OWL_NOTHING),
-      );
-
       const maxJustifications = opts?.maxJustifications ?? 1;
       if (maxJustifications === 0) return [];
 
-      const opInfo = this._opForAxiom(RDFS_SUB_CLASS_OF)!; // always "classification"
-
+      // Build candidates: exclude only inferred/hypothetical graphs and user filter.
+      // Unlike explain(), we do NOT apply _isBuiltInDeclaration here because
+      // rdf:type owl:Class declarations are semantically meaningful for
+      // ABox inconsistency (Konclude requires them to recognize disjoint classes).
       const allCandidates = store.getQuads(null, null, null, null).filter(q => {
         const g = q.graph.value;
         if (g === INFERRED_GRAPH_IRI || g === HYPOTHETICAL_IRI) return false;
-        if (this._isBuiltInDeclaration(q)) return false;
         if (opts?.axiomFilter && !opts.axiomFilter(q)) return false;
         return true;
       });
 
-      // Invalidate caches for sub-calls
+      // Invalidate caches before BlackBox sub-calls (we already ran one consistency check)
       this._classifyCache = null;
       this._materializeCache = null;
       this._classifyPropertiesCache = null;
       this._consistencyCache = null;
 
-      // Verify inconsistency anchor is entailed
-      const entailed = await this._checkEntailmentDirect(allCandidates, inconsistencyAxiom, opInfo);
-      if (!entailed) return [];
+      // Verify full candidate set is indeed inconsistent (axiomFilter may have changed the set)
+      if (!(await this._checkInconsistencyDirect(allCandidates))) return [];
 
       const justifications: Quad[][] = [];
 
@@ -1146,10 +1150,10 @@ export class RdfReasoner {
           const mid = Math.floor(working.length / 2);
           const firstHalf = working.slice(0, mid);
           const secondHalf = working.slice(mid);
-          if (await this._checkEntailmentDirect(firstHalf, inconsistencyAxiom, opInfo)) {
+          if (await this._checkInconsistencyDirect(firstHalf)) {
             working = firstHalf; changed = true; continue;
           }
-          if (await this._checkEntailmentDirect(secondHalf, inconsistencyAxiom, opInfo)) {
+          if (await this._checkInconsistencyDirect(secondHalf)) {
             working = secondHalf; changed = true; continue;
           }
           break;
@@ -1158,7 +1162,7 @@ export class RdfReasoner {
         while (i < working.length) {
           if (working.length === 1) break;
           const without = [...working.slice(0, i), ...working.slice(i + 1)];
-          if (await this._checkEntailmentDirect(without, inconsistencyAxiom, opInfo)) {
+          if (await this._checkInconsistencyDirect(without)) {
             working = without;
           } else {
             i++;
@@ -1189,7 +1193,7 @@ export class RdfReasoner {
             const newExcludedKey = [...newExcluded].sort().join("|");
             if (exploredExclusions.has(newExcludedKey)) continue;
             const reduced = allCandidates.filter(q => !newExcluded.has(`${q.subject.value}\0${q.predicate.value}\0${q.object.value}`));
-            if (!await this._checkEntailmentDirect(reduced, inconsistencyAxiom, opInfo)) continue;
+            if (!(await this._checkInconsistencyDirect(reduced))) continue;
             const jNew = await findOneJustification(reduced);
             if (!jNew || jNew.length === 0) continue;
             const jKey = jNew.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`).sort().join("|");
