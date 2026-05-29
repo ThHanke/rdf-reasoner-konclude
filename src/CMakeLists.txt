@@ -236,6 +236,18 @@ list(APPEND KERNEL_SOURCES "${OVERRIDE_DIR}/CSingleThreadTaskProcessorUnit.cpp")
 list(FILTER KERNEL_SOURCES EXCLUDE REGEX ".*/Realizer/COntologyRealizingDynamicRequirmentCallbackData\\.cpp$")
 list(APPEND KERNEL_SOURCES "${OVERRIDE_DIR}/COntologyRealizingDynamicRequirmentCallbackData.cpp")
 
+# Manager thread-pool overrides: stop idle threads from prior calls before creating
+# new ones.  Without cleanup, ~5 threads/call accumulate and exhaust the Emscripten
+# pthread pool by the 5th sequential call, silently failing sat/classify/realize.
+list(FILTER KERNEL_SOURCES EXCLUDE REGEX ".*/Kernel/Manager/CPrecomputationManager\\.cpp$")
+list(FILTER KERNEL_SOURCES EXCLUDE REGEX ".*/Kernel/Manager/CPreprocessingManager\\.cpp$")
+list(FILTER KERNEL_SOURCES EXCLUDE REGEX ".*/Classifier/CClassificationManager\\.cpp$")
+list(APPEND KERNEL_SOURCES
+    "${OVERRIDE_DIR}/CPrecomputationManager.cpp"
+    "${OVERRIDE_DIR}/CPreprocessingManager.cpp"
+    "${OVERRIDE_DIR}/CClassificationManager.cpp"
+)
+
 # ---------------------------------------------------------------------------
 # 3. Static library: konclude_kernel
 # ---------------------------------------------------------------------------
