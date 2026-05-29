@@ -52,6 +52,7 @@
 #include "Config/CConfigurationGroup.h"
 #include "Config/CConvertBooleanConfigType.h"
 #include "Config/CStringConfigType.h"
+#include "Config/CIntegerConfigType.h"
 #include "Control/Command/CReasonerConfigurationGroup.h"
 
 // Reasoner manager
@@ -179,6 +180,16 @@ public:
         // Thread has started but no events processed yet — safe to swap.
         delete mRealizationManager;
         mRealizationManager = new WasmRealizationManager(this);
+        // Disable the saturation node expansion cache.  Its saturation results are
+        // keyed by concept tag (integer) which recycles across sequential fresh-ontology
+        // calls (same concepts → same tags).  After a TBox-only classify call, the cache
+        // holds stale saturation results for ABox individuals (no sameAs relationship)
+        // that are incorrectly reused by the next sameAs materialize, causing 0 output.
+        if (mSatNodeExpCache) {
+            mSatNodeExpCache->stopThread(true);
+            delete mSatNodeExpCache;
+            mSatNodeExpCache = nullptr;
+        }
         return this;
     }
 
@@ -249,6 +260,20 @@ public:
         if (pc) {
             CStringConfigType* st = dynamic_cast<CStringConfigType*>(pc->getConfigType());
             if (st) st->setValue("AUTO");
+        }
+        // Disable BackendAssCache slot-update deferral.
+        // The deferral counter (mSlotUpdateWaitingIncreaseCount) grows with each call.
+        // After ~4 calls it reaches the default max (20), meaning 20 write events to a
+        // fresh ontology must accumulate before a new slot is published to readers.
+        // This prevents the sameAs detection from seeing updated association data across
+        // the multiple retrieval rounds it requires, causing 0 owl:sameAs output.
+        // Setting the max to 0 forces a slot update on every write event — correct for
+        // our single-ontology-per-call sequential WASM use case.
+        CConfigData* swc = mConfig->createAndSetConfig(
+            "Konclude.Cache.RepresentativeBackendCache.SlotUpdateWaitingIncreaseMaximumCount");
+        if (swc) {
+            CIntegerConfigType* it = dynamic_cast<CIntegerConfigType*>(swc->getConfigType());
+            if (it) it->setValue(0);
         }
     }
     ~WasmConfigProvider() {
@@ -649,6 +674,7 @@ static void buildBaseRequirements(QList<COntologyProcessingRequirement*>& reqLis
 }
 
 bool KoncludeReasoner::runPipeline(KoncludeReasoner::Impl* impl, bool includeRealization) {
+
     QList<COntologyProcessingRequirement*> reqList;
     buildBaseRequirements(reqList);
 
@@ -696,6 +722,7 @@ bool KoncludeReasoner::runPipeline(KoncludeReasoner::Impl* impl, bool includeRea
 
     impl->mRealized = includeRealization && hasIndividuals &&
         stepDone(COntologyProcessingStep::OPSCONCEPTREALIZE);
+
 
     if (includeRealization && impl->mHasIndividualsHint) {
         impl->mReasonerManager->stopAndClearRealizers();

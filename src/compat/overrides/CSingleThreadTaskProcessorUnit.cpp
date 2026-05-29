@@ -352,11 +352,15 @@ namespace Konclude {
 		CThreadActivator* CSingleThreadTaskProcessorUnit::signalizeEvent() {
 			mEventSignalized = true;
 			if (mProcessingBlocked) {
-				// reactivate processing — wake the blocking STPU thread
-				if (mLastProcessingStartedTag == mLastProcessingStartRequestTag) {
-					++mLastProcessingStartRequestTag;
-					mProcessingWakeUpSemaphore.release();
-				}
+				// Reactivate the STPU: release the semaphore unconditionally.
+				// The original tag-equality guard (++mLastProcessingStartRequestTag only
+				// when startedTag == requestTag) was meant to prevent spurious wakes, but
+				// causes a deadlock when multiple late KPSet callbacks fire after
+				// startProcessing() resets the tags: each callback increments requestTag
+				// so they diverge, the guard never fires, and the semaphore is never
+				// released for the next call's tasks.  Spurious wakes are harmless — the
+				// STPU just loops and re-blocks.  Always release when blocked.
+				mProcessingWakeUpSemaphore.release();
 			}
 			return this;
 		}
@@ -378,6 +382,14 @@ namespace Konclude {
 		}
 
 		bool CSingleThreadTaskProcessorUnit::processingLoop() {
+			// Reset blocked flag on re-entry.  If processingLoop() is re-entered
+			// (after a stopProcessing()+CHandleEventsEvent restart), mProcessingBlocked
+			// may still be true from the previous call.  If so, the first iteration
+			// enters the semaphore wait immediately with no tasks queued, and hangs
+			// until signalizeEvent() fires — which may never come if the new call's
+			// saturation hasn't started yet.  Resetting here forces the full
+			// event-draining path before entering the blocking wait.
+			mProcessingBlocked = false;
 			bool eventSafeguardProcessed = false;
 			while (!mProcessingStopped) {
 				if (!mTaskProcessingQueue && mProcessingBlocked) {
