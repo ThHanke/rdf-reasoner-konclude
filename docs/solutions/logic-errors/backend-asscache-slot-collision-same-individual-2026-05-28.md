@@ -2,18 +2,35 @@
 module: KoncludeReasoner
 tags: [backend-asscache, same-individual, sequential-calls, ontology-id, open-investigation]
 problem_type: logic-error
-status: corrected 2026-05-28 — mechanism description updated; root cause still under investigation
+status: corrected 2026-05-29 — further narrowed; root cause still open
 ---
 
-# BackendAssCache corruption suppresses same-individual detection after n=3 prior ABox calls + classify
+# BackendAssCache corruption suppresses same-individual detection after n=3 ABox + classify
 
 ## Problem
 
-`materialize()` returns 0 `owl:sameAs` triples for ontologies with `owl:sameAs` assertions when
-a specific number of prior reasoning calls have been made on the same `KoncludeReasoner` instance:
+`materialize()` returns 0 `owl:sameAs` triples for ontologies with `owl:sameAs` assertions under
+a specific combination of prior reasoning calls:
 
-- n=3 ABOX materializations + 1 classify → next sameAs materialize: **0 triples** (FAIL)
-- n=1, 2, or 4 ABOX materializations + 1 classify → next sameAs materialize: **correct triples** (PASS)
+- n=3 ABOX materializations **with object property assertions (e.g. Alice knows Bob)** + 1 classify (full TBox) → next sameAs materialize: **0 triples** (FAIL)
+- n=3 ABOX materializations **without** object property assertions + 1 classify → **correct triples** (PASS)
+- n=3 ABOX + 0 classify → **correct triples** (PASS)
+- n=3 ABOX + classify + 1 more ABOX → **correct triples** (PASS)
+
+## Narrowed Root Cause
+
+The trigger requires: (1) Alice-knows-Bob object property assertion in prior ABOX calls, AND
+(2) a TBox-only classify call with a multi-class hierarchy (Animal/Mammal/Dog, 2 subclass axioms).
+The simpler TBox (just Animal/Mammal, 1 subclass) does NOT trigger the failure.
+
+The Alice-knows-Bob relationship creates `NEIGHBOUR_INSTANTIATED_ROLE_SET_COMBINATION_LABEL`
+entries in the BackendAssCache's permanent context. After the full TBox classify, the BackendAssCache's
+`mSlotUpdateWaitingIncreaseCount` reaches a higher value, which combined with the accumulated
+neighbour label state causes the sameAs detection in Round 2 (Eve's `requireSameAsNeighboursCompletion`
+path) to fail to set Eve's `DeterministicMergedSameConsideredLabelCacheEntry` with Alice's ID.
+
+Exact failure path in `installAssociationUpdates` / `completeDeterministicSameAsMergingInformation`
+remains under investigation.
 
 ## Root Cause
 
