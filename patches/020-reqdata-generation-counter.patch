@@ -1,0 +1,200 @@
+diff --git a/Source/Reasoner/Kernel/Manager/CReasonerManagerThread.cpp b/Source/Reasoner/Kernel/Manager/CReasonerManagerThread.cpp
+index 64aa1ad4..d13cc396 100644
+--- a/Source/Reasoner/Kernel/Manager/CReasonerManagerThread.cpp
++++ b/Source/Reasoner/Kernel/Manager/CReasonerManagerThread.cpp
+@@ -535,7 +535,7 @@ namespace Konclude {
+ 							}
+ 							CConfigurationBase* config = ontology->getConfiguration();
+ 							CPreprocessor* preprocessor = mPreprocessingManager->getPreprocessor(ontology,config);
+-							CRequirementProcessedCallbackEvent* reqProcCallbackEvent = new CRequirementProcessedCallbackEvent(this,ontology,reqData, COntologyProcessingStep::OPPREPROCESSOR);
++							CRequirementProcessedCallbackEvent* reqProcCallbackEvent = new CRequirementProcessedCallbackEvent(this,ontology,reqData, COntologyProcessingStep::OPPREPROCESSOR, reqData->mGeneration);
+ 							preprocessor->preprocess(ontology,config,ontReqPrepData->mPreprocessorReqList,reqProcCallbackEvent);
+ 							ontReqPrepData->mCheckingReqList = ontReqPrepData->mPreprocessorReqList;
+ 							ontReqPrepData->mPreprocessorReqList.clear();
+@@ -549,7 +549,7 @@ namespace Konclude {
+ 							}
+ 							CConfigurationBase* config = ontology->getConfiguration();
+ 							CPrecomputator* precomputer = mPrecomputationManager->getPrecomputator(ontology,config);
+-							CRequirementProcessedCallbackEvent* reqProcCallbackEvent = new CRequirementProcessedCallbackEvent(this,ontology,reqData, COntologyProcessingStep::OPPRECOMPUTER);
++							CRequirementProcessedCallbackEvent* reqProcCallbackEvent = new CRequirementProcessedCallbackEvent(this,ontology,reqData, COntologyProcessingStep::OPPRECOMPUTER, reqData->mGeneration);
+ 							precomputer->precompute(ontology,config,ontReqPrepData->mPrecomputorReqList,reqProcCallbackEvent);
+ 							ontReqPrepData->mCheckingReqList = ontReqPrepData->mPrecomputorReqList;
+ 							ontReqPrepData->mCheckingProcessorType = COntologyProcessingStep::OPPRECOMPUTER;
+@@ -563,7 +563,7 @@ namespace Konclude {
+ 							}
+ 							CConfigurationBase* config = ontology->getConfiguration();
+ 							CSubsumptionClassifier* classClassifier = classificationMan->getClassClassifier(ontology,config);
+-							CRequirementProcessedCallbackEvent* reqProcCallbackEvent = new CRequirementProcessedCallbackEvent(this,ontology,reqData, COntologyProcessingStep::OPCLASSCLASSIFIER);
++							CRequirementProcessedCallbackEvent* reqProcCallbackEvent = new CRequirementProcessedCallbackEvent(this,ontology,reqData, COntologyProcessingStep::OPCLASSCLASSIFIER, reqData->mGeneration);
+ 							classClassifier->classify(ontology,config,ontReqPrepData->mClassClassifierReqList,reqProcCallbackEvent);
+ 							ontReqPrepData->mCheckingReqList = ontReqPrepData->mClassClassifierReqList;
+ 							ontReqPrepData->mCheckingProcessorType = COntologyProcessingStep::OPCLASSCLASSIFIER;
+@@ -577,7 +577,7 @@ namespace Konclude {
+ 							}
+ 							CConfigurationBase* config = ontology->getConfiguration();
+ 							CSubsumptionClassifier* objectPropertyClassifier = classificationMan->getObjectPropertyClassifier(ontology,config);
+-							CRequirementProcessedCallbackEvent* reqProcCallbackEvent = new CRequirementProcessedCallbackEvent(this,ontology,reqData, COntologyProcessingStep::OPOBJECTPROPERTYCLASSIFIER);
++							CRequirementProcessedCallbackEvent* reqProcCallbackEvent = new CRequirementProcessedCallbackEvent(this,ontology,reqData, COntologyProcessingStep::OPOBJECTPROPERTYCLASSIFIER, reqData->mGeneration);
+ 							objectPropertyClassifier->classify(ontology,config,ontReqPrepData->mObjectPropertyClassifierReqList,reqProcCallbackEvent);
+ 							ontReqPrepData->mCheckingReqList = ontReqPrepData->mObjectPropertyClassifierReqList;
+ 							ontReqPrepData->mCheckingProcessorType = COntologyProcessingStep::OPOBJECTPROPERTYCLASSIFIER;
+@@ -591,7 +591,7 @@ namespace Konclude {
+ 							}
+ 							CConfigurationBase* config = ontology->getConfiguration();
+ 							CSubsumptionClassifier* dataPropertyClassifier = classificationMan->getDataPropertyClassifier(ontology,config);
+-							CRequirementProcessedCallbackEvent* reqProcCallbackEvent = new CRequirementProcessedCallbackEvent(this,ontology,reqData, COntologyProcessingStep::OPDATAPROPERTYCLASSIFIER);
++							CRequirementProcessedCallbackEvent* reqProcCallbackEvent = new CRequirementProcessedCallbackEvent(this,ontology,reqData, COntologyProcessingStep::OPDATAPROPERTYCLASSIFIER, reqData->mGeneration);
+ 							dataPropertyClassifier->classify(ontology,config,ontReqPrepData->mDataPropertyClassifierReqList,reqProcCallbackEvent);
+ 							ontReqPrepData->mCheckingReqList = ontReqPrepData->mDataPropertyClassifierReqList;
+ 							ontReqPrepData->mCheckingProcessorType = COntologyProcessingStep::OPDATAPROPERTYCLASSIFIER;
+@@ -605,7 +605,7 @@ namespace Konclude {
+ 							}
+ 							CConfigurationBase* config = ontology->getConfiguration();
+ 							CRealizer* realizer = mRealizationManager->getRealizer(ontology,config);
+-							CRequirementProcessedCallbackEvent* reqProcCallbackEvent = new CRequirementProcessedCallbackEvent(this,ontology,reqData, COntologyProcessingStep::OPREALIZER);
++							CRequirementProcessedCallbackEvent* reqProcCallbackEvent = new CRequirementProcessedCallbackEvent(this,ontology,reqData, COntologyProcessingStep::OPREALIZER, reqData->mGeneration);
+ 							realizer->realize(ontology,config,ontReqPrepData->mRealizerReqList,reqProcCallbackEvent);
+ 							ontReqPrepData->mCheckingReqList = ontReqPrepData->mRealizerReqList;
+ 							ontReqPrepData->mCheckingProcessorType = COntologyProcessingStep::OPREALIZER;
+@@ -623,7 +623,7 @@ namespace Konclude {
+ 								mAnswererManager = new CAnsweringManagerThread(this, config);
+ 								created = true;
+ 							}
+-							CRequirementProcessedCallbackEvent* reqProcCallbackEvent = new CRequirementProcessedCallbackEvent(this, ontology, reqData, COntologyProcessingStep::OPANSWERER);
++							CRequirementProcessedCallbackEvent* reqProcCallbackEvent = new CRequirementProcessedCallbackEvent(this, ontology, reqData, COntologyProcessingStep::OPANSWERER, reqData->mGeneration);
+ 							ontology->getProcessingSteps()->getOntologyProcessingStepDataVector()->getProcessingStepData(COntologyProcessingStep::OPSANSWERCOMPLEXQUERY)->getProcessingStatus()->setProcessingFlags(COntologyProcessingStatus::PSCOMPLETELYYPROCESSED);
+ 							ontology->getProcessingSteps()->getOntologyProcessingStepDataVector()->getProcessingStepData(COntologyProcessingStep::OPSANSWERCOMPLEXQUERY)->getProcessingStatus()->setErrorFlags(COntologyProcessingStatus::PSSUCESSFULL);
+ 							ontReqPrepData->mCheckingReqList = ontReqPrepData->mAnswererReqList;
+diff --git a/Source/Reasoner/Kernel/Manager/CRequirementPreparingData.cpp b/Source/Reasoner/Kernel/Manager/CRequirementPreparingData.cpp
+index a0e01d01..d16fdd54 100644
+--- a/Source/Reasoner/Kernel/Manager/CRequirementPreparingData.cpp
++++ b/Source/Reasoner/Kernel/Manager/CRequirementPreparingData.cpp
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include "CRequirementPreparingData.h"
++#include <atomic>
+ 
+ 
+ namespace Konclude {
+@@ -29,13 +30,15 @@ namespace Konclude {
+ 
+ 			namespace Manager {
+ 
++				static std::atomic<cint64> sNextGeneration(0);
+ 
+-				CRequirementPreparingData::CRequirementPreparingData(CCallbackData* callback, CQuery* query, CReasoningTaskData* reasoningData) {	
++				CRequirementPreparingData::CRequirementPreparingData(CCallbackData* callback, CQuery* query, CReasoningTaskData* reasoningData) {
+ 					mCallback = callback;
+ 					mQuery = query;
+ 					mDepCount = 0;
+ 					mReasoningData = reasoningData;
+ 					mRequirementFailed = false;
++					mGeneration = ++sNextGeneration;
+ 				}
+ 
+ 
+diff --git a/Source/Reasoner/Kernel/Manager/CRequirementPreparingData.h b/Source/Reasoner/Kernel/Manager/CRequirementPreparingData.h
+index 9043cb11..4b2c99c4 100644
+--- a/Source/Reasoner/Kernel/Manager/CRequirementPreparingData.h
++++ b/Source/Reasoner/Kernel/Manager/CRequirementPreparingData.h
+@@ -23,6 +23,7 @@
+ 
+ // Libraries includes
+ #include <QReadWriteLock>
++#include <atomic>
+ #include "QtCompat.h"
+ 
+ // Namespace includes
+@@ -78,10 +79,11 @@ namespace Konclude {
+ 						COntologyRequirementPreparingData* getOntologyRequirementPreparingData(CConcreteOntology* ontology);
+ 
+ 
+-						CCallbackData* mCallback; 
++						CCallbackData* mCallback;
+ 						CQuery* mQuery;
+ 						CReasoningTaskData* mReasoningData;
+ 
++						cint64 mGeneration;
+ 						bool mRequirementFailed;
+ 						cint64 mDepCount;
+ 						QHash<CConcreteOntology*,COntologyRequirementPreparingData*> mOntoReqDataHash;
+diff --git a/Source/Reasoner/Kernel/Manager/Events/CRequirementProcessedCallbackEvent.cpp b/Source/Reasoner/Kernel/Manager/Events/CRequirementProcessedCallbackEvent.cpp
+index 6ac42fb2..6d6c294e 100644
+--- a/Source/Reasoner/Kernel/Manager/Events/CRequirementProcessedCallbackEvent.cpp
++++ b/Source/Reasoner/Kernel/Manager/Events/CRequirementProcessedCallbackEvent.cpp
+@@ -32,14 +32,14 @@ namespace Konclude {
+ 				namespace Events {
+ 
+ 
+-					CRequirementProcessedCallbackEvent::CRequirementProcessedCallbackEvent(CThread* receiverThread, CConcreteOntology* ontology, CRequirementPreparingData* reqPrepData, cint64 procType) 
++					CRequirementProcessedCallbackEvent::CRequirementProcessedCallbackEvent(CThread* receiverThread, CConcreteOntology* ontology, CRequirementPreparingData* reqPrepData, cint64 procType, cint64 expectedGeneration)
+ 							: CCustomEvent(EVENTTYPE) {
+ 
+-						
+ 						mOntology = ontology;
+ 						recThread = receiverThread;
+ 						mReqPrepData = reqPrepData;
+ 						mProcType = procType;
++						mExpectedGeneration = expectedGeneration;
+ 					}
+ 
+ 
+@@ -48,12 +48,17 @@ namespace Konclude {
+ 
+ 
+ 					void CRequirementProcessedCallbackEvent::doCallback() {
+-					// Atomic exchange: only the first caller posts the event.
+-					// Prevents use-after-free when stale STPU callbacks fire after
+-					// the Manager has already processed and deleted this event.
+-					CThread* t = recThread.exchange(nullptr, std::memory_order_acq_rel);
+-					if (t) {
+-						t->postEvent(this);
++					// Atomic exchange: only the first caller posts the event.
++					// Prevents use-after-free when stale STPU callbacks fire after
++					// the Manager has already processed and deleted this event.
++					CThread* t = recThread.exchange(nullptr, std::memory_order_acq_rel);
++					if (t) {
++						// Generation guard: discard if reqData was recycled at the same
++						// address by a subsequent call before this callback fired.
++						if (mReqPrepData->mGeneration != mExpectedGeneration) {
++							return;
++						}
++						t->postEvent(this);
+ 						}
+ 					}
+ 
+diff --git a/Source/Reasoner/Kernel/Manager/Events/CRequirementProcessedCallbackEvent.h b/Source/Reasoner/Kernel/Manager/Events/CRequirementProcessedCallbackEvent.h
+index 3d9c6fe9..6a682cb9 100644
+--- a/Source/Reasoner/Kernel/Manager/Events/CRequirementProcessedCallbackEvent.h
++++ b/Source/Reasoner/Kernel/Manager/Events/CRequirementProcessedCallbackEvent.h
+@@ -24,8 +24,8 @@
+ 
+ 
+ // Libraries includes
+-#include "QtCompat.h"
+-#include <atomic>
++#include "QtCompat.h"
++#include <atomic>
+ 
+ 
+ // Namespace includes
+@@ -70,7 +70,7 @@ namespace Konclude {
+ 						// public methods
+ 						public:
+ 							//! Constructor
+-							CRequirementProcessedCallbackEvent(CThread* receiverThread, CConcreteOntology* ontology, CRequirementPreparingData* reqPrepData, cint64 procType);
++							CRequirementProcessedCallbackEvent(CThread* receiverThread, CConcreteOntology* ontology, CRequirementPreparingData* reqPrepData, cint64 procType, cint64 expectedGeneration);
+ 
+ 							//! Destructor
+ 							virtual ~CRequirementProcessedCallbackEvent();
+@@ -92,7 +92,8 @@ namespace Konclude {
+ 						protected:
+ 							CConcreteOntology* mOntology;
+ 							CRequirementPreparingData* mReqPrepData;
+-					std::atomic<CThread*> recThread;
++					std::atomic<CThread*> recThread;
++							cint64 mExpectedGeneration;
+ 
+ 
+ 						// private methods
