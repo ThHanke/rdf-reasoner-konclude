@@ -723,7 +723,6 @@ bool KoncludeReasoner::runPipeline(KoncludeReasoner::Impl* impl, bool includeRea
     impl->mRealized = includeRealization && hasIndividuals &&
         stepDone(COntologyProcessingStep::OPSCONCEPTREALIZE);
 
-
     if (includeRealization && impl->mHasIndividualsHint) {
         impl->mReasonerManager->stopAndClearRealizers();
     }
