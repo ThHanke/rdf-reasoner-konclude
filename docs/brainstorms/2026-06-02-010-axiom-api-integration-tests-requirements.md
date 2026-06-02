@@ -12,6 +12,11 @@ zero integration coverage against real WASM. `validate()` and `classifyPropertie
 tests with mocked workers. Sequential calls (call classify, then materialize on the same instance)
 have no explicit state-isolation tests. This is a correctness risk for shipped features.
 
+The README OWL 2 DL coverage table is also outdated: cases 3, 4, and 10 still show
+`UPSTREAM_LIMITATION` after being fixed by patches 027-029, and the new axiom API methods
+(`isEntailed`, `whatIf`, `explain`, `explainInconsistency`, `validate`) are not documented in the
+README at all. The integration test PR is the right place to ship both.
+
 ## Requirements
 
 **isEntailed()**
@@ -50,11 +55,23 @@ have no explicit state-isolation tests. This is a correctness risk for shipped f
 - R13. Calling `checkConsistency()` then `classify()` on the same instance produces correct results.
 - R14. Calling `whatIf()` does not affect subsequent `classify()` or `materialize()` results.
 
+**README updates**
+
+- R15. `README.md` OWL 2 DL coverage table updated: all 14 consistency cases shown; cases 3, 4, 10
+  changed from `UPSTREAM_LIMITATION` to `PARITY (WASM surpasses native v0.7.0)` with a note
+  explaining the upstream bugs were fixed in this package.
+- R16. `README.md` adds an API reference section documenting `isEntailed()`, `whatIf()`,
+  `explain()`, `explainInconsistency()`, and `validate()` with type signatures and one example each.
+- R17. The stale footnote "Cases 3 and 4 cannot be fixed in this package without upstream changes"
+  is removed; the UPSTREAM_LIMITATION label is reserved for the materialize() hangs and
+  FunctionalProperty ALIF+ hang which remain unfixed.
+
 ## Success Criteria
 
 - All R1–R14 pass as active (non-skipped) integration tests against real compiled WASM.
 - Zero mocked worker calls in the new test file.
 - Running `npm test` includes the new tests in the 21-file suite.
+- README accurately reflects all 14 consistency cases and documents all 5 axiom API methods.
 
 ## Scope Boundaries
 

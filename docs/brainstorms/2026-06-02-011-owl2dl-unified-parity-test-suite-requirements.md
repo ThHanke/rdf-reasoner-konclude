@@ -50,25 +50,14 @@ materialize). Data property hierarchy is untested. The README OWL 2 DL coverage 
 - R15. `classifyProperties()` correctly excludes object properties when called on a data-property-only
   fixture, and vice versa.
 
-**README update**
-
-- R16. `README.md` section `## OWL 2 DL coverage / Consistency checking` table is updated to show
-  all 14 cases (1-14) with correct status:
-  - Cases 3, 4, 10: **PARITY (WASM surpasses native v0.7.0)** — note that WASM correctly detects
-    these violations; native Konclude misses them (upstream bugs fixed by patches 027-029)
-  - All other cases: PARITY
-- R17. The UPSTREAM_LIMITATION footnote is corrected to describe only the materialize() hangs and
-  FunctionalProperty ALIF+ hang; the old "Cases 3 and 4 cannot be fixed" text is removed.
-- R18. Classification and ABox realization sections are updated to include `owl:AsymmetricProperty`
-  and `owl:IrreflexiveProperty` in the verified-working lists.
 
 ## Success Criteria
 
 - `tests/integration/owl2dl-parity.test.ts` exists and covers all constructs in R6-R13.
 - Each construct has all three operation stages (R2-R4), skipping only known UPSTREAM_LIMITATION paths.
 - `classifyProperties()` data property tests pass (R14-R15).
-- README is accurate for all 14 consistency cases and OWL 2 DL coverage sections.
-- `npm test` continues to report 21 test files all passing.
+- `npm test` continues to report all test files passing.
+- README update (coverage table + axiom API docs) is handled in the sibling plan (010).
 
 ## Scope Boundaries
 
@@ -86,8 +75,8 @@ materialize). Data property hierarchy is untested. The README OWL 2 DL coverage 
   independent skip markers per operation without duplicating fixture setup.
 - **Turtle format throughout**: `checkConsistency` case 9 (AllDisjointClasses) in Turtle works fine;
   the hang is NTriples-specific. All new fixtures use Turtle to avoid the format-dependent hangs.
-- **README update is part of this plan**: it documents parity status and must stay in sync with
-  the test results.
+- **README update moved to plan 010**: the coverage table and axiom API docs ship with the axiom
+  API test PR where they naturally belong.
 
 ## Dependencies / Assumptions
 
