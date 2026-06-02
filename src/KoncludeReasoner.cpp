@@ -1370,3 +1370,43 @@ int KoncludeReasoner::buildPropertyTripleBuffer() {
 
     return static_cast<int>(totalLen);
 }
+
+// buildUnsatisfiableClassBuffer — returns newline-delimited IRIs of unsatisfiable classes.
+// Walks the bottom node of the concept taxonomy.  owl:Nothing is always excluded.
+std::string KoncludeReasoner::buildUnsatisfiableClassBuffer() {
+    if (!mImpl->mClassified) {
+        return "";
+    }
+
+    CTaxonomy* taxonomy = mImpl->mOntology->getConceptTaxonomy();
+    if (!taxonomy) return "";
+
+    CHierarchyNode* bottomNode = taxonomy->getBottomHierarchyNode();
+    if (!bottomNode) return "";
+
+    QHash<CConcept*, CHierarchyNode*>* nodeHash = taxonomy->getConceptHierarchyNodeHash();
+    if (!nodeHash) return "";
+
+    QList<CConcept*>* eqList = bottomNode->getEquivalentConceptList();
+    if (!eqList) return "";
+
+    static const std::string owlNothing = "http://www.w3.org/2002/07/owl#Nothing";
+
+    std::vector<std::string> iris;
+    for (CConcept* c : *eqList) {
+        if (!c) continue;
+        if (!nodeHash->contains(c)) continue;  // stale-pointer guard
+        QString q = CIRIName::getRecentIRIName(c->getClassNameLinker());
+        if (q.empty()) continue;
+        std::string iri(q);
+        if (iri == owlNothing) continue;
+        iris.push_back(iri);
+    }
+
+    std::string result;
+    for (size_t i = 0; i < iris.size(); ++i) {
+        if (i > 0) result += '\n';
+        result += iris[i];
+    }
+    return result;
+}

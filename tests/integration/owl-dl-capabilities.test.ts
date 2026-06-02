@@ -20,7 +20,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { existsSync } from "node:fs";
-import { Parser } from "n3";
+import { Parser, Store } from "n3";
 import type { Quad } from "@rdfjs/types";
 
 import { RdfReasoner } from "../../ts/index.js";
@@ -217,4 +217,69 @@ describe.skipIf(!wasmExists)("OWL 2 DL — owl:someValuesFrom", () => {
       "Alice must be inferred as PetOwner via DogOwner ⊑ PetOwner",
     ).toBe(true);
   });
+});
+
+// ---------------------------------------------------------------------------
+// isSatisfiable / getUnsatisfiableClasses
+// ---------------------------------------------------------------------------
+
+const UNSAT_TURTLE = `
+@prefix ex:   <http://example.org/unsat#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+
+<http://example.org/unsat> a owl:Ontology .
+ex:Bird a owl:Class .
+ex:EmptyClass a owl:Class ; rdfs:subClassOf owl:Nothing .
+`;
+
+const UNSAT = (s: string) => `http://example.org/unsat#${s}`;
+const OWL_NOTHING = "http://www.w3.org/2002/07/owl#Nothing";
+
+describe.skipIf(!wasmExists)("isSatisfiable / getUnsatisfiableClasses", () => {
+  let reasoner: RdfReasoner;
+  let unsatStore: Store;
+
+  beforeAll(async () => {
+    reasoner = new RdfReasoner();
+    await reasoner.ready;
+    const parser = new Parser({ format: "Turtle" });
+    unsatStore = new Store(parser.parse(UNSAT_TURTLE) as Quad[]);
+  }, 30000);
+
+  afterAll(() => reasoner?.terminate());
+
+  it("isSatisfiable: EmptyClass ⊑ owl:Nothing → false", async () => {
+    const result = await reasoner.isSatisfiable(unsatStore, UNSAT("EmptyClass"));
+    expect(result).toBe(false);
+  }, 360000);
+
+  it("isSatisfiable: Bird (satisfiable class) → true", async () => {
+    const result = await reasoner.isSatisfiable(unsatStore, UNSAT("Bird"));
+    expect(result).toBe(true);
+  }, 360000);
+
+  it("isSatisfiable: unknown IRI not in ontology → true (open-world)", async () => {
+    const result = await reasoner.isSatisfiable(unsatStore, "urn:unknown:class");
+    expect(result).toBe(true);
+  }, 360000);
+
+  it("isSatisfiable: owl:Nothing → false (always unsatisfiable)", async () => {
+    const result = await reasoner.isSatisfiable(unsatStore, OWL_NOTHING);
+    expect(result).toBe(false);
+  }, 360000);
+
+  it("getUnsatisfiableClasses: returns EmptyClass, does NOT include owl:Nothing", async () => {
+    const classes = await reasoner.getUnsatisfiableClasses(unsatStore);
+    expect(classes).toContain(UNSAT("EmptyClass"));
+    expect(classes).not.toContain(OWL_NOTHING);
+  }, 360000);
+
+  it("getUnsatisfiableClasses: consistent DL ontology with no unsat classes → []", async () => {
+    const parser = new Parser({ format: "Turtle" });
+    const consistentStore = new Store(parser.parse(DL_TURTLE) as Quad[]);
+    const classes = await reasoner.getUnsatisfiableClasses(consistentStore);
+    expect(classes).toEqual([]);
+  }, 360000);
 });

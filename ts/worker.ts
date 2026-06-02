@@ -166,6 +166,10 @@ export async function handleMessage(
         self.postMessage(emptyResponse, [empty]);
         return;
       }
+      case "getUnsatisfiableClassBuffer": {
+        result = reasoner.buildUnsatisfiableClassBuffer();
+        break;
+      }
       default: {
         const response: WorkerResponse = {
           id,

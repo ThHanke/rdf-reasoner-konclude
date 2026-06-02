@@ -17,9 +17,9 @@ import type { Quad } from "@rdfjs/types";
 import { Store, DataFactory } from "n3";
 import { encodeToBuffers, decodeBuffers, computeStoreFingerprint } from "./intern.js";
 
-export type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions } from "./types.js";
+export type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions } from "./types.js";
 export { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI } from "./types.js";
-import type { ReasoningOptions, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions } from "./types.js";
+import type { ReasoningOptions, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions } from "./types.js";
 import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -683,6 +683,63 @@ export class RdfReasoner {
     this._materializeCache = null;           // cross-invalidate
   }
 
+  // -------------------------------------------------------------------------
+  // _getUnsatisfiableClassesInternal (safe for use inside _queue body)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Private helper — like _classifyInline but also calls getUnsatisfiableClassBuffer
+   * and returns the list of unsatisfiable class IRIs.  Updates _classifyCache and
+   * writes inferred triples into the store on cache miss (same invariant as
+   * _classifyInline).  Must be called from inside a _queue slot only.
+   */
+  private async _getUnsatisfiableClassesInternal(store: Store): Promise<string[]> {
+    const fingerprint = computeStoreFingerprint(store.getQuads(null, null, null, null));
+    if (this._classifyCache?.hash !== fingerprint) {
+      const ig = DataFactory.namedNode(INFERRED_GRAPH_IRI);
+      store.removeQuads(store.getQuads(null, null, null, ig));
+      const { tripleBuffer, strTableBuffer } = encodeToBuffers(store.getQuads(null, null, null, null));
+      await this._callDirect("loadTripleBuffer", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
+      await this._callDirect("classification", []);
+      const buf = (await this._callDirect("getInferredTripleBuffer", [])) as ArrayBuffer;
+      for (const q of decodeBuffers(buf))
+        store.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, ig));
+      this._classifyCache = { hash: fingerprint, result: undefined as void };
+      this._materializeCache = null;
+      this._classifyPropertiesCache = null;
+    }
+    const raw = (await this._callDirect("getUnsatisfiableClassBuffer", [])) as string;
+    return raw.split('\n').filter(Boolean);
+  }
+
+  // -------------------------------------------------------------------------
+  // getUnsatisfiableClasses() / isSatisfiable()
+  // -------------------------------------------------------------------------
+
+  /** Return the IRIs of all classes that are unsatisfiable (equivalent to
+   *  owl:Nothing) in the ontology.  owl:Nothing itself is excluded.
+   *  Classes absent from the taxonomy are NOT included (open-world). */
+  getUnsatisfiableClasses(store: Store): Promise<string[]> {
+    const result = this._queue.then(async () =>
+      this._getUnsatisfiableClassesInternal(store),
+    );
+    this._queue = result.then(() => {}, () => {});
+    return result;
+  }
+
+  /** Return `false` if `classIRI` is equivalent to owl:Nothing in the ontology.
+   *  Returns `true` for any class absent from the taxonomy (open-world assumption).
+   *  owl:Nothing is always unsatisfiable; returns `false` without a Worker call. */
+  isSatisfiable(store: Store, classIRI: string): Promise<boolean> {
+    if (classIRI === OWL_NOTHING) return Promise.resolve(false);
+    const result = this._queue.then(async () => {
+      const unsatSet = await this._getUnsatisfiableClassesInternal(store);
+      return !unsatSet.includes(classIRI);
+    });
+    this._queue = result.then(() => {}, () => {});
+    return result;
+  }
+
   /** Check whether a single axiom is entailed by the store's ontology. Returns
    *  null for unsupported predicates (a warning is logged). Triggers reasoning
    *  internally if the store has changed since the last call. */
@@ -947,6 +1004,20 @@ export class RdfReasoner {
     await this._callDirect("classification", []);
     const consistent = (await this._callDirect("consistency", [])) as boolean;
     return !consistent;
+  }
+
+  /**
+   * Returns true if `classIRI` is unsatisfiable in the candidate set.
+   * Uses buildUnsatisfiableClassBuffer as the oracle (not _checkEntailmentDirect,
+   * because buildInferredTripleBuffer suppresses `X rdfs:subClassOf owl:Nothing`).
+   * Safe to call from inside a _queue body.
+   */
+  private async _checkUnsatisfiabilityDirect(candidates: Quad[], classIRI: string): Promise<boolean> {
+    const { tripleBuffer, strTableBuffer } = encodeToBuffers(candidates);
+    await this._callDirect("loadTripleBuffer", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
+    await this._callDirect("classification", []);
+    const raw = (await this._callDirect("getUnsatisfiableClassBuffer", [])) as string;
+    return raw.split('\n').filter(Boolean).includes(classIRI);
   }
 
   // -------------------------------------------------------------------------
@@ -1232,6 +1303,200 @@ export class RdfReasoner {
       }
 
       return justifications;
+    });
+    this._queue = result.then(() => {}, () => {});
+    return result;
+  }
+
+  // -------------------------------------------------------------------------
+  // validate()
+  // -------------------------------------------------------------------------
+
+  /** Run a combined diagnostic: check consistency, find unsatisfiable classes,
+   *  and (optionally) compute minimal justifications for each.
+   *
+   *  Returns `{ consistent, errors, warnings }` where:
+   *  - `consistent` — `true` when the ontology has at least one model
+   *  - `errors` — MIPS (minimal inconsistent sub-ontologies); non-empty only when inconsistent
+   *  - `warnings` — one `ClassWarning` per unsatisfiable class (owl:Nothing excluded)
+   *
+   *  All BlackBox iterations run inside this method's single _queue slot.
+   *  Do NOT call public methods from inside — use private helpers only.
+   */
+  validate(store: Store, opts?: ValidateOptions): Promise<ValidationResult> {
+    const result = this._queue.then(async () => {
+      const maxErr  = opts?.maxJustificationsPerError  ?? 1;
+      const maxWarn = opts?.maxJustificationsPerWarning ?? 1;
+
+      const allBase = store.getQuads(null, null, null, null).filter(q =>
+        q.graph.value !== INFERRED_GRAPH_IRI && q.graph.value !== HYPOTHETICAL_IRI,
+      );
+
+      const makeCandidates = () => store.getQuads(null, null, null, null).filter(q => {
+        const g = q.graph.value;
+        if (g === INFERRED_GRAPH_IRI || g === HYPOTHETICAL_IRI) return false;
+        if (opts?.axiomFilter && !opts.axiomFilter(q)) return false;
+        return true;
+      });
+
+      // ── Step 1: consistency ───────────────────────────────────────────────
+      const fingerprint = computeStoreFingerprint(store.getQuads(null, null, null, null));
+      let consistent: boolean;
+      if (this._consistencyCache?.hash === fingerprint) {
+        consistent = this._consistencyCache.result;
+      } else {
+        consistent = !(await this._checkInconsistencyDirect(allBase));
+        this._consistencyCache = { hash: fingerprint, result: consistent };
+      }
+
+      // ── Step 2: error justifications ─────────────────────────────────────
+      const errors: Quad[][] = [];
+      if (!consistent && maxErr > 0) {
+        const allCandidates = makeCandidates();
+
+        this._classifyCache = null;
+        this._materializeCache = null;
+        this._classifyPropertiesCache = null;
+        this._consistencyCache = null;
+
+        if (await this._checkInconsistencyDirect(allCandidates)) {
+          const findOneIncons = async (cands: Quad[]): Promise<Quad[] | null> => {
+            let w = [...cands];
+            let changed = true;
+            while (changed && w.length > 1) {
+              changed = false;
+              const mid = Math.floor(w.length / 2);
+              const [fh, sh] = [w.slice(0, mid), w.slice(mid)];
+              if (await this._checkInconsistencyDirect(fh)) { w = fh; changed = true; continue; }
+              if (await this._checkInconsistencyDirect(sh)) { w = sh; changed = true; continue; }
+              break;
+            }
+            let i = 0;
+            while (i < w.length) {
+              if (w.length === 1) break;
+              const without = [...w.slice(0, i), ...w.slice(i + 1)];
+              if (await this._checkInconsistencyDirect(without)) { w = without; } else { i++; }
+            }
+            return w;
+          };
+
+          const j1 = await findOneIncons(allCandidates);
+          if (j1 && j1.length > 0) {
+            errors.push(j1);
+            if (maxErr > 1) {
+              const hsQ: Array<{ excluded: Set<string>; justification: Quad[] }> = [{ excluded: new Set(), justification: j1 }];
+              const explored = new Set<string>();
+              outer: while (hsQ.length > 0 && errors.length < maxErr) {
+                const { excluded, justification: curJ } = hsQ.shift()!;
+                const eKey = [...excluded].sort().join("|");
+                if (explored.has(eKey)) continue;
+                explored.add(eKey);
+                for (const ax of curJ) {
+                  const newExcl = new Set(excluded);
+                  newExcl.add(`${ax.subject.value}\0${ax.predicate.value}\0${ax.object.value}`);
+                  const nKey = [...newExcl].sort().join("|");
+                  if (explored.has(nKey)) continue;
+                  const reduced = allCandidates.filter(q => !newExcl.has(`${q.subject.value}\0${q.predicate.value}\0${q.object.value}`));
+                  if (!(await this._checkInconsistencyDirect(reduced))) continue;
+                  const jN = await findOneIncons(reduced);
+                  if (!jN || jN.length === 0) continue;
+                  const jNKey = jN.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`).sort().join("|");
+                  if (!errors.some(j => j.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`).sort().join("|") === jNKey)) {
+                    errors.push(jN);
+                    if (errors.length >= maxErr) break outer;
+                    hsQ.push({ excluded: newExcl, justification: jN });
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // ── Step 3: unsatisfiable classes ─────────────────────────────────────
+      const unsatIRIs = await this._getUnsatisfiableClassesInternal(store);
+
+      // ── Step 4: warning justifications ────────────────────────────────────
+      const warnings: ClassWarning[] = [];
+      if (unsatIRIs.length > 0) {
+        const warnCands = makeCandidates();
+
+        for (const classIRI of unsatIRIs) {
+          if (maxWarn === 0) {
+            warnings.push({ classIRI, justifications: [] });
+            continue;
+          }
+
+          this._classifyCache = null;
+          this._materializeCache = null;
+          this._classifyPropertiesCache = null;
+          this._consistencyCache = null;
+
+          // Use _checkUnsatisfiabilityDirect as oracle: buildInferredTripleBuffer
+          // suppresses `X rdfs:subClassOf owl:Nothing`, so _checkEntailmentDirect
+          // cannot detect per-class unsatisfiability.
+          if (!(await this._checkUnsatisfiabilityDirect(warnCands, classIRI))) {
+            warnings.push({ classIRI, justifications: [] });
+            continue;
+          }
+
+          const findOneWarning = async (cands: Quad[]): Promise<Quad[] | null> => {
+            let w = [...cands];
+            let changed = true;
+            while (changed && w.length > 1) {
+              changed = false;
+              const mid = Math.floor(w.length / 2);
+              const [fh, sh] = [w.slice(0, mid), w.slice(mid)];
+              if (await this._checkUnsatisfiabilityDirect(fh, classIRI)) { w = fh; changed = true; continue; }
+              if (await this._checkUnsatisfiabilityDirect(sh, classIRI)) { w = sh; changed = true; continue; }
+              break;
+            }
+            let i = 0;
+            while (i < w.length) {
+              if (w.length === 1) break;
+              const without = [...w.slice(0, i), ...w.slice(i + 1)];
+              if (await this._checkUnsatisfiabilityDirect(without, classIRI)) { w = without; } else { i++; }
+            }
+            return w;
+          };
+
+          const justs: Quad[][] = [];
+          const j1 = await findOneWarning(warnCands);
+          if (j1 && j1.length > 0) {
+            justs.push(j1);
+            if (maxWarn > 1) {
+              const hsQ: Array<{ excluded: Set<string>; justification: Quad[] }> = [{ excluded: new Set(), justification: j1 }];
+              const explored = new Set<string>();
+              outer: while (hsQ.length > 0 && justs.length < maxWarn) {
+                const { excluded, justification: curJ } = hsQ.shift()!;
+                const eKey = [...excluded].sort().join("|");
+                if (explored.has(eKey)) continue;
+                explored.add(eKey);
+                for (const ax of curJ) {
+                  const newExcl = new Set(excluded);
+                  newExcl.add(`${ax.subject.value}\0${ax.predicate.value}\0${ax.object.value}`);
+                  const nKey = [...newExcl].sort().join("|");
+                  if (explored.has(nKey)) continue;
+                  const reduced = warnCands.filter(q => !newExcl.has(`${q.subject.value}\0${q.predicate.value}\0${q.object.value}`));
+                  if (!(await this._checkUnsatisfiabilityDirect(reduced, classIRI))) continue;
+                  const jN = await findOneWarning(reduced);
+                  if (!jN || jN.length === 0) continue;
+                  const jNKey = jN.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`).sort().join("|");
+                  if (!justs.some(j => j.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`).sort().join("|") === jNKey)) {
+                    justs.push(jN);
+                    if (justs.length >= maxWarn) break outer;
+                    hsQ.push({ excluded: newExcl, justification: jN });
+                  }
+                }
+              }
+            }
+          }
+
+          warnings.push({ classIRI, justifications: justs });
+        }
+      }
+
+      return { consistent, errors, warnings };
     });
     this._queue = result.then(() => {}, () => {});
     return result;

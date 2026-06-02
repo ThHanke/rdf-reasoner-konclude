@@ -40,6 +40,9 @@ public:
     int buildPropertyTripleBuffer();
     int getInferredTripleBufferPtr();
 
+    // Returns newline-delimited unsatisfiable class IRIs (empty string if none or not classified).
+    std::string buildUnsatisfiableClassBuffer();
+
     void reset();
 
 private:

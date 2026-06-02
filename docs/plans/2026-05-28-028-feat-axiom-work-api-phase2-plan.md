@@ -1,7 +1,7 @@
 ---
 title: "feat: Add isSatisfiable, getUnsatisfiableClasses, and validate (axiom-work API Phase 2)"
 type: feat
-status: active
+status: complete
 date: 2026-05-28
 origin: docs/plans/2026-05-22-024-feat-axiom-work-api-plan.md
 ---
@@ -216,7 +216,7 @@ Unit 7 — validate (queue-gated, single slot)
 
 ## Implementation Units
 
-- [ ] **Unit 1: `buildUnsatisfiableClassBuffer()` — C++ + bindings + worker case**
+- [x] **Unit 1: `buildUnsatisfiableClassBuffer()` — C++ + bindings + worker case**
 
 **Goal:** Add C++ method that walks the concept taxonomy's bottom node and returns all
 unsatisfiable class IRIs as a newline-delimited string. Wire it through `bindings.cpp`,
@@ -272,7 +272,7 @@ transfer needed.
 
 ---
 
-- [ ] **Unit 2: `getUnsatisfiableClasses(store)` and `isSatisfiable(store, classIRI)` TypeScript wrappers**
+- [x] **Unit 2: `getUnsatisfiableClasses(store)` and `isSatisfiable(store, classIRI)` TypeScript wrappers**
 
 **Goal:** Add the private `_getUnsatisfiableClassesInternal(store)` helper and the two
 public queue-gated wrappers. Export `getUnsatisfiableClasses` and `isSatisfiable` as
@@ -345,7 +345,7 @@ runs a fresh classification. Cache cross-invalidation for `_materializeCache` an
 
 ---
 
-- [ ] **Unit 3: `validate(store, opts?)` — high-level combined diagnostic API**
+- [x] **Unit 3: `validate(store, opts?)` — high-level combined diagnostic API**
 
 **Goal:** Add `validate(store, opts?)` returning `{ consistent, errors, warnings }`.
 Combines consistency check + unsatisfiable-class detection + optional justifications in
@@ -423,7 +423,7 @@ is prohibited — use the private helpers only.
 
 ---
 
-- [ ] **Unit 4: README and API documentation updates**
+- [x] **Unit 4: README and API documentation updates**
 
 **Goal:** Update the README to document all Phase 1 methods now on main (`isEntailed`,
 `whatIf`, `explain`, `explainInconsistency`) and all Phase 2 additions (`isSatisfiable`,
