@@ -1,13 +1,14 @@
 /**
  * Integration test: OWL-DL violation detection (ontosphere issue #13)
  *
- * Asserts WASM checkConsistency() verdict against native Konclude ground truth
- * recorded in tests/fixtures/issue13-native-verdicts.json.
+ * Asserts WASM checkConsistency() verdict against the expected OWL 2 DL correct answer.
+ * Ground truth recorded in tests/fixtures/issue13-native-verdicts.json.
  *
- * Gap classification (from native run on 2026-05-28 / 2026-06-02):
+ * Gap classification (from native run on 2026-05-28 / 2026-06-02, updated 2026-06-02):
  *   cases 1-2: PARITY      — both native and WASM detect inconsistency
- *   cases 3-4: UPSTREAM_LIMITATION — native also reports consistent (wrong);
- *              WASM agrees with native; test passes but both miss the violation
+ *   cases 3-4: PARITY      — WASM now correctly detects inconsistency (patches 027-028);
+ *              native Konclude v0.7.0 misses these violations (upstream bug);
+ *              verdicts.json updated to reflect correct OWL 2 DL answer
  *   case 5:   PARITY         — fixed by setting mConfExtractSimpleABoxAssertions=true in
  *              loadTripleBuffer() so buildSimpleABoxAxioms() registers DifferentIndividuals
  *              axioms (plan: docs/plans/2026-05-28-026-fix-differentfrom-abox-mapping-plan.md)
@@ -305,31 +306,32 @@ describe.skipIf(!wasmExists)(
       30000
     );
 
-    // Case 3 — AsymmetricProperty: UPSTREAM_LIMITATION
-    // Native Konclude also reports consistent (violation not detected).
-    // WASM agrees with native — test passes but both miss the violation.
+    // Case 3 — AsymmetricProperty: PARITY (fixed by patches 027-028, 2026-06-02)
+    // WASM now correctly detects inconsistency; native Konclude v0.7.0 misses this (upstream bug).
+    // verdicts.json updated to "inconsistent" (correct OWL 2 DL answer).
     it(
-      "case 3: AsymmetricProperty — UPSTREAM_LIMITATION: native consistent; WASM agrees",
+      "case 3: AsymmetricProperty — PARITY: WASM detects inconsistency (fixed by patches 027-028)",
       async () => {
         const native = nativeVerdict(3);
         const quads = parseTurtle(ONTOLOGIES[3]);
         const consistent = await reasoner.checkConsistency(quads);
-        expect(consistent, `WASM disagrees with native verdict "${native.verdict}"`).toBe(
+        expect(consistent, `WASM disagrees with expected verdict "${native.verdict}"`).toBe(
           native.verdict === "consistent"
         );
       },
       30000
     );
 
-    // Case 4 — IrreflexiveProperty: UPSTREAM_LIMITATION
-    // Native Konclude also reports consistent (violation not detected).
+    // Case 4 — IrreflexiveProperty: PARITY (fixed by patches 027-028, 2026-06-02)
+    // WASM now correctly detects inconsistency; native Konclude v0.7.0 misses this (upstream bug).
+    // verdicts.json updated to "inconsistent" (correct OWL 2 DL answer).
     it(
-      "case 4: IrreflexiveProperty — UPSTREAM_LIMITATION: native consistent; WASM agrees",
+      "case 4: IrreflexiveProperty — PARITY: WASM detects inconsistency (fixed by patches 027-028)",
       async () => {
         const native = nativeVerdict(4);
         const quads = parseTurtle(ONTOLOGIES[4]);
         const consistent = await reasoner.checkConsistency(quads);
-        expect(consistent, `WASM disagrees with native verdict "${native.verdict}"`).toBe(
+        expect(consistent, `WASM disagrees with expected verdict "${native.verdict}"`).toBe(
           native.verdict === "consistent"
         );
       },
