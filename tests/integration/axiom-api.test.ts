@@ -444,3 +444,119 @@ ex:alice a ex:Person .
     360000,
   );
 });
+
+// ---------------------------------------------------------------------------
+// Suite: explain() and explainInconsistency() — R7, R8, R9
+//
+// Uses a small inline TBox (ClassA rdfs:subClassOf ClassB) for R7/R9.
+// explain() separates candidates from background declarations: rdf:type owl:Class
+// triples are passed to Konclude as background so it can recognise classes, but
+// they do not appear in the returned justification set.
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!wasmExists)(
+  "explain() and explainInconsistency() integration (R7 + R8 + R9)",
+  () => {
+    const EXP_NS = "http://example.org/exp#";
+    const classA = `${EXP_NS}ClassA`;
+    const classB = `${EXP_NS}ClassB`;
+
+    const TURTLE = `
+@prefix ex: <${EXP_NS}> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+<http://example.org/exp> a owl:Ontology .
+ex:ClassA a owl:Class .
+ex:ClassB a owl:Class .
+ex:ClassA rdfs:subClassOf ex:ClassB .
+`.trim();
+
+    let reasoner: RdfReasoner;
+    let store: Store;
+
+    beforeAll(async () => {
+      reasoner = new RdfReasoner();
+      await reasoner.ready;
+
+      const parser = new Parser({ format: "Turtle" });
+      store = new Store(parser.parse(TURTLE) as Quad[]);
+    }, 360000);
+
+    afterAll(() => {
+      reasoner?.terminate();
+    });
+
+    // ── R7: explain returns non-empty justification for entailed axiom ────────
+
+    it(
+      "R7: explain(ClassA rdfs:subClassOf ClassB) returns a non-empty justification containing the source axiom",
+      async () => {
+        const axiom = DataFactory.quad(
+          DataFactory.namedNode(classA),
+          DataFactory.namedNode(RDFS_SUBCLASS_OF),
+          DataFactory.namedNode(classB),
+        ) as unknown as Quad;
+
+        const justs = await reasoner.explain(store, axiom);
+
+        expect(justs.length).toBeGreaterThanOrEqual(1);
+        expect(justs[0].length).toBeGreaterThanOrEqual(1);
+
+        // The justification must contain the source axiom itself
+        const j0 = justs[0];
+        const foundAxiom = j0.some(
+          q =>
+            q.subject.value === classA &&
+            q.predicate.value === RDFS_SUBCLASS_OF &&
+            q.object.value === classB,
+        );
+        expect(foundAxiom).toBe(true);
+      },
+      360000,
+    );
+
+    // ── R9: explain returns [] for non-entailed axiom (reverse direction) ─────
+
+    it(
+      "R9: explain(ClassB rdfs:subClassOf ClassA) returns [] — reverse direction not entailed",
+      async () => {
+        const axiom = DataFactory.quad(
+          DataFactory.namedNode(classB),
+          DataFactory.namedNode(RDFS_SUBCLASS_OF),
+          DataFactory.namedNode(classA),
+        ) as unknown as Quad;
+
+        const justs = await reasoner.explain(store, axiom);
+
+        expect(justs).toEqual([]);
+      },
+      360000,
+    );
+
+    // ── R8a: explainInconsistency returns non-empty result for inconsistent onto
+
+    it(
+      "R8a: explainInconsistency returns non-empty justification for inconsistent ontology",
+      async () => {
+        const incStore = new Store(loadFixture("inconsistent.nt"));
+        const justifications = await reasoner.explainInconsistency(incStore);
+
+        expect(justifications.length).toBeGreaterThanOrEqual(1);
+        expect(justifications[0].length).toBeGreaterThanOrEqual(1);
+      },
+      360000,
+    );
+
+    // ── R8b: explainInconsistency returns [] for consistent ontology ──────────
+
+    it(
+      "R8b: explainInconsistency returns [] for consistent ontology (ClassA/ClassB store)",
+      async () => {
+        const justifications = await reasoner.explainInconsistency(store);
+
+        expect(justifications).toEqual([]);
+      },
+      360000,
+    );
+  },
+);
