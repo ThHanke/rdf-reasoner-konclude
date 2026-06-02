@@ -1,6 +1,6 @@
 ---
-title: OWL-DL violation detection gaps — WASM vs native Konclude (issue #13)
-date: 2026-05-28
+title: OWL-DL violation detection gaps — WASM vs native Konclude (issue #13 + plan-034)
+date: 2026-06-02
 category: capability-gaps
 module: wasm-reasoner-output
 problem_type: capability_gap
@@ -8,27 +8,30 @@ component: consistency-checker
 symptoms:
   - AsymmetricProperty bidirectional assertion not flagged as inconsistent
   - IrreflexiveProperty self-reference not flagged as inconsistent
+  - NegativePropertyAssertion inconsistency not detected (fixed by patches 025+026)
+  - materialize() hangs on AllDisjointClasses/disjointUnionOf/NPA blank-node NTriples
 root_cause: upstream_limitation
 resolution_type: upstream_fix_required
 severity: medium
-tags: [capability-gap, owl-dl, violation-detection, asymmetric, irreflexive, cardinality, allvaluesfrom, performance, timeout]
+tags: [capability-gap, owl-dl, violation-detection, asymmetric, irreflexive, cardinality, allvaluesfrom, negative-property-assertion, datatype-restriction, performance, timeout]
 ---
 
-# OWL-DL violation detection gaps — WASM vs native Konclude (issue #13)
+# OWL-DL violation detection gaps — WASM vs native Konclude (issue #13 + plan-034)
 
 ## Context
 
-Six OWL-DL violation cases from [ontosphere issue #13](https://github.com/ThHanke/ontosphere/issues/13) were
-run against native Konclude v0.7.0-1138 (Linux x64 static binary) and the WASM build to classify
-discrepancies as port bugs vs upstream limitations.
+Fourteen OWL-DL violation / reasoning cases covering issue #13 (six cases) and plan-034
+targeted OWL 2 DL parity verification (cases 7–14) were run against native Konclude v0.7.0
+and the WASM build to classify discrepancies as port bugs vs upstream limitations.
 
 Native binary: acquired via `scripts/acquire-native-konclude.sh`; run via `scripts/run-native-issue13.sh`.
 Ground truth: committed at `tests/fixtures/issue13-native-verdicts.json`.
-Integration tests: `tests/integration/issue13-owl-violations.test.ts`.
+Integration tests: `tests/integration/issue13-owl-violations.test.ts` (consistency checks),
+`tests/integration/property-characteristics.test.ts` (ABox materialize inferences).
 
-## Gap Matrix
+## Gap Matrix — consistency checks (issue13-owl-violations.test.ts)
 
-| Case | Violation | Native verdict | WASM verdict | Classification |
+| Case | Construct | Native verdict | WASM verdict | Classification |
 |------|-----------|---------------|--------------|----------------|
 | 1 | disjointWith (direct) | inconsistent ✓ | inconsistent ✓ | **PARITY** |
 | 2 | disjointWith (via inference) | inconsistent ✓ | inconsistent ✓ | **PARITY** |
@@ -36,76 +39,122 @@ Integration tests: `tests/integration/issue13-owl-violations.test.ts`.
 | 4 | IrreflexiveProperty self-reference | consistent ✗ | consistent ✗ | **UPSTREAM_LIMITATION** |
 | 5 | maxQualifiedCardinality + differentFrom | inconsistent ✓ | inconsistent ✓ | **PARITY** |
 | 6 | allValuesFrom + disjointWith | inconsistent ✓ | inconsistent ✓ | **PARITY** |
+| 7 | ReflexiveProperty + HasSelf complement | inconsistent ✓ | inconsistent ✓ | **PARITY** |
+| 8 | InverseFunctionalProperty + DifferentIndividuals | inconsistent ✓ | inconsistent ✓ | **PARITY** |
+| 9 | AllDisjointClasses (3-way) + double membership | inconsistent ✓ | inconsistent ✓ | **PARITY** |
+| 10 | AllDisjointProperties + EquivalentObjectProperties | consistent ✗ | consistent ✗ | **UPSTREAM_LIMITATION** |
+| 11 | disjointUnionOf + double membership | inconsistent ✓ | inconsistent ✓ | **PARITY** |
+| 12 | NegativeObjectPropertyAssertion contradiction | inconsistent ✓ | inconsistent ✓ | **PARITY** (fixed by patches 025+026) |
+| 13 | DataAllValuesFrom minInclusive — consistent (age=15) | consistent ✓ | consistent ✓ | **PARITY** |
+| 14 | DataAllValuesFrom minInclusive — inconsistent (age=5) | inconsistent ✓ | inconsistent ✓ | **PARITY** |
+
+## Gap Matrix — ABox materialize inferences (property-characteristics.test.ts)
+
+| Construct | Expected | WASM result | Classification |
+|-----------|----------|-------------|----------------|
+| SymmetricProperty ABox inference | `Bob p Alice` inferred | ✓ | **PARITY** |
+| inverseOf ABox inference | `Bob q Alice` inferred | ✓ | **PARITY** |
+| hasValue ABox inference | `Bob hasFriend Alice` inferred | ✓ | **PARITY** (commit 0c86d54) |
+| rdfs:domain / rdfs:range ABox inference | `Alice rdf:type Professor` inferred | ✓ | **PARITY** |
+| FunctionalProperty → sameAs | `Eve owl:sameAs Carol` inferred | hangs at ALIF+ precompute | **UPSTREAM_LIMITATION** |
+| AllDisjointClasses — no spurious type | `x rdf:type B` must NOT appear | materialize() hangs 30s+ | **UPSTREAM_LIMITATION** |
+| disjointUnionOf — superclass entailment | `x rdf:type C` probe | materialize() hangs 30s+ | **UPSTREAM_LIMITATION** |
+| NegativePropertyAssertion — no spurious positive | `alice knows bob` must NOT appear | materialize() hangs 30s+ | **UPSTREAM_LIMITATION** |
 
 ### Classification Taxonomy
 
 - **PARITY** — native and WASM agree; no gap
-- **UPSTREAM_LIMITATION** — native also fails; inherent in Konclude v0.7.0; not fixable in this repo without upstream changes
-- **PERFORMANCE_GAP** — native succeeds within 30 s; WASM times out; optimization opportunity in this codebase (all resolved as of 2026-05-28)
+- **UPSTREAM_LIMITATION** — native also fails or hangs; inherent in Konclude v0.7.0; not fixable in this repo without upstream changes
+- **WASM_BUG_FIXED** — was a WASM port bug; fixed by a patch in `patches/`
 
 ## Case Analysis
 
-### Cases 1–2: PARITY
+### Cases 1–2: PARITY — disjointWith
 
-Both `owl:disjointWith` violations (direct and domain/range inferred) are correctly detected by native
-Konclude and our WASM build. These work because the SI-expressiveness path exercises the standard
-tableau clash detection without requiring ABox role-characteristic reasoning.
-
-No action needed.
+Both `owl:disjointWith` violations (direct and domain/range inferred) correctly detected.
+Standard tableau clash detection at SI expressiveness; no ABox role-characteristic reasoning needed.
 
 ### Cases 3–4: UPSTREAM_LIMITATION — AsymmetricProperty / IrreflexiveProperty
 
-**Hypothesis:** Konclude v0.7.0 does not implement ABox-level violation detection for
-`owl:AsymmetricProperty` and `owl:IrreflexiveProperty`. The consistency checker preprocesses
-these characteristics but the clash rules for detecting a violation in the ABox individual
-graph are absent or gated behind a path not exercised by the standard `consistency` command.
+Konclude v0.7.0 does not implement ABox-level violation detection for `owl:AsymmetricProperty`
+and `owl:IrreflexiveProperty`. Native binary also reports "consistent". Not a port defect.
 
-Evidence: native binary also reports "consistent" for both cases despite the violations being
-OWL-DL valid inconsistencies. The WASM build matches native behavior, so this is not a port
-defect.
-
-**Expressiveness note:** Conceiving these as role characteristic conflicts requires the SROIQ
-tableau to track role chains and anti-symmetry clashes during ABox saturation. Konclude's
-documentation targets SROIQV(D) but the ABox pipeline may not propagate these constraints
-into saturation clash checking.
-
-**Fixability:** Not fixable within this repo. Would require upstream Konclude changes to the
-ABox saturation rules for asymmetric/irreflexive roles. Could be worked around by a
-pre-processing step that materializes the violation as a disjointWith clash before sending
-to Konclude.
+**Fixability:** Not fixable without upstream Konclude changes to ABox saturation clash rules.
 
 ### Case 5: PARITY — maxQualifiedCardinality + differentFrom (resolved 2026-05-28)
 
-**Root cause:** `CConcreteOntologyRedlandTriplesDataExpressionMapper` had
-`mConfExtractSimpleABoxAssertions = false` by default, so `buildSimpleABoxAxioms()` never ran.
-This function is the only place that registers `owl:differentFrom` as `DifferentIndividuals`
-axioms. Without it, the tableau could assume `vinA = vinB` (open world assumption), making the
-`maxQualifiedCardinality 1` constraint satisfiable — and the reasoner would hang trying to
-explore the resulting open search space.
-
-**Fix:** Added a public setter `setConfExtractSimpleABoxAssertions(bool)` to the mapper via
-`patches/016-mapper-simple-abox-setter.patch`. In `src/KoncludeReasoner.cpp`
-`loadTripleBuffer()`, call `mapper->setConfExtractSimpleABoxAssertions(true)` before
-`mapTriples()`. With `DifferentIndividuals` registered, the clash is detected in under 1 s.
-
-**Plan:** `docs/plans/2026-05-28-026-fix-differentfrom-abox-mapping-plan.md`
+`mConfExtractSimpleABoxAssertions = false` default suppressed `DifferentIndividuals` axiom
+registration. Fixed by `patches/016-mapper-simple-abox-setter.patch`. Plan: `2026-05-28-026-...`.
 
 ### Case 6: PARITY — allValuesFrom + disjointWith (resolved 2026-05-28)
 
-**Root cause:** The full classification pipeline (`OPSCLASSCLASSIFY`) caused the KPSet
-parallel classifier to time out on ontologies with complex universal restrictions.
+`checkConsistency()` uses `consistencyOnly()` pipeline (skips `OPSCLASSCLASSIFY`). KPSet
+classifier timed out on the full pipeline; consistency-only path completes in under 1 s.
 
-**Fix:** `checkConsistency()` uses a `consistencyOnly()` pipeline that skips `OPSCLASSCLASSIFY`,
-running only `OPSTRIPLESMAPPING → OPSACTIVECOUNT → OPSBUILD → OPSPREPROCESS → OPSCONSISTENCY →
-OPSPRECOMPUTESATURATION`. This matches native Konclude `consistency` command behavior and
-completes well within 30 s.
+### Cases 7–9, 11: PARITY — ReflexiveProperty, InverseFunctionalProperty, AllDisjointClasses, disjointUnionOf
+
+All consistency checks pass against native ground truth. Verified 2026-06-02.
+
+### Case 10: UPSTREAM_LIMITATION — AllDisjointProperties + EquivalentObjectProperties
+
+Native Konclude returns consistent despite the contradiction. Property disjointness and
+equivalence reasoning paths don't interact in the preprocessor. See project_upstream_konclude_bugs.md Bug 3.
+
+### Case 12: PARITY — NegativeObjectPropertyAssertion contradiction (fixed 2026-06-02)
+
+**Two upstream bugs found and patched:**
+
+**Bug 1 (patch 025):** In `initTripleDataProcessing()`, three filter-statement variable
+assignments are scrambled — `PREFIX_OWL_ASSERTION_PROPERTY` is assigned to
+`mPartialFilteringStatementForOWLTargetIndividualSuccessors` and vice versa. Result: the
+NPA blank-node stream queries wrong predicates → source individual never matched → axiom not
+created. See project_upstream_konclude_bugs.md Bug 1.
+
+**Bug 2 (patch 026):** In `buildSeparateNodeBasedAxioms()`, the hash and builder method for
+the literal-target path and individual-target path are swapped:
+- Literal target path used `mObjectPropertyNodeIdentifierDataHash` + `getNegativeObjectPropertyAssertion`
+- Individual target path used `mDataPropertyNodeIdentifierDataHash` + `getNegativeDataPropertyAssertion`
+
+After both patches, `checkConsistency()` correctly detects the NPA contradiction as inconsistent.
+See project_upstream_konclude_bugs.md Bug 4.
+
+### Cases 13–14: PARITY — DataAllValuesFrom + xsd:minInclusive (verified 2026-06-02)
+
+Datatype restriction reasoning works correctly. `age=15 >= 10` → consistent; `age=5 < 10` → inconsistent.
+Both match native Konclude ground truth.
+
+### UPSTREAM_LIMITATION — materialize() hang on blank-node constructs
+
+`materialize()` (full realization pipeline) hangs indefinitely on consistent ontologies with
+these blank-node constructs in NTriples format:
+
+- `owl:AllDisjointClasses` + `owl:members` RDF list
+- `owl:disjointUnionOf` RDF list
+- `owl:NegativePropertyAssertion` blank node (consistent ontology)
+
+Note: `checkConsistency()` on equivalent Turtle-format ontologies (cases 9, 11, 12) works fine.
+The hang is realization-pipeline specific, not parsing-specific.
+
+Compare: case 12 `checkConsistency()` with an INCONSISTENT NPA ontology now passes after patches
+025+026. But `materialize()` on a CONSISTENT NPA ontology still hangs. Different pipeline.
+
+**Fixability:** Not fixable in this port without upstream changes to the realization pipeline
+for these constructs.
+
+### UPSTREAM_LIMITATION — FunctionalProperty + ABox realization (ALIF+)
+
+`materialize()` or `realize` command stalls at "Precomputing...expressiveness 'ALIF+'" when an
+`owl:FunctionalProperty` forces `owl:sameAs` inference via multiple ABox assertions. Confirmed
+in native Docker binary. See project_upstream_konclude_bugs.md Bug 2.
 
 ## Next Steps
 
 | Classification | Action |
 |---------------|--------|
-| UPSTREAM_LIMITATION (cases 3–4) | File issue against konclude/Konclude; add pre-processing workaround (rewrite AsymmetricProperty violation as disjointWith clash) in a separate PR |
-| PARITY (cases 1–2, 5–6) | No action needed; all tests passing |
+| UPSTREAM_LIMITATION (cases 3–4, 10) | File issues against konclude/Konclude |
+| UPSTREAM_LIMITATION (materialize hangs) | File issue; workaround: use `checkConsistency()` where possible |
+| PARITY (cases 1–2, 5–9, 11–14) | No action needed; all tests passing |
+| WASM_BUG_FIXED (case 12, patches 025+026) | Upstream PRs pending for both NPA bugs |
 
-The integration tests in `tests/integration/issue13-owl-violations.test.ts` surface these gaps:
-cases 3–4 pass (WASM matches native, both wrong), cases 1–2 and 5–6 pass (PARITY).
+Tests in `tests/integration/issue13-owl-violations.test.ts` and
+`tests/integration/property-characteristics.test.ts` cover all cases above.

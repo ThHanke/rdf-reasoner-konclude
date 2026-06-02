@@ -1,0 +1,17 @@
+diff --git a/Source/Reasoner/Generator/CConcreteOntologyRedlandTriplesDataExpressionMapper.cpp b/Source/Reasoner/Generator/CConcreteOntologyRedlandTriplesDataExpressionMapper.cpp
+index d85b2000..072eac6f 100644
+--- a/Source/Reasoner/Generator/CConcreteOntologyRedlandTriplesDataExpressionMapper.cpp
++++ b/Source/Reasoner/Generator/CConcreteOntologyRedlandTriplesDataExpressionMapper.cpp
+@@ -2439,9 +2439,9 @@ namespace Konclude {
+ 				initPartialFilteringStatement(nullptr, PREFIX_OWL_DISTINCT_MEMBERS, nullptr, mPartialFilteringStatementForOWLDistinctMembers);
+ 
+ 				initPartialFilteringStatement(nullptr, PREFIX_OWL_SOURCE_INDIVIDUAL, nullptr, mPartialFilteringStatementForOWLSourceIndividualSuccessors);
+-				initPartialFilteringStatement(nullptr, PREFIX_OWL_ASSERTION_PROPERTY, nullptr, mPartialFilteringStatementForOWLTargetIndividualSuccessors);
+-				initPartialFilteringStatement(nullptr, PREFIX_OWL_TARGET_INDIVIDUAL, nullptr, mPartialFilteringStatementForOWLTargetValueSuccessors);
+-				initPartialFilteringStatement(nullptr, PREFIX_OWL_TARGET_VALUE, nullptr, mPartialFilteringStatementForOWLAssertionPropertySuccessors);
++				initPartialFilteringStatement(nullptr, PREFIX_OWL_TARGET_INDIVIDUAL, nullptr, mPartialFilteringStatementForOWLTargetIndividualSuccessors);
++				initPartialFilteringStatement(nullptr, PREFIX_OWL_TARGET_VALUE, nullptr, mPartialFilteringStatementForOWLTargetValueSuccessors);
++				initPartialFilteringStatement(nullptr, PREFIX_OWL_ASSERTION_PROPERTY, nullptr, mPartialFilteringStatementForOWLAssertionPropertySuccessors);
+ 
+ 
+ 				initPartialFilteringStatement(nullptr, PREFIX_RDF_TYPE, nullptr, mPartialFilteringStatementForOWLAllRDFTypePredecessors);
