@@ -241,3 +241,194 @@ ex:carol a owl:NamedIndividual .
     );
   },
 );
+
+// ---------------------------------------------------------------------------
+// Suite: whatIf() — R4, R5, R6
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!wasmExists)("whatIf() integration (R4 + R5 + R6)", () => {
+  const WIF = "http://example.org/wif#";
+  const RDF_TYPE_IRI = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+  const RDFS_SUBCLASS_IRI = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
+  const OWL_NS = "http://www.w3.org/2002/07/owl#";
+
+  const wif = (local: string) => `${WIF}${local}`;
+
+  // Inline ontology: Person ⊑ Animal, alice : Person
+  // After materialize: INFERRED_GRAPH_IRI should contain alice rdf:type Animal
+  const TURTLE = `
+@prefix ex: <${WIF}> .
+@prefix owl: <${OWL_NS}> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+<http://example.org/wif> a owl:Ontology .
+ex:Animal a owl:Class .
+ex:Person a owl:Class ; rdfs:subClassOf ex:Animal .
+ex:alice a ex:Person .
+`.trim();
+
+  let reasoner: RdfReasoner;
+  let store: Store;
+  let inferredBefore: string[]; // SPO keys of INFERRED_GRAPH_IRI before whatIf
+
+  beforeAll(async () => {
+    reasoner = new RdfReasoner();
+    await reasoner.ready;
+
+    const parser = new Parser({ format: "Turtle" });
+    store = new Store(parser.parse(TURTLE) as Quad[]);
+
+    // Pre-establish non-empty INFERRED_GRAPH_IRI via materialize
+    await reasoner.materialize(store, { includeClassHierarchy: true });
+
+    // Snapshot the SPO keys of INFERRED_GRAPH_IRI for R4 comparison
+    const ig = DataFactory.namedNode(INFERRED_GRAPH_IRI);
+    inferredBefore = store
+      .getQuads(null, null, null, ig)
+      .map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`);
+  }, 360000);
+
+  afterAll(() => {
+    reasoner?.terminate();
+  });
+
+  // ── R4: whatIf does not mutate INFERRED_GRAPH_IRI ────────────────────────
+
+  it(
+    "R4: whatIf does not mutate INFERRED_GRAPH_IRI, and a subsequent materialize produces the same result",
+    async () => {
+      // additions: a new individual bob typed as Person (harmless)
+      const additions: Quad[] = [
+        DataFactory.quad(
+          DataFactory.namedNode(wif("bob")),
+          DataFactory.namedNode(RDF_TYPE_IRI),
+          DataFactory.namedNode(wif("Person")),
+        ) as unknown as Quad,
+      ];
+
+      const delta = await reasoner.whatIf(store, additions);
+
+      // whatIf returns an object with added and removed arrays
+      expect(delta).toHaveProperty("added");
+      expect(delta).toHaveProperty("removed");
+      expect(Array.isArray(delta.added)).toBe(true);
+      expect(Array.isArray(delta.removed)).toBe(true);
+
+      // INFERRED_GRAPH_IRI must be unchanged after whatIf
+      const ig = DataFactory.namedNode(INFERRED_GRAPH_IRI);
+      const inferredAfterWhatIf = store
+        .getQuads(null, null, null, ig)
+        .map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`);
+
+      expect(inferredAfterWhatIf.sort()).toEqual(inferredBefore.sort());
+
+      // A subsequent materialize should produce the same inferred set
+      await reasoner.materialize(store, { includeClassHierarchy: true });
+      const inferredAfterMaterialize = store
+        .getQuads(null, null, null, ig)
+        .map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`);
+
+      expect(inferredAfterMaterialize.sort()).toEqual(inferredBefore.sort());
+    },
+    360000,
+  );
+
+  // ── R5: whatIf with contradicting axiom produces non-zero delta ──────────
+  // Spike result: adding alice rdf:type owl:Nothing collapses the ontology —
+  // the reasoner removes all previously-inferred triples (removed.length > 0,
+  // added.length === 0). Direction observed empirically:
+  //   delta.added:   []
+  //   delta.removed: [Animal⊑Thing, Person⊑Animal, alice:Animal, alice:Person]
+
+  it(
+    "R5: whatIf with contradiction (alice rdf:type owl:Nothing) collapses inferences — removed.length > 0",
+    async () => {
+      const additions: Quad[] = [
+        DataFactory.quad(
+          DataFactory.namedNode(wif("alice")),
+          DataFactory.namedNode(RDF_TYPE_IRI),
+          DataFactory.namedNode(`${OWL_NS}Nothing`),
+        ) as unknown as Quad,
+      ];
+
+      const delta = await reasoner.whatIf(store, additions);
+
+      // Direction-specific: contradiction collapses the inferred set.
+      // All previously-inferred triples are removed; nothing new is added.
+      expect(delta.added.length).toBe(0);
+      expect(delta.removed.length).toBeGreaterThan(0);
+
+      // alice rdf:type Animal is one of the collapsed inferences
+      const aliceAnimalRemoved = delta.removed.some(
+        q =>
+          q.subject.value === wif("alice") &&
+          q.predicate.value === RDF_TYPE_IRI &&
+          q.object.value === wif("Animal"),
+      );
+      expect(aliceAnimalRemoved).toBe(true);
+    },
+    360000,
+  );
+
+  // ── R6: two independent whatIf calls produce independent results ──────────
+  // additions1 types ClassX under Animal; additions2 types ClassY under Animal.
+  // delta1 should include entailments about ClassX but not ClassY, and vice versa.
+
+  it(
+    "R6: two independent whatIf calls produce independent results — ClassX vs ClassY",
+    async () => {
+      const classX = wif("ClassX");
+      const classY = wif("ClassY");
+
+      const additions1: Quad[] = [
+        DataFactory.quad(
+          DataFactory.namedNode(classX),
+          DataFactory.namedNode(RDF_TYPE_IRI),
+          DataFactory.namedNode(`${OWL_NS}Class`),
+        ) as unknown as Quad,
+        DataFactory.quad(
+          DataFactory.namedNode(classX),
+          DataFactory.namedNode(RDFS_SUBCLASS_IRI),
+          DataFactory.namedNode(wif("Animal")),
+        ) as unknown as Quad,
+      ];
+
+      const additions2: Quad[] = [
+        DataFactory.quad(
+          DataFactory.namedNode(classY),
+          DataFactory.namedNode(RDF_TYPE_IRI),
+          DataFactory.namedNode(`${OWL_NS}Class`),
+        ) as unknown as Quad,
+        DataFactory.quad(
+          DataFactory.namedNode(classY),
+          DataFactory.namedNode(RDFS_SUBCLASS_IRI),
+          DataFactory.namedNode(wif("Animal")),
+        ) as unknown as Quad,
+      ];
+
+      const delta1 = await reasoner.whatIf(store, additions1);
+      const delta2 = await reasoner.whatIf(store, additions2);
+
+      // delta1 should reference ClassX but NOT ClassY
+      const delta1HasX = delta1.added.some(q =>
+        q.subject.value === classX || q.object.value === classX,
+      );
+      const delta1HasY = delta1.added.some(q =>
+        q.subject.value === classY || q.object.value === classY,
+      );
+
+      // delta2 should reference ClassY but NOT ClassX
+      const delta2HasY = delta2.added.some(q =>
+        q.subject.value === classY || q.object.value === classY,
+      );
+      const delta2HasX = delta2.added.some(q =>
+        q.subject.value === classX || q.object.value === classX,
+      );
+
+      expect(delta1HasX).toBe(true);
+      expect(delta1HasY).toBe(false);
+      expect(delta2HasY).toBe(true);
+      expect(delta2HasX).toBe(false);
+    },
+    360000,
+  );
+});
