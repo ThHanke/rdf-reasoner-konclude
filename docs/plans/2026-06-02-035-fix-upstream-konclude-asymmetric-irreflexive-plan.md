@@ -209,83 +209,92 @@ where `backPropLink->getSourceIndividual() == sourceNode` (a detectable self-loo
 Note: `mSelfConnected` is NOT set by ABox self-loops — only by `applySELFRule` negate=false
 (`∃r.Self`). Do NOT rely on `mSelfConnected` for the clash check.
 
-**Fix location:**
+**Why the applyELSERule path does NOT fix the bug by itself:**
+
+When `mNegJumpFuncVec[CCSELF]` is null, `applyELSERule` fires and sets
+`INDSATFLAGINSUFFICIENT` on `processIndi`. But `processIndi` here is the **top concept's
+saturation node** (the resolve/template node), not the nominal individual's saturation node.
+
+`updateIndirectAddingIndividualStatusFlags` (line 7698) propagates indirect flags through
+backward propagation links, BUT only for non-ABox nodes (line 7724:
+`!updateIndiNode->isABoxIndividualRepresentationNode()`). Nominal individuals ARE ABox
+representation nodes — so the insufficient flag does NOT propagate from the top concept
+node to the nominal individual's saturation node.
+
+`CSaturationNodeBackendAssociationCacheHandler` checks `satNode->getIndirectStatusFlags()`
+(line 1471) for the **nominal individual's** node. Since that node does NOT have
+`INDSATFLAGINSUFFICIENT`, it is written to the backend cache as `CompletelyHandled=true`.
+
+**Fix location (revised after deeper trace):**
+
+The fix must happen on the NOMINAL INDIVIDUAL's saturation node, where the self-loop is
+known. The correct place is `initializeRoleAssertions` (line 5068) — specifically the
+branch at line 5096 where a self-loop is detected (`othIndiNode == indiProcSatNode`).
 
 File: `vendor/konclude/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp`
 
-**Change 1** — constructor (line ~77, inside the jump-table initialization block):
-```cpp
-mNegJumpFuncVec[CCSELF] = &CCalculationTableauApproximationSaturationTaskHandleAlgorithm::applySELFRule;
-```
+**Change** — in `initializeRoleAssertions` (line 5096), after the role assertion link
+creation for a self-loop, add a check for `¬∃role.Self` in the resolve node's concept label:
 
-**Change 2** — in `applySELFRule` (line 6843), insert at the top of the function body,
-before the super-role iteration loop, guard on `conNegation == true`:
 ```cpp
-if (conNegation) {
-    // ¬∃r.Self: clash if there is a self-loop for this role or any super-role
-    CRoleBackwardSaturationPropagationHash* backPropHash = processIndi->getRoleBackwardPropagationHash(false);
-    if (backPropHash) {
-        CPROCESSHASH<CRole*,CRoleBackwardSaturationPropagationHashData>* backPropDataHash =
-            backPropHash->getRoleBackwardPropagationDataHash();
-        CSortedNegLinker<CRole*>* superRoleIt2 = role->getIndirectSuperRoleList();
-        while (superRoleIt2) {
-            CRole* superRole2 = superRoleIt2->getData();
-            bool invRole2 = superRoleIt2->isNegated();
-            // backward propagation links are stored on the destination (=source for self-loops)
-            // and keyed by the non-inversed super role in the inverse direction
-            if (invRole2) {
-                if (backPropDataHash->contains(superRole2)) {
-                    CRoleBackwardSaturationPropagationHashData& backPropData = (*backPropDataHash)[superRole2];
-                    for (CBackwardSaturationPropagationLink* linkIt = backPropData.mLinkLinker; linkIt; linkIt = linkIt->getNext()) {
-                        if (linkIt->getSourceIndividual() == processIndi) {
-                            // self-loop found — clash!
-                            updateDirectAddingIndividualStatusFlags(processIndi, CIndividualSaturationProcessNodeStatusFlags::INDSATFLAGCLASHED, mCalcAlgContext);
+if (othIndiNode && (othIndiNode->isInitialized() || othIndiNode == indiProcSatNode)) {
+    createRoleAssertionLink(indiProcSatNode,othIndiNode,role,false,calcAlgContext);
+    indiProcSatNode->addRoleAssertion(othIndiNode,role,false);
+    createRoleAssertionLink(othIndiNode,indiProcSatNode,role,true,calcAlgContext);
+    othIndiNode->addRoleAssertion(indiProcSatNode,role,true);
+    // NEW: for self-loops, check if ¬∃role.Self is in the resolve node's concept label
+    if (othIndiNode == indiProcSatNode) {
+        CReapplyConceptSaturationLabelSet* resolveConSet =
+            resolveNode->getReapplyConceptSaturationLabelSet(false);
+        if (resolveConSet) {
+            for (CConceptSaturationDescriptor* conSatDesIt =
+                     resolveConSet->getConceptSaturationDescriptionLinker();
+                 conSatDesIt; conSatDesIt = conSatDesIt->getNext()) {
+                CConcept* c = conSatDesIt->getConcept();
+                if (conSatDesIt->isNegated() && c->getOperatorCode() == CCSELF) {
+                    CSortedNegLinker<CRole*>* superRoleIt = role->getIndirectSuperRoleList();
+                    while (superRoleIt) {
+                        if (!superRoleIt->isNegated() &&
+                            c->getRole() == superRoleIt->getData()) {
+                            updateDirectAddingIndividualStatusFlags(
+                                indiProcSatNode,
+                                CIndividualSaturationProcessNodeStatusFlags::INDSATFLAGCLASHED,
+                                calcAlgContext);
                             return;
                         }
+                        superRoleIt = superRoleIt->getNext();
                     }
                 }
             }
-            superRoleIt2 = superRoleIt2->getNext();
         }
     }
-    return; // no self-loop found — no clash
 }
 ```
 
-**Rationale for `invRole2` check:** `installBackwardPropagationLink` is called from
-`createRoleAssertionLink` with `roleInversed=true` (line 5046), which fires when
-`superRoleIt->isNegated() ^ roleInversed = false ^ true = true`. The link is stored keyed
-by the super role that has `isNegated()=true` in `getIndirectSuperRoleList()`. However,
-looking more carefully: `createRoleAssertionLink(indiProcSatNode, indiProcSatNode, role, true, ...)`.
-The backward prop hash key is `superRole` from iterating `role->getIndirectSuperRoleList()`.
-When `superRoleIt->isNegated() ^ roleInversed` (i.e., `isNegated() ^ true`) is true, that
-means `isNegated()=false`, NOT `isNegated()=true`. So the link is actually stored keyed by
-the **non-negated** super role. The `invRole2` check in the proposed fix above needs
-verification — the correct check is `!invRole2` (i.e., `isNegated()==false`).
-
-**Revised Change 2** (corrected after re-reading createRoleAssertionLink line 5039):
-```
-Line 5039: if (superRoleIt->isNegated()^roleInversed) { → backward prop branch
-When roleInversed=true: condition is true when isNegated()=false
-```
-So backward prop links for self-loops are stored under non-negated super roles.
-Change the `if (invRole2)` to `if (!invRole2)` in the check above.
+**Alternative simpler approach (equivalent, tighter scope):** Since we know the ABox
+assertion being processed is for `role` and the target is itself, check if ANY concept in
+`resolveNode`'s label matches `CCSELF+negated+role`. This is exactly what the code above
+does. No changes to the dispatch table are needed.
 
 **Confidence:** High — confirmed by complete code trace through:
-- Saturation dispatch table initialization (line 77 — missing `mNegJumpFuncVec[CCSELF]`)
-- Backend cache write-blocking on clash (line 612 — clashed flag prevents cache association)
-- Backend cache use in completion (line 22582 — `tryEstablishExpansionBlockingWithBackendCacheSynchronisation`)
-- ABox self-loop storage in backward prop hash (`createRoleAssertionLink`, `installBackwardPropagationLink`)
-- The check `linkIt->getSourceIndividual() == processIndi` for detecting self-loops
+- Saturation dispatch table (line 77 — only `mPosJumpFuncVec[CCSELF]` is registered;
+  `mNegJumpFuncVec[CCSELF]` is absent → `applyELSERule` fires)
+- `applyELSERule` sets `INDSATFLAGINSUFFICIENT` on the TOP CONCEPT NODE, not the nominal
+- `updateIndirectAddingIndividualStatusFlags` excludes ABox nodes from flag propagation
+  (line 7724: `!updateIndiNode->isABoxIndividualRepresentationNode()`)
+- `CSaturationNodeBackendAssociationCacheHandler` line 1471: checks nominal individual's
+  indirect flags (not the top concept node's flags) → sees no insufficient flag
+- Backend cache written as `CompletelyHandled=true` for the nominal individual
+- Completion algorithm's `tryEstablishExpansionBlockingWithBackendCacheSynchronisation`
+  (line 22582) sees `CompletelyHandled=true` → sets `PRFSYNCHRONIZEDBACKENDSUCCESSOREXPANSIONBLOCKED`
+- `applySELFRule` with negate=true in the completion (line 17239) is never reached
 
-**One remaining uncertainty:** The `!invRole2` vs `invRole2` direction in the backward prop
-hash lookup. This must be verified by reading `createRoleAssertionLink` line 5039 again
-during Unit 3 implementation. The logic: `superRoleIt->isNegated()^roleInversed` is the
-condition. For the ABox role assertion with `roleInversed=true`, the backward prop branch
-executes when `isNegated()=false` (because `false^true=true`). So the hash key is the
-super role with `isNegated()=false` in the super role list, i.e., the **non-inverted** role.
-In the `applySELFRule` check, iterate all super roles and for each with `isNegated()=false`
-check if any backward prop link has source==processIndi.
+**One remaining uncertainty for Unit 3:** Whether the `resolveNode` in scope at line 5096
+is the correct reference to use, or whether the nominal individual's own label set (if it
+exists as a separate object) should also be checked. In practice, since nominal individuals
+in Konclude's saturation use the top concept node as their resolve node, and `¬∃r.Self`
+from `IrreflexiveObjectProperty` is a GCI applied to `⊤`, it will be in the resolve node's
+label. Verify by checking `resolveNode` is not null before the new check.
 
 ## High-Level Technical Design
 
