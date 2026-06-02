@@ -1,15 +1,19 @@
 diff --git a/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp b/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp
-index 350cadeb..cf178f52 100644
+index 350cadeb..cf278f53 100644
 --- a/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp
 +++ b/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp
-@@ -5128,6 +5128,24 @@ namespace Konclude {
- 										superRoleIt = superRoleIt->getNext();
- 									}
- 								}
-+								// AllDisjointProperties + EquivalentObjectProperties clash:
-+								// If role is equivalent to another role that it is also disjoint with,
-+								// any assertion using role is a clash (e.g. DisjointObjectProperties(p,q)
-+								// + EquivalentObjectProperties(p,q) + p(alice,bob)).
+@@ -5093,7 +5093,30 @@ namespace Konclude {
+
+
+ 							CIndividualSaturationProcessNode* othIndiNode = getIndividualNodeForIndividual(indiProcSatNode,othIndi,saturationID,calcAlgContext);
+-							if (othIndiNode && (othIndiNode->isInitialized() || othIndiNode == indiProcSatNode)) {
++							// AllDisjointProperties + EquivalentObjectProperties clash:
++							// If role is equivalent to another role that it is also disjoint with,
++							// any ABox assertion using role is a clash (e.g. DisjointObjectProperties(p,q)
++							// + EquivalentObjectProperties(p,q) + p(alice,bob)).
++							// Checked here (before othIndiNode branch) because the clash depends only
++							// on the role axioms, not on whether the target individual is initialized.
++							{
 +								CSortedNegLinker<CRole*>* eqRoleIt = role->getEquivalentRoleList();
 +								while (eqRoleIt) {
 +									if (!eqRoleIt->isNegated()) {  // skip inverse roles
@@ -24,6 +28,8 @@ index 350cadeb..cf178f52 100644
 +									}
 +									eqRoleIt = eqRoleIt->getNext();
 +								}
- 							} else if (!othIndiNode) {
- 								othIndiNode = getResolvedIndividualNodeRepresentativeRangeAssertion(resolveNode,othIndi,role,false,calcAlgContext);
- 								createRoleAssertionLink(indiProcSatNode, othIndiNode,role,false,calcAlgContext);
++							}
++							if (othIndiNode && (othIndiNode->isInitialized() || othIndiNode == indiProcSatNode)) {
+ 								createRoleAssertionLink(indiProcSatNode,othIndiNode,role,false,calcAlgContext);
+ 								indiProcSatNode->addRoleAssertion(othIndiNode,role,false);
+ 								createRoleAssertionLink(othIndiNode,indiProcSatNode,role,true,calcAlgContext);
