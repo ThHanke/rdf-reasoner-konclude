@@ -6,8 +6,8 @@ module: wasm-reasoner-output
 problem_type: capability_gap
 component: consistency-checker
 symptoms:
-  - AsymmetricProperty bidirectional assertion not flagged as inconsistent
-  - IrreflexiveProperty self-reference not flagged as inconsistent
+  - AsymmetricProperty bidirectional assertion not flagged as inconsistent (fixed by patches 027-028)
+  - IrreflexiveProperty self-reference not flagged as inconsistent (fixed by patches 027-028)
   - NegativePropertyAssertion inconsistency not detected (fixed by patches 025+026)
   - materialize() hangs on AllDisjointClasses/disjointUnionOf/NPA blank-node NTriples
 root_cause: upstream_limitation
@@ -35,8 +35,8 @@ Integration tests: `tests/integration/issue13-owl-violations.test.ts` (consisten
 |------|-----------|---------------|--------------|----------------|
 | 1 | disjointWith (direct) | inconsistent ✓ | inconsistent ✓ | **PARITY** |
 | 2 | disjointWith (via inference) | inconsistent ✓ | inconsistent ✓ | **PARITY** |
-| 3 | AsymmetricProperty bidirectional | consistent ✗ | consistent ✗ | **UPSTREAM_LIMITATION** |
-| 4 | IrreflexiveProperty self-reference | consistent ✗ | consistent ✗ | **UPSTREAM_LIMITATION** |
+| 3 | AsymmetricProperty bidirectional | consistent ✗ (native bug) | inconsistent ✓ | **PARITY** (fixed by patches 027-028) |
+| 4 | IrreflexiveProperty self-reference | consistent ✗ (native bug) | inconsistent ✓ | **PARITY** (fixed by patches 027-028) |
 | 5 | maxQualifiedCardinality + differentFrom | inconsistent ✓ | inconsistent ✓ | **PARITY** |
 | 6 | allValuesFrom + disjointWith | inconsistent ✓ | inconsistent ✓ | **PARITY** |
 | 7 | ReflexiveProperty + HasSelf complement | inconsistent ✓ | inconsistent ✓ | **PARITY** |
@@ -74,12 +74,26 @@ Integration tests: `tests/integration/issue13-owl-violations.test.ts` (consisten
 Both `owl:disjointWith` violations (direct and domain/range inferred) correctly detected.
 Standard tableau clash detection at SI expressiveness; no ABox role-characteristic reasoning needed.
 
-### Cases 3–4: UPSTREAM_LIMITATION — AsymmetricProperty / IrreflexiveProperty
+### Cases 3–4: PARITY — AsymmetricProperty / IrreflexiveProperty (fixed by patches 027-028, 2026-06-02)
 
-Konclude v0.7.0 does not implement ABox-level violation detection for `owl:AsymmetricProperty`
-and `owl:IrreflexiveProperty`. Native binary also reports "consistent". Not a port defect.
+WASM now correctly detects inconsistency for both constructs. Native Konclude v0.7.0 still
+reports "consistent" (upstream bug). The fixes are in the saturation algorithm.
 
-**Fixability:** Not fixable without upstream Konclude changes to ABox saturation clash rules.
+**AsymmetricProperty fix (patch 028):** In `initializeRoleAssertions`, when an ABox nominal
+individual has a role assertion `r(a,b)` and `b` has a reverse ABox assertion `r(b,a)` for an
+asymmetric role `r`, set `INDSATFLAGCLASHED` on `a`'s saturation node. This prevents the
+backend cache from writing `CompletelyHandled=true`, causing the completion algorithm to re-check.
+The check uses raw ABox assertions (order-independent, fully populated before saturation).
+
+**IrreflexiveProperty fix (patch 028):** In `initializeRoleAssertions`, when an ABox nominal
+individual has a self-loop `r(a,a)` and any super-role of `r` is marked `isIrreflexive()`, set
+`INDSATFLAGCLASHED`. This is simpler and more reliable than checking the resolve node's concept
+label set (which may not be populated at check time).
+
+**Why patch 027 is also needed:** Patch 027 adds `addInverseRoleLinker` + `setInverseRole` in
+the `BETASYMMETRICPROPERTY` builder handler. This ensures the preprocessor reuses the
+builder-created inverse role expression instead of creating a duplicate `CRole*`, which is
+needed for correct role hierarchy reasoning independent of the saturation clash fix.
 
 ### Case 5: PARITY — maxQualifiedCardinality + differentFrom (resolved 2026-05-28)
 
@@ -151,10 +165,11 @@ in native Docker binary. See project_upstream_konclude_bugs.md Bug 2.
 
 | Classification | Action |
 |---------------|--------|
-| UPSTREAM_LIMITATION (cases 3–4, 10) | File issues against konclude/Konclude |
+| UPSTREAM_LIMITATION (case 10) | File issue against konclude/Konclude |
 | UPSTREAM_LIMITATION (materialize hangs) | File issue; workaround: use `checkConsistency()` where possible |
-| PARITY (cases 1–2, 5–9, 11–14) | No action needed; all tests passing |
+| PARITY (cases 1–9, 11–14) | No action needed; all tests passing |
 | WASM_BUG_FIXED (case 12, patches 025+026) | Upstream PRs pending for both NPA bugs |
+| WASM_SURPASSES_NATIVE (cases 3–4, patches 027-028) | File upstream PRs for AsymmetricProperty + IrreflexiveProperty saturation clash fixes |
 
 Tests in `tests/integration/issue13-owl-violations.test.ts` and
 `tests/integration/property-characteristics.test.ts` cover all cases above.

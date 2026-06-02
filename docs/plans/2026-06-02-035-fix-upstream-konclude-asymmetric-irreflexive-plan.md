@@ -1,8 +1,9 @@
 ---
 title: "fix: upstream Konclude — AsymmetricProperty and IrreflexiveProperty inconsistency detection"
 type: fix
-status: active
+status: complete
 date: 2026-06-02
+completed: 2026-06-02
 ---
 
 # fix: upstream Konclude — AsymmetricProperty and IrreflexiveProperty inconsistency detection

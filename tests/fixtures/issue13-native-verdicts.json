@@ -1,8 +1,8 @@
 [
   { "case": 1, "name": "disjointWith (direct)", "fixture": "case1-disjoint-direct.owl", "verdict": "inconsistent", "exitCode": 0 },
   { "case": 2, "name": "disjointWith (via inference)", "fixture": "case2-disjoint-by-inference.owl", "verdict": "inconsistent", "exitCode": 0 },
-  { "case": 3, "name": "AsymmetricProperty violation", "fixture": "case3-asymmetric-property.owl", "verdict": "consistent", "exitCode": 0 },
-  { "case": 4, "name": "IrreflexiveProperty violation", "fixture": "case4-irreflexive-property.owl", "verdict": "consistent", "exitCode": 0 },
+  { "case": 3, "name": "AsymmetricProperty violation", "fixture": "case3-asymmetric-property.owl", "verdict": "inconsistent", "exitCode": 0 },
+  { "case": 4, "name": "IrreflexiveProperty violation", "fixture": "case4-irreflexive-property.owl", "verdict": "inconsistent", "exitCode": 0 },
   { "case": 5, "name": "maxQualifiedCardinality + differentFrom", "fixture": "case5-max-qualified-cardinality.owl", "verdict": "inconsistent", "exitCode": 0 },
   { "case": 6, "name": "allValuesFrom + disjointWith", "fixture": "case6-allvaluesfrom-disjoint.owl", "verdict": "inconsistent", "exitCode": 0 },
   { "case": 7, "name": "ReflexiveProperty + ObjectComplementOf(HasSelf)", "fixture": "case7-reflexive-property.owl", "verdict": "inconsistent", "exitCode": 0 },

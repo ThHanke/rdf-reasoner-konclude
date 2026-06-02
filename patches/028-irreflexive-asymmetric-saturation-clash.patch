@@ -1,0 +1,41 @@
+diff --git a/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp b/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp
+index 96e51beb..f2a3d6c1 100644
+--- a/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp
++++ b/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp
+@@ -5098,6 +5098,40 @@ namespace Konclude {
+ 							indiProcSatNode->addRoleAssertion(othIndiNode,role,false);
+ 							createRoleAssertionLink(othIndiNode,indiProcSatNode,role,true,calcAlgContext);
+ 							othIndiNode->addRoleAssertion(indiProcSatNode,role,true);
++							if (othIndiNode != indiProcSatNode && role->isAsymmetric()) {
++								// AsymmetricProperty violation: r(a,b) and r(b,a) both present.
++								// Use raw ABox assertions (order-independent, fully populated before saturation).
++								for (CRoleAssertionLinker* revAssIt = othIndi->getAssertionRoleLinker(); revAssIt; revAssIt = revAssIt->getNext()) {
++									if (revAssIt->getRole() == role &&
++											revAssIt->getIndividual() == nominalIndi) {
++										updateDirectAddingIndividualStatusFlags(
++											indiProcSatNode,
++											CIndividualSaturationProcessNodeStatusFlags::INDSATFLAGCLASHED,
++											calcAlgContext);
++										return;
++									}
++								}
++							}
++							if (othIndiNode == indiProcSatNode) {
++								// Self-loop: check if any super-role of `role` is irreflexive —
++								// IrreflexiveObjectProperty(r) is violated by r(a,a).
++								CSortedNegLinker<CRole*>* superRoleIt = role->getIndirectSuperRoleList();
++								while (superRoleIt) {
++									if (!superRoleIt->isNegated() &&
++											superRoleIt->getData()->isIrreflexive()) {
++										updateDirectAddingIndividualStatusFlags(
++											indiProcSatNode,
++											CIndividualSaturationProcessNodeStatusFlags::INDSATFLAGCLASHED,
++											calcAlgContext);
++										return;
++									}
++									superRoleIt = superRoleIt->getNext();
++								}
++							}
+ 						} else if (!othIndiNode) {
+ 							othIndiNode = getResolvedIndividualNodeRepresentativeRangeAssertion(resolveNode,othIndi,role,false,calcAlgContext);
+ 							createRoleAssertionLink(indiProcSatNode, othIndiNode,role,false,calcAlgContext);
