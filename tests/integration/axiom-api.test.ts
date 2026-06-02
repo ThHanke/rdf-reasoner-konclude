@@ -568,3 +568,119 @@ ex:ClassA rdfs:subClassOf ex:ClassB .
     );
   },
 );
+
+// ---------------------------------------------------------------------------
+// Suite: validate() — R10, R11a, R11b
+//
+// R10: validate(store) on Roberts Family → { consistent: true, errors: [], warnings: [] }
+// R11a: validate with maxJustificationsPerWarning:1 → justifications populated
+// R11b: validate with maxJustificationsPerWarning:0 → justifications: [] (IRI-only mode)
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!wasmExists)("validate() integration (R10 + R11)", () => {
+  let reasoner: RdfReasoner;
+
+  afterAll(() => {
+    reasoner?.terminate();
+  });
+
+  // ── R10: Roberts Family → consistent: true, no warnings ──────────────────
+
+  describe("R10: Roberts Family validate()", () => {
+    let validateResult: Awaited<ReturnType<RdfReasoner["validate"]>>;
+
+    beforeAll(async () => {
+      reasoner = new RdfReasoner();
+      await reasoner.ready;
+
+      const quads = loadFixture("roberts-family.nt");
+      const store = new Store(quads);
+      validateResult = await reasoner.validate(store);
+    }, 360000);
+
+    it(
+      "R10: validate(Roberts Family) → consistent: true",
+      () => {
+        expect(validateResult.consistent).toBe(true);
+      },
+      360000,
+    );
+
+    it(
+      "R10: validate(Roberts Family) → errors: []",
+      () => {
+        expect(validateResult.errors).toEqual([]);
+      },
+      360000,
+    );
+
+    it(
+      "R10: validate(Roberts Family) → warnings: [] (no unsatisfiable classes)",
+      () => {
+        // The Roberts Family disjoint axioms (Female/Male, Person/Sex) do not
+        // produce unsatisfiable classes — verified empirically here.
+        expect(validateResult.warnings).toEqual([]);
+      },
+      360000,
+    );
+  });
+
+  // ── R11: EmptyClass ⊑ owl:Nothing → justifications populated / empty ──────
+
+  describe("R11: EmptyClass ⊑ owl:Nothing validate() options", () => {
+    const EMPTY_CLASS_IRI = "http://example.org/val#EmptyClass";
+
+    const TURTLE = `
+@prefix ex: <http://example.org/val#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+<http://example.org/val> a owl:Ontology .
+ex:EmptyClass a owl:Class ; rdfs:subClassOf owl:Nothing .
+`.trim();
+
+    let store: Store;
+
+    beforeAll(async () => {
+      if (!reasoner) {
+        reasoner = new RdfReasoner();
+        await reasoner.ready;
+      }
+      const parser = new Parser({ format: "Turtle" });
+      store = new Store(parser.parse(TURTLE) as Quad[]);
+    }, 360000);
+
+    it(
+      "R11a: validate(EmptyClass, { maxJustificationsPerWarning: 1 }) → warnings[0].justifications is populated",
+      async () => {
+        const result = await reasoner.validate(store, { maxJustificationsPerWarning: 1 });
+
+        expect(result.consistent).toBe(true);
+        expect(result.errors).toEqual([]);
+
+        const emptyClassWarning = result.warnings.find(w => w.classIRI === EMPTY_CLASS_IRI);
+        expect(emptyClassWarning).toBeDefined();
+        // justifications must be non-empty (not IRI-only mode)
+        expect(emptyClassWarning!.justifications.length).toBeGreaterThanOrEqual(1);
+        // each justification must contain at least one axiom
+        expect(emptyClassWarning!.justifications[0].length).toBeGreaterThanOrEqual(1);
+      },
+      360000,
+    );
+
+    it(
+      "R11b: validate(EmptyClass, { maxJustificationsPerWarning: 0 }) → warnings[0].justifications is []",
+      async () => {
+        const result = await reasoner.validate(store, { maxJustificationsPerWarning: 0 });
+
+        expect(result.consistent).toBe(true);
+        expect(result.errors).toEqual([]);
+
+        const emptyClassWarning = result.warnings.find(w => w.classIRI === EMPTY_CLASS_IRI);
+        expect(emptyClassWarning).toBeDefined();
+        // IRI-only mode: justifications must be empty
+        expect(emptyClassWarning!.justifications).toEqual([]);
+      },
+      360000,
+    );
+  });
+});
