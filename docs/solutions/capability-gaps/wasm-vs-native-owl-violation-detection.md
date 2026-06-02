@@ -42,7 +42,7 @@ Integration tests: `tests/integration/issue13-owl-violations.test.ts` (consisten
 | 7 | ReflexiveProperty + HasSelf complement | inconsistent ✓ | inconsistent ✓ | **PARITY** |
 | 8 | InverseFunctionalProperty + DifferentIndividuals | inconsistent ✓ | inconsistent ✓ | **PARITY** |
 | 9 | AllDisjointClasses (3-way) + double membership | inconsistent ✓ | inconsistent ✓ | **PARITY** |
-| 10 | AllDisjointProperties + EquivalentObjectProperties | consistent ✗ | consistent ✗ | **UPSTREAM_LIMITATION** |
+| 10 | AllDisjointProperties + EquivalentObjectProperties | consistent ✗ (native bug) | inconsistent ✓ | **PARITY** (fixed by patch 029, 2026-06-02) |
 | 11 | disjointUnionOf + double membership | inconsistent ✓ | inconsistent ✓ | **PARITY** |
 | 12 | NegativeObjectPropertyAssertion contradiction | inconsistent ✓ | inconsistent ✓ | **PARITY** (fixed by patches 025+026) |
 | 13 | DataAllValuesFrom minInclusive — consistent (age=15) | consistent ✓ | consistent ✓ | **PARITY** |
@@ -109,10 +109,28 @@ classifier timed out on the full pipeline; consistency-only path completes in un
 
 All consistency checks pass against native ground truth. Verified 2026-06-02.
 
-### Case 10: UPSTREAM_LIMITATION — AllDisjointProperties + EquivalentObjectProperties
+### Case 10: PARITY — AllDisjointProperties + EquivalentObjectProperties (fixed by patch 029, 2026-06-02)
 
-Native Konclude returns consistent despite the contradiction. Property disjointness and
-equivalence reasoning paths don't interact in the preprocessor. See project_upstream_konclude_bugs.md Bug 3.
+WASM now correctly detects inconsistency. Native Konclude v0.7.0 still returns consistent (upstream bug).
+
+**Root cause:** `EquivalentObjectProperties(p, q)` stores `q` in `p.equivalentRoles` but does NOT
+add `q` to `p.getIndirectSuperRoleList()`. The saturation's `createRoleAssertionLink` only iterates
+`getIndirectSuperRoleList()` for disjoint checks — so the equivalence-disjoint clash is never
+detected. Furthermore, the check was inside the `if (othIndiNode && initialized)` branch, which
+only fires when the target individual's saturation node is already initialized.
+
+**Fix (patch 029):** In `initializeRoleAssertions`, before the `othIndiNode` branch, iterate
+`role->getEquivalentRoleList()` with `!isNegated()` filter (to skip inverse roles stored in the
+same list). For each equivalent role `eqRole`, check `eqRole->hasDisjointRole(role)`. If true,
+set `INDSATFLAGCLASHED` on `indiProcSatNode` and return. This blocks the backend cache from
+writing `CompletelyHandled=true`, forcing the full completion algorithm to detect the clash.
+
+**The `!isNegated()` filter is critical:** `getEquivalentRoleList()` returns `mInverseEquivalentRoles`
+which stores both equivalent roles (`isNegated=false`) and inverse roles (`isNegated=true`).
+Without the filter, `InverseObjectProperties(p, q)` + `DisjointObjectProperties(p, q)` would
+produce a false inconsistency.
+
+See project_upstream_konclude_bugs.md Bug 3 (resolved).
 
 ### Case 12: PARITY — NegativeObjectPropertyAssertion contradiction (fixed 2026-06-02)
 
@@ -165,11 +183,11 @@ in native Docker binary. See project_upstream_konclude_bugs.md Bug 2.
 
 | Classification | Action |
 |---------------|--------|
-| UPSTREAM_LIMITATION (case 10) | File issue against konclude/Konclude |
 | UPSTREAM_LIMITATION (materialize hangs) | File issue; workaround: use `checkConsistency()` where possible |
-| PARITY (cases 1–9, 11–14) | No action needed; all tests passing |
+| PARITY (cases 1–14) | No action needed; all tests passing |
 | WASM_BUG_FIXED (case 12, patches 025+026) | Upstream PRs pending for both NPA bugs |
 | WASM_SURPASSES_NATIVE (cases 3–4, patches 027-028) | File upstream PRs for AsymmetricProperty + IrreflexiveProperty saturation clash fixes |
+| WASM_SURPASSES_NATIVE (case 10, patch 029) | File upstream PR for AllDisjointProperties + EquivalentObjectProperties clash fix |
 
 Tests in `tests/integration/issue13-owl-violations.test.ts` and
 `tests/integration/property-characteristics.test.ts` cover all cases above.

@@ -9,6 +9,9 @@
  *   cases 3-4: PARITY      — WASM now correctly detects inconsistency (patches 027-028);
  *              native Konclude v0.7.0 misses these violations (upstream bug);
  *              verdicts.json updated to reflect correct OWL 2 DL answer
+ *   case 10:  PARITY        — WASM now correctly detects inconsistency (patch 029, 2026-06-02);
+ *              native Konclude v0.7.0 misses this violation (upstream bug);
+ *              verdicts.json updated to "inconsistent" (correct OWL 2 DL answer)
  *   case 5:   PARITY         — fixed by setting mConfExtractSimpleABoxAssertions=true in
  *              loadTripleBuffer() so buildSimpleABoxAxioms() registers DifferentIndividuals
  *              axioms (plan: docs/plans/2026-05-28-026-fix-differentfrom-abox-mapping-plan.md)
@@ -410,16 +413,16 @@ describe.skipIf(!wasmExists)(
       30000
     );
 
-    // Case 10 — DisjointObjectProperties + EquivalentObjectProperties: UPSTREAM_LIMITATION
-    // Native Konclude also reports consistent (violation not detected).
-    // WASM agrees with native — test passes but both miss the violation.
+    // Case 10 — DisjointObjectProperties + EquivalentObjectProperties: PARITY (fixed by patch 029, 2026-06-02)
+    // WASM now correctly detects inconsistency; native Konclude v0.7.0 misses this (upstream bug).
+    // verdicts.json updated to "inconsistent" (correct OWL 2 DL answer).
     it(
-      "case 10: DisjointObjectProperties + EquivalentObjectProperties — UPSTREAM_LIMITATION: native consistent; WASM agrees",
+      "case 10: DisjointObjectProperties + EquivalentObjectProperties — PARITY: WASM detects inconsistency (fixed by patch 029)",
       async () => {
         const native = nativeVerdict(10);
         const quads = parseTurtle(ONTOLOGIES[10]);
         const consistent = await reasoner.checkConsistency(quads);
-        expect(consistent, `WASM disagrees with native verdict "${native.verdict}"`).toBe(
+        expect(consistent, `WASM disagrees with expected verdict "${native.verdict}"`).toBe(
           native.verdict === "consistent"
         );
       },

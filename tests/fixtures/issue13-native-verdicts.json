@@ -8,7 +8,7 @@
   { "case": 7, "name": "ReflexiveProperty + ObjectComplementOf(HasSelf)", "fixture": "case7-reflexive-property.owl", "verdict": "inconsistent", "exitCode": 0 },
   { "case": 8, "name": "InverseFunctionalProperty + DifferentIndividuals", "fixture": "case8-inverse-functional-property.owl", "verdict": "inconsistent", "exitCode": 0 },
   { "case": 9, "name": "AllDisjointClasses (3-way) + double membership", "fixture": "case9-all-disjoint-classes.owl", "verdict": "inconsistent", "exitCode": 0 },
-  { "case": 10, "name": "DisjointObjectProperties + EquivalentObjectProperties", "fixture": "case10-all-disjoint-properties.owl", "verdict": "consistent", "exitCode": 0 },
+  { "case": 10, "name": "DisjointObjectProperties + EquivalentObjectProperties", "fixture": "case10-all-disjoint-properties.owl", "verdict": "inconsistent", "exitCode": 0 },
   { "case": 11, "name": "DisjointUnion + double membership", "fixture": "case11-disjoint-union.owl", "verdict": "inconsistent", "exitCode": 0 },
   { "case": 12, "name": "NegativeObjectPropertyAssertion contradiction", "fixture": "case12-negative-property-assertion.owl", "verdict": "inconsistent", "exitCode": 0 },
   { "case": 13, "name": "DataAllValuesFrom minInclusive (consistent: age=15 >= 10)", "fixture": "case13-datatype-range-consistent.owl", "verdict": "consistent", "exitCode": 0 },

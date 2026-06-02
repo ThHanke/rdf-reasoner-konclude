@@ -1,7 +1,7 @@
 ---
 title: "fix: upstream Konclude — AllDisjointProperties + EquivalentObjectProperties inconsistency detection"
 type: fix
-status: active
+status: complete
 date: 2026-06-02
 ---
 
