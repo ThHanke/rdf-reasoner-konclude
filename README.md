@@ -129,18 +129,18 @@ const ok = await reasoner.checkConsistency(store); // true = consistent
 
 // Entailment queries (post-reasoning)
 const entailed = await reasoner.isEntailed(store, quad);
-const results  = await reasoner.isEntailed(store, [quad1, quad2]);
+const results = await reasoner.isEntailed(store, [quad1, quad2]);
 
 // Hypothetical reasoning
 const { added, removed } = await reasoner.whatIf(store, [newAxiom]);
 
 // Explanation / justification
-const justs      = await reasoner.explain(store, quad, { maxJustifications: 3 });
+const justs = await reasoner.explain(store, quad, { maxJustifications: 3 });
 const inconsJusts = await reasoner.explainInconsistency(store);
 
 // Satisfiability
 const classes = await reasoner.getUnsatisfiableClasses(store);
-const ok2     = await reasoner.isSatisfiable(store, "http://example.org/MyClass");
+const ok2 = await reasoner.isSatisfiable(store, "http://example.org/MyClass");
 
 // Combined diagnostic
 const report = await reasoner.validate(store);
@@ -166,7 +166,7 @@ interface StoreReasoningOptions {
 
 // materialize
 interface MaterializeStoreOptions {
-  inferredGraph?: string;          // default: INFERRED_GRAPH_IRI
+  inferredGraph?: string; // default: INFERRED_GRAPH_IRI
   includeClassHierarchy?: boolean; // also emit subClassOf/equivalentClass; default false
 }
 ```
@@ -178,21 +178,43 @@ Options for the Phase 2 axiom-work methods:
 
 // whatIf
 interface WhatIfOptions {
-  removals?: Quad[];   // quads to remove from the base ontology
+  removals?: Quad[]; // quads to remove from the base ontology
   outputGraph?: string; // named graph for hypothetical inferences
 }
 
 // explain / explainInconsistency
 interface ExplainOptions {
-  maxJustifications?: number;           // default: 1
-  axiomFilter?: (q: Quad) => boolean;   // restrict candidate axiom set
+  maxJustifications?: number; // default: 1
+  axiomFilter?: (q: Quad) => boolean; // restrict candidate axiom set
 }
 
 // validate
 interface ValidateOptions {
-  maxJustificationsPerError?: number;   // default: 1
+  maxJustificationsPerError?: number; // default: 1
   maxJustificationsPerWarning?: number; // default: 1  (pass 0 for IRI-only scan)
   axiomFilter?: (q: Quad) => boolean;
+}
+```
+
+Return types for the Phase 2 axiom-work methods:
+
+```typescript
+// Return types
+isEntailed(store, axiom: Quad):    Promise<boolean | null>
+isEntailed(store, axioms: Quad[]): Promise<(boolean | null)[]>
+whatIf(store, additions):          Promise<{ added: Quad[], removed: Quad[] }>
+explain(store, axiom):             Promise<Quad[][]>          // [] if not entailed; throws for unsupported predicate
+explainInconsistency(store):       Promise<Quad[][]>          // [] if consistent
+validate(store):                   Promise<ValidationResult>
+// where:
+interface ValidationResult {
+  consistent: boolean;
+  errors:     Quad[][];       // MIPS; non-empty only when consistent === false
+  warnings:   ClassWarning[]; // one per unsatisfiable class
+}
+interface ClassWarning {
+  classIRI:       string;
+  justifications: Quad[][];
 }
 ```
 
@@ -228,7 +250,12 @@ Use `classify(store)` when the ontology has no named individuals. Returns
 
 ```typescript
 await reasoner.classify(store);
-const subClasses = store.getQuads(null, "http://www.w3.org/2000/01/rdf-schema#subClassOf", null, INFERRED_GRAPH_IRI);
+const subClasses = store.getQuads(
+  null,
+  "http://www.w3.org/2000/01/rdf-schema#subClassOf",
+  null,
+  INFERRED_GRAPH_IRI,
+);
 ```
 
 ### ABox: derive individual types
@@ -240,7 +267,12 @@ needed.
 
 ```typescript
 await reasoner.materialize(store);
-const types = store.getQuads(null, "http://www.w3.org/1999/02/22-rdf-syntax-ns#type", null, INFERRED_GRAPH_IRI);
+const types = store.getQuads(
+  null,
+  "http://www.w3.org/1999/02/22-rdf-syntax-ns#type",
+  null,
+  INFERRED_GRAPH_IRI,
+);
 ```
 
 To also receive the class hierarchy in the same call:
@@ -257,7 +289,12 @@ ontology.
 
 ```typescript
 await reasoner.classifyProperties(store);
-const subProps = store.getQuads(null, "http://www.w3.org/2000/01/rdf-schema#subPropertyOf", null, INFERRED_GRAPH_IRI);
+const subProps = store.getQuads(
+  null,
+  "http://www.w3.org/2000/01/rdf-schema#subPropertyOf",
+  null,
+  INFERRED_GRAPH_IRI,
+);
 ```
 
 ### Combine class hierarchy + property hierarchy
@@ -267,7 +304,9 @@ named graphs if you need both at once:
 
 ```typescript
 await reasoner.classify(store, { inferredGraph: "urn:myapp:class-inferred" });
-await reasoner.classifyProperties(store, { inferredGraph: "urn:myapp:prop-inferred" });
+await reasoner.classifyProperties(store, {
+  inferredGraph: "urn:myapp:prop-inferred",
+});
 ```
 
 Or if storing them together is fine, call in sequence and read after both:
@@ -299,11 +338,13 @@ await reasoner.classify(store);
 // → first inference written to INFERRED_GRAPH_IRI
 
 // Add new axioms
-store.addQuad(DataFactory.quad(
-  DataFactory.namedNode("http://example.org/Cat"),
-  DataFactory.namedNode("http://www.w3.org/2000/01/rdf-schema#subClassOf"),
-  DataFactory.namedNode("http://example.org/Animal"),
-));
+store.addQuad(
+  DataFactory.quad(
+    DataFactory.namedNode("http://example.org/Cat"),
+    DataFactory.namedNode("http://www.w3.org/2000/01/rdf-schema#subClassOf"),
+    DataFactory.namedNode("http://example.org/Animal"),
+  ),
+);
 
 // Re-reason: INFERRED_GRAPH_IRI is cleared and fully repopulated
 await reasoner.classify(store);
@@ -319,7 +360,8 @@ automatically — queued calls run in order, never interleaved.
 
 ```typescript
 await reasoner.materialize(store);
-const isAnimal = await reasoner.isEntailed(store,
+const isAnimal = await reasoner.isEntailed(
+  store,
   DataFactory.quad(
     DataFactory.namedNode("http://example.org/Fido"),
     DataFactory.namedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#type"),
@@ -386,7 +428,9 @@ const report = await reasoner.validate(store);
 // report.warnings   — ClassWarning[], one per unsatisfiable class
 
 // Cheap IRI-only scan (skip BlackBox justifications for warnings):
-const quickReport = await reasoner.validate(store, { maxJustificationsPerWarning: 0 });
+const quickReport = await reasoner.validate(store, {
+  maxJustificationsPerWarning: 0,
+});
 ```
 
 `errors` are non-empty only when `consistent` is `false`. When `consistent` is
@@ -404,8 +448,13 @@ await reasoner.classify(store, { inferredGraph: "urn:myapp:class-hierarchy" });
 await reasoner.materialize(store, { inferredGraph: "urn:myapp:abox-types" });
 
 // Both named graphs now coexist in the store
-const classTriples = store.getQuads(null, null, null, "urn:myapp:class-hierarchy");
-const typeTriples  = store.getQuads(null, null, null, "urn:myapp:abox-types");
+const classTriples = store.getQuads(
+  null,
+  null,
+  null,
+  "urn:myapp:class-hierarchy",
+);
+const typeTriples = store.getQuads(null, null, null, "urn:myapp:abox-types");
 ```
 
 ### Node.js and browser: same API
@@ -426,18 +475,29 @@ does not yet surface as output.
 
 Violation detection verified against native Konclude v0.7.0 ground truth:
 
-| #   | Violation pattern                                   | Native         | WASM           | Status                  |
-| --- | --------------------------------------------------- | -------------- | -------------- | ----------------------- |
-| 1   | `owl:disjointWith` (direct)                         | inconsistent ✓ | inconsistent ✓ | **PARITY**              |
-| 2   | `owl:disjointWith` (via domain/range inference)     | inconsistent ✓ | inconsistent ✓ | **PARITY**              |
-| 3   | `owl:AsymmetricProperty` bidirectional assertion    | consistent ✗   | consistent ✗   | **UPSTREAM_LIMITATION** |
-| 4   | `owl:IrreflexiveProperty` self-reference            | consistent ✗   | consistent ✗   | **UPSTREAM_LIMITATION** |
-| 5   | `owl:maxQualifiedCardinality` + `owl:differentFrom` | inconsistent ✓ | inconsistent ✓ | **PARITY**              |
-| 6   | `owl:allValuesFrom` + `owl:disjointWith`            | inconsistent ✓ | inconsistent ✓ | **PARITY**              |
+| #   | Violation pattern                                         | Native             | WASM           | Status                             |
+| --- | --------------------------------------------------------- | ------------------ | -------------- | ---------------------------------- |
+| 1   | `owl:disjointWith` (direct)                               | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
+| 2   | `owl:disjointWith` (via domain/range inference)           | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
+| 3   | `owl:AsymmetricProperty` bidirectional assertion          | consistent ✗ (bug) | inconsistent ✓ | **PARITY (WASM surpasses native)** |
+| 4   | `owl:IrreflexiveProperty` self-reference                  | consistent ✗ (bug) | inconsistent ✓ | **PARITY (WASM surpasses native)** |
+| 5   | `owl:maxQualifiedCardinality` + `owl:differentFrom`       | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
+| 6   | `owl:allValuesFrom` + `owl:disjointWith`                  | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
+| 7   | `owl:ReflexiveProperty` + `ObjectComplementOf(HasSelf)`   | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
+| 8   | `owl:InverseFunctionalProperty` + `DifferentIndividuals`  | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
+| 9   | `owl:AllDisjointClasses` (3-way) + double membership      | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
+| 10  | `DisjointObjectProperties` + `EquivalentObjectProperties` | consistent ✗ (bug) | inconsistent ✓ | **PARITY (WASM surpasses native)** |
+| 11  | `owl:disjointUnionOf` + double membership                 | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
+| 12  | `owl:NegativeObjectPropertyAssertion` contradiction       | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
+| 13  | `DataAllValuesFrom xsd:minInclusive` (consistent case)    | consistent ✓       | consistent ✓   | **PARITY**                         |
+| 14  | `DataAllValuesFrom xsd:minInclusive` (inconsistent case)  | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
 
-**UPSTREAM_LIMITATION** means native Konclude v0.7.0 also misses the violation — this is not a
-WASM port defect. Cases 3 and 4 cannot be fixed in this package without upstream changes to the
-Konclude reasoning kernel.
+**PARITY (WASM surpasses native v0.7.0)** means native Konclude v0.7.0 has a kernel bug for this
+construct; this package fixes it via patches 027–029. **UPSTREAM_LIMITATION** (not in the
+consistency table above — applies to `materialize()` only) means the realization pipeline hangs on
+these constructs: `owl:AllDisjointClasses`/`owl:disjointUnionOf`/`NegativePropertyAssertion`
+blank-node NTriples, and `owl:FunctionalProperty` → `owl:sameAs` (ALIF+ precompute). Use
+`checkConsistency()` for these where possible.
 
 ### Classification (`classify`)
 
