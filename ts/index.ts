@@ -980,8 +980,13 @@ export class RdfReasoner {
     candidates: Quad[],
     axiom: Quad,
     opInfo: { op: "classification" | "realization"; bufferMethod: "getInferredTripleBuffer" | "getPropertyTripleBuffer" },
+    background: Quad[] = [],
   ): Promise<boolean> {
-    const { tripleBuffer, strTableBuffer } = encodeToBuffers(candidates);
+    // Always include background triples (e.g. rdf:type owl:Class declarations) so
+    // Konclude can recognise classes/properties even when they are excluded from the
+    // justification candidate set. background triples do not appear in justifications.
+    const tripleSet = background.length > 0 ? [...candidates, ...background] : candidates;
+    const { tripleBuffer, strTableBuffer } = encodeToBuffers(tripleSet);
     await this._callDirect("loadTripleBuffer", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
     await this._callDirect(opInfo.op, []);
     const buf = (await this._callDirect(opInfo.bufferMethod, [])) as ArrayBuffer;
@@ -1051,15 +1056,23 @@ export class RdfReasoner {
     }
 
     const result = this._queue.then(async () => {
-      // Build candidate set: base quads only (exclude inferred/hypothetical graphs),
-      // apply default declaration filter, apply user filter
-      const allCandidates = store.getQuads(null, null, null, null).filter(q => {
+      // Partition base quads into:
+      //   allCandidates — justification candidates (built-in declarations excluded)
+      //   background    — built-in declarations always passed to WASM so Konclude
+      //                   can recognise classes/properties, but never returned as
+      //                   part of a justification
+      const allCandidates: Quad[] = [];
+      const background: Quad[] = [];
+      for (const q of store.getQuads(null, null, null, null)) {
         const g = q.graph.value;
-        if (g === INFERRED_GRAPH_IRI || g === HYPOTHETICAL_IRI) return false;
-        if (this._isBuiltInDeclaration(q)) return false;
-        if (opts?.axiomFilter && !opts.axiomFilter(q)) return false;
-        return true;
-      });
+        if (g === INFERRED_GRAPH_IRI || g === HYPOTHETICAL_IRI) continue;
+        if (this._isBuiltInDeclaration(q)) {
+          background.push(q);
+          continue;
+        }
+        if (opts?.axiomFilter && !opts.axiomFilter(q)) continue;
+        allCandidates.push(q);
+      }
 
       // Invalidate all caches (sub-calls use WASM directly)
       this._classifyCache = null;
@@ -1068,7 +1081,7 @@ export class RdfReasoner {
       this._consistencyCache = null;
 
       // Fast-path: axiom not entailed at all
-      const entailedByAll = await this._checkEntailmentDirect(allCandidates, axiom, opInfo);
+      const entailedByAll = await this._checkEntailmentDirect(allCandidates, axiom, opInfo, background);
       if (!entailedByAll) return [];
 
       const justifications: Quad[][] = [];
@@ -1085,13 +1098,13 @@ export class RdfReasoner {
           const firstHalf = working.slice(0, mid);
           const secondHalf = working.slice(mid);
 
-          const firstEntails = await this._checkEntailmentDirect(firstHalf, axiom, opInfo);
+          const firstEntails = await this._checkEntailmentDirect(firstHalf, axiom, opInfo, background);
           if (firstEntails) {
             working = firstHalf;
             changed = true;
             continue;
           }
-          const secondEntails = await this._checkEntailmentDirect(secondHalf, axiom, opInfo);
+          const secondEntails = await this._checkEntailmentDirect(secondHalf, axiom, opInfo, background);
           if (secondEntails) {
             working = secondHalf;
             changed = true;
@@ -1106,7 +1119,7 @@ export class RdfReasoner {
         while (i < working.length) {
           if (working.length === 1) break; // single axiom must stay
           const without = [...working.slice(0, i), ...working.slice(i + 1)];
-          const stillEntails = await this._checkEntailmentDirect(without, axiom, opInfo);
+          const stillEntails = await this._checkEntailmentDirect(without, axiom, opInfo, background);
           if (stillEntails) {
             working = without;
             // don't increment i — next element shifted into position i
@@ -1150,7 +1163,7 @@ export class RdfReasoner {
               return !newExcluded.has(k);
             });
 
-            const entailed = await this._checkEntailmentDirect(reduced, axiom, opInfo);
+            const entailed = await this._checkEntailmentDirect(reduced, axiom, opInfo, background);
             if (!entailed) continue;
 
             const jNew = await findOneJustification(reduced);
