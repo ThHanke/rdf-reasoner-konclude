@@ -11,8 +11,9 @@ EMSCRIPTEN_BINDINGS(konclude) {
         .function("realization",         &KoncludeReasoner::realization)
         .function("consistency",         &KoncludeReasoner::consistency)
         .function("processorCount",      &KoncludeReasoner::processorCount)
-        .function("buildInferredTripleBuffer",   &KoncludeReasoner::buildInferredTripleBuffer)
-        .function("buildPropertyTripleBuffer",   &KoncludeReasoner::buildPropertyTripleBuffer)
-        .function("getInferredTripleBufferPtr",  &KoncludeReasoner::getInferredTripleBufferPtr)
-        .function("reset",                       &KoncludeReasoner::reset);
+        .function("buildInferredTripleBuffer",        &KoncludeReasoner::buildInferredTripleBuffer)
+        .function("buildPropertyTripleBuffer",        &KoncludeReasoner::buildPropertyTripleBuffer)
+        .function("getInferredTripleBufferPtr",        &KoncludeReasoner::getInferredTripleBufferPtr)
+        .function("buildUnsatisfiableClassBuffer",    &KoncludeReasoner::buildUnsatisfiableClassBuffer)
+        .function("reset",                            &KoncludeReasoner::reset);
 }

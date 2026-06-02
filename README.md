@@ -127,6 +127,25 @@ await reasoner.classifyProperties(store);
 // Consistency
 const ok = await reasoner.checkConsistency(store); // true = consistent
 
+// Entailment queries (post-reasoning)
+const entailed = await reasoner.isEntailed(store, quad);
+const results  = await reasoner.isEntailed(store, [quad1, quad2]);
+
+// Hypothetical reasoning
+const { added, removed } = await reasoner.whatIf(store, [newAxiom]);
+
+// Explanation / justification
+const justs      = await reasoner.explain(store, quad, { maxJustifications: 3 });
+const inconsJusts = await reasoner.explainInconsistency(store);
+
+// Satisfiability
+const classes = await reasoner.getUnsatisfiableClasses(store);
+const ok2     = await reasoner.isSatisfiable(store, "http://example.org/MyClass");
+
+// Combined diagnostic
+const report = await reasoner.validate(store);
+// report.consistent, report.errors (Quad[][]), report.warnings (ClassWarning[])
+
 reasoner.terminate(); // shut down the Worker
 ```
 
@@ -149,6 +168,31 @@ interface StoreReasoningOptions {
 interface MaterializeStoreOptions {
   inferredGraph?: string;          // default: INFERRED_GRAPH_IRI
   includeClassHierarchy?: boolean; // also emit subClassOf/equivalentClass; default false
+}
+```
+
+Options for the Phase 2 axiom-work methods:
+
+```typescript
+// isEntailed: no options
+
+// whatIf
+interface WhatIfOptions {
+  removals?: Quad[];   // quads to remove from the base ontology
+  outputGraph?: string; // named graph for hypothetical inferences
+}
+
+// explain / explainInconsistency
+interface ExplainOptions {
+  maxJustifications?: number;           // default: 1
+  axiomFilter?: (q: Quad) => boolean;   // restrict candidate axiom set
+}
+
+// validate
+interface ValidateOptions {
+  maxJustificationsPerError?: number;   // default: 1
+  maxJustificationsPerWarning?: number; // default: 1  (pass 0 for IRI-only scan)
+  axiomFilter?: (q: Quad) => boolean;
 }
 ```
 
@@ -267,6 +311,87 @@ await reasoner.classify(store);
 
 Concurrent calls on the same `RdfReasoner` instance are serialized
 automatically — queued calls run in order, never interleaved.
+
+### Checking if a specific entailment holds (`isEntailed`)
+
+`isEntailed` supports `rdfs:subClassOf`, `owl:equivalentClass`, `rdf:type`, and
+`rdfs:subPropertyOf`. Returns `null` for unsupported predicates.
+
+```typescript
+await reasoner.materialize(store);
+const isAnimal = await reasoner.isEntailed(store,
+  DataFactory.quad(
+    DataFactory.namedNode("http://example.org/Fido"),
+    DataFactory.namedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#type"),
+    DataFactory.namedNode("http://example.org/Animal"),
+  ),
+);
+// true if Fido rdf:type Animal is entailed
+```
+
+### Hypothetical reasoning (`whatIf`)
+
+`whatIf` reasons over a temporary store mutation without modifying the input store.
+
+```typescript
+const { added, removed } = await reasoner.whatIf(store, [newAxiom]);
+// added/removed are deltas relative to the current INFERRED_GRAPH_IRI
+```
+
+### Explaining an entailment (`explain`)
+
+`explain` returns minimal justifications — each is the smallest set of axioms
+that alone entails the target. Returns `[]` if the axiom is not entailed.
+Each BlackBox call issues multiple Worker round-trips; use `maxJustifications: 1`
+for cheap first-justification lookups.
+
+```typescript
+const justs = await reasoner.explain(store, quad, { maxJustifications: 3 });
+// justs: Quad[][] — each inner array is one minimal justification
+```
+
+### Diagnosing an inconsistency (`explainInconsistency`)
+
+Returns minimal inconsistent sub-ontologies (MIPS). Returns `[]` on consistent ontologies.
+
+```typescript
+const mips = await reasoner.explainInconsistency(store);
+if (mips.length > 0) {
+  console.log("Minimal inconsistent core:", mips[0]);
+}
+```
+
+### Finding unsatisfiable classes (`getUnsatisfiableClasses`, `isSatisfiable`)
+
+`owl:Nothing` is excluded from the output. Classes absent from the taxonomy
+return `true` from `isSatisfiable` (open-world assumption).
+
+```typescript
+const unsatClasses = await reasoner.getUnsatisfiableClasses(store);
+// ["http://example.org/EmptyClass", ...]
+
+const ok = await reasoner.isSatisfiable(store, "http://example.org/MyClass");
+// false if MyClass is equivalent to owl:Nothing in the ontology
+```
+
+### Full ontology validation (`validate`)
+
+`validate` combines consistency checking, unsatisfiable-class detection, and
+optional justification computation in a single call.
+
+```typescript
+const report = await reasoner.validate(store);
+// report.consistent — true/false
+// report.errors     — Quad[][], minimal inconsistent sub-ontologies (non-empty when inconsistent)
+// report.warnings   — ClassWarning[], one per unsatisfiable class
+
+// Cheap IRI-only scan (skip BlackBox justifications for warnings):
+const quickReport = await reasoner.validate(store, { maxJustificationsPerWarning: 0 });
+```
+
+`errors` are non-empty only when `consistent` is `false`. When `consistent` is
+`true`, only `warnings` may be present. Callers should check `consistent` before
+acting on `warnings`.
 
 ### Separate inferred graph per operation
 

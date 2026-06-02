@@ -128,6 +128,42 @@ export interface WhatIfOptions {
 }
 
 /**
+ * A single unsatisfiable-class warning produced by `validate()`.
+ */
+export interface ClassWarning {
+  /** IRI of the unsatisfiable class. */
+  classIRI: string;
+  /** Minimal justifications (each is a set of axioms that together imply unsatisfiability).
+   *  Empty when `maxJustificationsPerWarning` is 0. */
+  justifications: Quad[][];
+}
+
+/**
+ * Result returned by `validate()`.
+ */
+export interface ValidationResult {
+  /** `true` if the ontology has at least one model. */
+  consistent: boolean;
+  /** Minimal inconsistent sub-ontologies (MIPS). Non-empty only when `consistent` is `false`. */
+  errors: Quad[][];
+  /** One entry per unsatisfiable class (excluding owl:Nothing). */
+  warnings: ClassWarning[];
+}
+
+/**
+ * Options for `validate()`.
+ */
+export interface ValidateOptions {
+  /** Maximum inconsistency justifications to return. Defaults to 1. */
+  maxJustificationsPerError?: number;
+  /** Maximum justifications per unsatisfiable class. Defaults to 1.
+   *  Pass 0 to skip BlackBox for warnings (returns IRI list only). */
+  maxJustificationsPerWarning?: number;
+  /** Optional filter applied to both error and warning candidate axiom sets. */
+  axiomFilter?: (q: Quad) => boolean;
+}
+
+/**
  * The result returned by a reasoning operation.
  *
  * @remarks Reserved for future use. When `mode:'full'` is fully implemented

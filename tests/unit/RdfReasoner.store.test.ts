@@ -1115,4 +1115,100 @@ describe("RdfReasoner — Store API", () => {
       expect(methods).not.toContain("getInferredTripleBuffer");
     });
   });
+
+  // -------------------------------------------------------------------------
+  // getUnsatisfiableClasses(store) / isSatisfiable(store, classIRI)
+  // -------------------------------------------------------------------------
+
+  describe("getUnsatisfiableClasses(store)", () => {
+    function mockUnsatSequence(unsatIris: string, inferredQuads: Quad[] = []) {
+      const buf = buildCombinedBuffer(inferredQuads);
+      mocks.workerPostMessage.mockImplementation((msg: unknown) => {
+        const req = msg as { id: number; method: string };
+        if (req.method === "loadTripleBuffer") simulateWorkerMessage({ id: req.id, result: true });
+        else if (req.method === "classification") simulateWorkerMessage({ id: req.id, result: true });
+        else if (req.method === "getInferredTripleBuffer") simulateWorkerMessage({ id: req.id, result: buf });
+        else if (req.method === "getUnsatisfiableClassBuffer") simulateWorkerMessage({ id: req.id, result: unsatIris });
+      });
+    }
+
+    it("calls loadTripleBuffer → classification → getInferredTripleBuffer → getUnsatisfiableClassBuffer", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(A, subClassOf, B, defaultGraph())]);
+      mockUnsatSequence("http://ex.org/EmptyClass\nhttp://ex.org/Dead");
+
+      const result = await reasoner.getUnsatisfiableClasses(store);
+
+      expect(result).toEqual(["http://ex.org/EmptyClass", "http://ex.org/Dead"]);
+      const methods = mocks.workerPostMessage.mock.calls.map((c) => (c[0] as { method: string }).method);
+      expect(methods).toEqual(["loadTripleBuffer", "classification", "getInferredTripleBuffer", "getUnsatisfiableClassBuffer"]);
+    });
+
+    it("returns [] when WASM returns empty string", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(A, subClassOf, B, defaultGraph())]);
+      mockUnsatSequence("");
+
+      const result = await reasoner.getUnsatisfiableClasses(store);
+
+      expect(result).toEqual([]);
+    });
+
+    it("cache hit: second call with same store skips loadTripleBuffer + classification", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(A, subClassOf, B, defaultGraph())]);
+      mockUnsatSequence("http://ex.org/EmptyClass");
+
+      await reasoner.getUnsatisfiableClasses(store);
+      mocks.workerPostMessage.mockClear();
+
+      // Second call — only getUnsatisfiableClassBuffer should be issued (cache hit)
+      mockUnsatSequence("http://ex.org/EmptyClass");
+      const result = await reasoner.getUnsatisfiableClasses(store);
+
+      expect(result).toEqual(["http://ex.org/EmptyClass"]);
+      const methods = mocks.workerPostMessage.mock.calls.map((c) => (c[0] as { method: string }).method);
+      expect(methods).toEqual(["getUnsatisfiableClassBuffer"]);
+    });
+  });
+
+  describe("isSatisfiable(store, classIRI)", () => {
+    function mockUnsatSequence(unsatIris: string) {
+      const buf = buildCombinedBuffer([]);
+      mocks.workerPostMessage.mockImplementation((msg: unknown) => {
+        const req = msg as { id: number; method: string };
+        if (req.method === "loadTripleBuffer") simulateWorkerMessage({ id: req.id, result: true });
+        else if (req.method === "classification") simulateWorkerMessage({ id: req.id, result: true });
+        else if (req.method === "getInferredTripleBuffer") simulateWorkerMessage({ id: req.id, result: buf });
+        else if (req.method === "getUnsatisfiableClassBuffer") simulateWorkerMessage({ id: req.id, result: unsatIris });
+      });
+    }
+
+    it("returns false for class in unsat set", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(A, subClassOf, B, defaultGraph())]);
+      mockUnsatSequence("http://ex.org/EmptyClass");
+
+      const result = await reasoner.isSatisfiable(store, "http://ex.org/EmptyClass");
+      expect(result).toBe(false);
+    });
+
+    it("returns true for class not in unsat set", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(A, subClassOf, B, defaultGraph())]);
+      mockUnsatSequence("http://ex.org/EmptyClass");
+
+      const result = await reasoner.isSatisfiable(store, "http://ex.org/Bird");
+      expect(result).toBe(true);
+    });
+
+    it("returns true for unknown class IRI (open-world assumption)", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store([quad(A, subClassOf, B, defaultGraph())]);
+      mockUnsatSequence("");
+
+      const result = await reasoner.isSatisfiable(store, "urn:unknown:class");
+      expect(result).toBe(true);
+    });
+  });
 });

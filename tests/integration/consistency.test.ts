@@ -12,7 +12,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { existsSync } from "node:fs";
-import { Parser } from "n3";
+import { Parser, Store } from "n3";
 import type { Quad } from "@rdfjs/types";
 
 import { RdfReasoner } from "../../ts/index.js";
@@ -92,6 +92,42 @@ describe.skipIf(!wasmExists)("Consistency checking integration", () => {
     const consistent = await reasoner.checkConsistency(quads);
 
     expect(consistent).toBe(true);
+  }, 360000);
+
+  it("validate: inconsistent ontology → consistent: false, errors non-empty", async () => {
+    const quads = loadFixture("inconsistent.nt");
+    const store = new Store(quads);
+    const result = await reasoner.validate(store);
+    expect(result.consistent).toBe(false);
+    expect(result.errors.length).toBeGreaterThanOrEqual(1);
+    expect(result.errors[0].length).toBeGreaterThanOrEqual(1);
+  }, 360000);
+
+  it("validate: consistent ontology with explicit EmptyClass ⊑ owl:Nothing → warnings contains EmptyClass", async () => {
+    const turtle = `
+@prefix ex: <http://example.org/v#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+<http://example.org/v> a owl:Ontology .
+ex:EmptyClass a owl:Class ; rdfs:subClassOf owl:Nothing .
+    `.trim();
+    const parser = new Parser({ format: "Turtle" });
+    const store = new Store(parser.parse(turtle) as Quad[]);
+
+    const result = await reasoner.validate(store);
+    expect(result.consistent).toBe(true);
+    expect(result.errors).toEqual([]);
+    const warnIRIs = result.warnings.map((w) => w.classIRI);
+    expect(warnIRIs).toContain("http://example.org/v#EmptyClass");
+  }, 360000);
+
+  it("validate + classify sequential → no queue stall", async () => {
+    const quads = loadFixture("inconsistent.nt");
+    const store = new Store(quads);
+    await reasoner.validate(store);
+    // classify should complete without hanging
+    const consistent = await reasoner.checkConsistency(store);
+    expect(typeof consistent).toBe("boolean");
   }, 360000);
 
   it("concurrent classify() and checkConsistency() calls are serialized", async () => {
