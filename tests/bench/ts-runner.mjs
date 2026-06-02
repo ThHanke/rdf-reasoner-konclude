@@ -82,13 +82,19 @@ function avg(arr) {
   return Math.round(arr.reduce((a, b) => a + b, 0) / arr.length);
 }
 
-async function benchOne(RdfReasoner, INFERRED_GRAPH_IRI, store) {
+async function benchOne(RdfReasoner, INFERRED_GRAPH_IRI, store, abox) {
   const reasoner = new RdfReasoner();
   await reasoner.ready;
 
   try {
     const t0 = performance.now();
-    await reasoner.reason(store);
+    // ABox cases use materialize() (full realization, matching the WASM runner's
+    // realization() path).  TBox-only cases use reason() → classify.
+    if (abox) {
+      await reasoner.materialize(store, { includeClassHierarchy: true });
+    } else {
+      await reasoner.reason(store);
+    }
     const t1 = performance.now();
 
     const inferredCount = store.getQuads(null, null, null, DataFactory.namedNode(INFERRED_GRAPH_IRI)).length;
@@ -105,10 +111,10 @@ async function benchOne(RdfReasoner, INFERRED_GRAPH_IRI, store) {
 }
 
 export const TS_CASES = [
-  { name: 'LUBM schema',        files: ['lubm.nt'],                  expressiveness: 'SHI' },
-  { name: 'GALEN',              files: ['galen.nt'],                 expressiveness: 'SHIF' },
-  { name: 'Roberts family',     files: ['roberts-family.nt'],        expressiveness: 'SROIQ' },
-  { name: 'LUBM schema + data', files: ['lubm.nt', 'lubm-data.nt'], expressiveness: 'SHI' },
+  { name: 'LUBM schema',        files: ['lubm.nt'],                  expressiveness: 'SHI',   abox: false },
+  { name: 'GALEN',              files: ['galen.nt'],                 expressiveness: 'SHIF',  abox: false },
+  { name: 'Roberts family',     files: ['roberts-family.nt'],        expressiveness: 'SROIQ', abox: true  },
+  { name: 'LUBM schema + data', files: ['lubm.nt', 'lubm-data.nt'], expressiveness: 'SHI',   abox: true  },
 ];
 
 export async function benchAll(cases = TS_CASES, opts = { warmup: 2, runs: 5 }) {
@@ -148,7 +154,7 @@ export async function benchAll(cases = TS_CASES, opts = { warmup: 2, runs: 5 }) 
     async function runOnce() {
       // Clone base store for each run so inferred triples don't accumulate across runs
       const store = new Store(baseStore.getQuads(null, null, null, null));
-      return benchOne(RdfReasoner, INFERRED_GRAPH_IRI, store);
+      return benchOne(RdfReasoner, INFERRED_GRAPH_IRI, store, c.abox);
     }
 
     for (let i = 0; i < opts.warmup; i++) {

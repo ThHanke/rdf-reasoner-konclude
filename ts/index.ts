@@ -370,18 +370,23 @@ export class RdfReasoner {
   // materialize()
   // -------------------------------------------------------------------------
 
-  /** Materialize ABox entailments (rdf:type) into a Store. Inferred triples are
-   *  written into `opts.inferredGraph` (default `INFERRED_GRAPH_IRI`). The
-   *  graph is cleared before each call. When `opts.includeClassHierarchy` is
-   *  `true`, rdfs:subClassOf and owl:equivalentClass triples are also included.
-   *  Concurrent calls are serialized.
+  /** Materialize ABox entailments (rdf:type, owl:sameAs, role assertions) into
+   *  a Store. Inferred triples are written into `opts.inferredGraph` (default
+   *  `INFERRED_GRAPH_IRI`). The graph is cleared before each call. When
+   *  `opts.includeClassHierarchy` is `true`, rdfs:subClassOf and
+   *  owl:equivalentClass triples are also included. Concurrent calls are
+   *  serialized.
+   *
+   *  Individuals are recognized from any `rdf:type <domain-class>` assertion —
+   *  explicit `rdf:type owl:NamedIndividual` declarations are not required.
+   *  If the ontology contains no individuals, only TBox inferences are produced
+   *  (same result as `classify(store)` with `includeClassHierarchy: true`).
    *
    *  Internally sends a single `realization` command to the WASM worker.
    *  Classification (TBox: class hierarchy + property hierarchy) is always a
    *  prerequisite inside the realization pipeline — it is NOT a separate call.
    *  Both TBox and ABox steps are submitted together in one `prepareOntology()`
-   *  invocation at the C++ level. Use `classify(store)` when ABox individuals
-   *  are absent or rdf:type entailments are not needed.
+   *  invocation at the C++ level.
    *
    *  Pass `{ returnDelta: true }` to receive `{ delta: InferenceDelta }` with the
    *  quads added and removed compared to the previous inferred state. */

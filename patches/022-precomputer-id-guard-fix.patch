@@ -1,0 +1,41 @@
+diff --git a/Source/Reasoner/Consistiser/CPrecomputationThread.cpp b/Source/Reasoner/Consistiser/CPrecomputationThread.cpp
+index 00b3ec9b..b12dfe24 100644
+--- a/Source/Reasoner/Consistiser/CPrecomputationThread.cpp
++++ b/Source/Reasoner/Consistiser/CPrecomputationThread.cpp
+@@ -189,14 +189,18 @@ namespace Konclude {
+ 					COntologyPrecomputationItem* item = mOntItemHash.value(ontology);
+ 					// WASM: Guard against recycled pointer collision.  When a prior ontology
+ 					// object is freed and a new one is allocated at the same address, the hash
+-					// returns the stale item from the prior call.  Verify by ontology ID.
+-					if (item && item->getOntology()->getOntologyID() != ontology->getOntologyID()) {
++					// returns the stale item from the prior call.  Use mOntIdHash (which stores
++					// the ID at insertion time) to detect the mismatch safely — never
++					// dereference item->getOntology() here since the pointer may be stale.
++					if (item && mOntIdHash.value(ontology, -1) != ontology->getOntologyID()) {
+ 						mOntItemHash.remove(ontology);
++						mOntIdHash.remove(ontology);
+ 						item = nullptr;
+ 					}
+ 					if (!item) {
+ 						item = initializeOntologyPrecomputionItem(ontology,configBase);
+ 						mOntItemHash.insert(ontology,item);
++						mOntIdHash.insert(ontology, ontology->getOntologyID());
+ 						mActiveOntItemSet.insert(item);
+ 						mProcessingOntItemList.append(item);
+ 					} else {
+diff --git a/Source/Reasoner/Consistiser/CPrecomputationThread.h b/Source/Reasoner/Consistiser/CPrecomputationThread.h
+index 4c4a1166..76a127ce 100644
+--- a/Source/Reasoner/Consistiser/CPrecomputationThread.h
++++ b/Source/Reasoner/Consistiser/CPrecomputationThread.h
+@@ -127,6 +127,11 @@ namespace Konclude {
+ 					QSet<COntologyPrecomputationItem*> mInactiveOntItemSet;
+ 					QList<COntologyPrecomputationItem*> mProcessingOntItemList;
+ 					QHash<CConcreteOntology*,COntologyPrecomputationItem*> mOntItemHash;
++					// WASM: companion hash storing the ontology ID at insertion time.
++					// The mOntItemHash key (a pointer) can be recycled after the ontology
++					// is freed, so item->getOntology()->getOntologyID() is UB when the
++					// pointer is stale.  mOntIdHash stores the ID when the entry is created.
++					QHash<CConcreteOntology*, cint64> mOntIdHash;
+ 					cint64 mPrecomputationCount;
+ 
+ 					CReasonerManager* mReasoner;

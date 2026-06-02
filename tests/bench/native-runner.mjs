@@ -2,7 +2,8 @@
 // Runs native Konclude via Docker, parses timing from log output.
 
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -32,6 +33,68 @@ function median(arr) {
   return sorted.length % 2 === 0
     ? Math.round((sorted[mid - 1] + sorted[mid]) / 2)
     : sorted[mid];
+}
+
+// Count inferred triples in a Konclude OWL/XML output file using the same
+// method as WASM (NTriples-equivalent line count).  Each OWL axiom is expanded
+// to the NTriples it would produce — EquivalentClasses and SameIndividual emit
+// all pairwise symmetric triples, matching getInferredTripleBuffer() output.
+// Returns null if the file can't be parsed.
+function countOwlXmlTriples(filePath) {
+  const script = `
+import sys, xml.etree.ElementTree as ET
+try:
+    OWL  = 'http://www.w3.org/2002/07/owl#'
+    RDFS = 'http://www.w3.org/2000/01/rdf-schema#'
+    RDF  = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#'
+
+    def iri(elem):
+        # <Class IRI="..."/> or <Class abbreviatedIRI="prefix:local"/>
+        v = elem.get('IRI') or elem.get('abbreviatedIRI','')
+        if v.startswith(':') or ':' not in v:
+            return None  # anonymous / complex; skip
+        return v
+
+    def iris(parent):
+        return [r for r in (iri(c) for c in parent) if r]
+
+    root = ET.parse(sys.argv[1]).getroot()
+    ns = OWL
+    count = 0
+    for ax in root:
+        tag = ax.tag.replace('{' + ns + '}', '')
+        if tag == 'SubClassOf':
+            cs = iris(ax)
+            if len(cs) == 2: count += 1
+        elif tag == 'EquivalentClasses':
+            cs = iris(ax)
+            # all pairwise both directions
+            for i in range(len(cs)):
+                for j in range(len(cs)):
+                    if i != j: count += 1
+        elif tag == 'ClassAssertion':
+            cs = iris(ax)
+            if len(cs) == 2: count += 1
+        elif tag == 'ObjectPropertyAssertion':
+            cs = iris(ax)
+            if len(cs) == 3: count += 1
+        elif tag == 'DataPropertyAssertion':
+            cs = iris(ax)
+            if len(cs) == 3: count += 1
+        elif tag == 'SameIndividual':
+            cs = iris(ax)
+            for i in range(len(cs)):
+                for j in range(len(cs)):
+                    if i != j: count += 1
+    print(count)
+except Exception as e:
+    import traceback; traceback.print_exc()
+    sys.exit(1)
+`;
+  const r = spawnSync('python3', ['-c', script, filePath], { encoding: 'utf8', timeout: 60000 });
+  if (r.status !== 0 || r.error) return null;
+  const n = parseInt(r.stdout.trim(), 10);
+  return Number.isFinite(n) ? n : null;
 }
 
 function checkDocker() {
@@ -72,22 +135,31 @@ export function benchOne(owlFile, mountDir, runs = 3, command = 'classification'
   const timings = [];
   let nativeVersion = null;
   let threads = null;
+  let inferredTriples = null;
+
+  // Temp dir mounted into the container for output file on the first run.
+  const outDir = mkdtempSync(join(tmpdir(), 'konclude-out-'));
+  const outFile = join(outDir, 'result.owl.xml');
 
   for (let i = 0; i < runs; i++) {
-    const r = spawnSync(
-      'docker',
-      [
-        'run', '--rm',
-        '-v', `${mountDir}:/tests:ro`,
-        'konclude/konclude:latest',
-        command, '-v', '-w', 'AUTO',
-        '-i', `/tests/${owlFile}`,
-        '-o', '/dev/null',
-      ],
-      { encoding: 'utf8', timeout: 120000 }
-    );
+    // First run: capture output to count inferred triples. Subsequent runs:
+    // discard output (/dev/null) so we measure pure reasoning time.
+    const captureOutput = i === 0;
+    const containerOutPath = captureOutput ? '/out/result.owl.xml' : '/dev/null';
+    const dockerArgs = [
+      'run', '--rm',
+      '-v', `${mountDir}:/tests:ro`,
+      ...(captureOutput ? ['-v', `${outDir}:/out`] : []),
+      'konclude/konclude:latest',
+      command, '-v', '-w', 'AUTO',
+      '-i', `/tests/${owlFile}`,
+      '-o', containerOutPath,
+    ];
+
+    const r = spawnSync('docker', dockerArgs, { encoding: 'utf8', timeout: 120000 });
 
     if (r.error) {
+      rmSync(outDir, { recursive: true, force: true });
       return { error: `docker spawn failed: ${r.error.message}` };
     }
 
@@ -97,7 +169,12 @@ export function benchOne(owlFile, mountDir, runs = 3, command = 'classification'
       ? 'Finished (lazy) realization'
       : 'Finished class classification';
     if (r.status !== 0 && !log.includes(doneMarker)) {
+      rmSync(outDir, { recursive: true, force: true });
       return { error: `docker exited ${r.status}: ${log.slice(0, 300)}` };
+    }
+
+    if (captureOutput && existsSync(outFile)) {
+      inferredTriples = countOwlXmlTriples(outFile);
     }
 
     if (!nativeVersion) {
@@ -120,8 +197,10 @@ export function benchOne(owlFile, mountDir, runs = 3, command = 'classification'
     });
   }
 
+  rmSync(outDir, { recursive: true, force: true });
+
   const fields = ['parseMs', 'preprocessMs', 'precomputeMs', 'classifyMs', 'propClassMs', 'realizeMs', 'totalMs'];
-  const result = { nativeVersion, threads };
+  const result = { nativeVersion, threads, inferredTriples };
   for (const f of fields) {
     const vals = timings.map(t => t[f]).filter(v => v != null);
     result[f] = vals.length ? median(vals) : null;

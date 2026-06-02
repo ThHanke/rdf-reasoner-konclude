@@ -275,6 +275,18 @@ public:
             CIntegerConfigType* it = dynamic_cast<CIntegerConfigType*>(swc->getConfigType());
             if (it) it->setValue(0);
         }
+        // Allow unchanged labels to be treated as compatible when the association update ID
+        // has advanced (mNextIndiUpdateId accumulates across calls). Without this, when
+        // mNextIndiUpdateId is large after n prior calls, the ID-mismatch check at line 1662
+        // sets incompatibleChanges=true which can abort detSameNeighbourCompletion, preventing
+        // owl:sameAs triples from being produced. Since WASM runs one ontology per call
+        // sequentially, treating unchanged labels as compatible is safe.
+        CConfigData* ulc = mConfig->createAndSetConfig(
+            "Konclude.Cache.RepresentativeBackendCache.InterpretUnchangedLabelsAsCompatibleIndividualAssociationUpdates");
+        if (ulc) {
+            CConvertBooleanConfigType* bt = dynamic_cast<CConvertBooleanConfigType*>(ulc->getConfigType());
+            if (bt) bt->readFromBoolean(true);
+        }
     }
     ~WasmConfigProvider() {
         delete mConfig;
@@ -300,6 +312,12 @@ struct KoncludeReasoner::Impl {
     // Kept alive one extra reset() cycle so KPSet pthreads can finish their
     // Emscripten exit-cleanup before the vtable is freed.
     CConcreteOntology*            mPreviousOntology = nullptr;
+    // Kept alive two reset() cycles to prevent the allocator from reusing freed
+    // ontology addresses for new ontology objects.  The singleton thread caches
+    // (mOntItemHash in precomputer/preprocessor/classifier) are keyed by pointer;
+    // if a new ontology reuses a freed address, the cache returns a stale entry.
+    // Holding the address for two cycles ensures a fresh allocation.
+    CConcreteOntology*            mPreviousPreviousOntology = nullptr;
 
     // Reasoning infrastructure
     WasmReasonerManagerThread*    mReasonerManager  = nullptr;
@@ -312,7 +330,6 @@ struct KoncludeReasoner::Impl {
     bool mClassified          = false;
     bool mLoadError           = false;
     bool mRealized            = false;
-    bool mHasIndividualsHint  = false; // true if owl:NamedIndividual triples seen
 
     // Buffer for buildInferredTripleBuffer() output
     std::vector<uint8_t> mResultBuffer;
@@ -349,6 +366,7 @@ struct KoncludeReasoner::Impl {
         // threadStopped() (overridden) joins the realizer and BackendAssCache threads.
         delete mReasonerManager; // joins CReasonerManagerThread; threadStopped() runs
         delete mClassManager;
+        delete mPreviousPreviousOntology;
         delete mPreviousOntology;
         delete mOntology;        // safe: all background threads have stopped
         delete mConfigProvider;
@@ -392,14 +410,14 @@ struct KoncludeReasoner::Impl {
     // Realizers from the previous call are already joined at the end of classify(),
     // so no stopAndClearRealizers() call is needed here.
     void reset() {
-        delete mPreviousOntology;
+        delete mPreviousPreviousOntology;
+        mPreviousPreviousOntology = mPreviousOntology;
         mPreviousOntology = mOntology;
         mOntology = nullptr;
         buildFreshOntology();
         mClassified         = false;
         mLoadError          = false;
         mRealized           = false;
-        mHasIndividualsHint = false;
         mResultBuffer.clear();
         mResultBufferPtr = 0;
     }
@@ -446,30 +464,6 @@ void KoncludeReasoner::loadTripleBuffer(int triplePtr, int tripleCount, int strT
         uint32_t end = (i + 1 < count) ? hdr[2 + i]
                                         : static_cast<uint32_t>(strDataLen);
         terms[i] = { strData + off, end - off };
-    }
-
-    // ── Detect owl:NamedIndividual assertions (realization gating) ───────────
-    // If any (? rdf:type owl:NamedIndividual) triple is present, realization
-    // requirements will be included in classify().  Absence = TBox-only path.
-    if (!mImpl->mHasIndividualsHint) {
-        static const char kRdfType[] = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
-        static const char kOwlNI[]   = "http://www.w3.org/2002/07/owl#NamedIndividual";
-        uint32_t rtIdx = UINT32_MAX, niIdx = UINT32_MAX;
-        for (uint32_t i = 0; i < count; ++i) {
-            if (terms[i].len == sizeof(kRdfType)-1 &&
-                memcmp(terms[i].ptr, kRdfType, sizeof(kRdfType)-1) == 0) rtIdx = i;
-            if (terms[i].len == sizeof(kOwlNI)-1 &&
-                memcmp(terms[i].ptr, kOwlNI, sizeof(kOwlNI)-1) == 0) niIdx = i;
-        }
-        if (rtIdx != UINT32_MAX && niIdx != UINT32_MAX) {
-            const uint32_t* raw = reinterpret_cast<const uint32_t*>(triplePtr);
-            for (int i = 0; i < tripleCount; ++i) {
-                if (raw[i*3+1] == rtIdx && raw[i*3+2] == niIdx) {
-                    mImpl->mHasIndividualsHint = true;
-                    break;
-                }
-            }
-        }
     }
 
     // ── Build CRedlandStoredTriplesData (world / storage / model) ────────────
@@ -678,7 +672,7 @@ bool KoncludeReasoner::runPipeline(KoncludeReasoner::Impl* impl, bool includeRea
     QList<COntologyProcessingRequirement*> reqList;
     buildBaseRequirements(reqList);
 
-    if (includeRealization && impl->mHasIndividualsHint) {
+    if (includeRealization) {
         COntologyProcessingStepVector* stepVec =
             COntologyProcessingStepVector::getProcessingStepVectorInstance();
         auto addReq = [&](COntologyProcessingStep::PROCESSINGSTEPTYPE t) {
@@ -723,7 +717,7 @@ bool KoncludeReasoner::runPipeline(KoncludeReasoner::Impl* impl, bool includeRea
     impl->mRealized = includeRealization && hasIndividuals &&
         stepDone(COntologyProcessingStep::OPSCONCEPTREALIZE);
 
-    if (includeRealization && impl->mHasIndividualsHint) {
+    if (includeRealization) {
         impl->mReasonerManager->stopAndClearRealizers();
     }
 
