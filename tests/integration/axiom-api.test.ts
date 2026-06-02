@@ -79,25 +79,6 @@ describe.skipIf(!wasmExists)("isEntailed() integration (R1 + R2)", () => {
     360000,
   );
 
-  // ── R1: entailed rdfs:subClassOf (TBox) ──────────────────────────────────
-  // Note: isEntailed for rdfs:subClassOf always runs _classifyInline internally
-  // (per _opForPredicate). After materialize, _classifyCache is null, so this
-  // triggers an additional classify Worker call — expected behavior.
-
-  it(
-    "R1: isEntailed rdfs:subClassOf — Ancestor rdfs:subClassOf BloodRelation → true",
-    async () => {
-      const axiom = DataFactory.quad(
-        DataFactory.namedNode(ANCESTOR),
-        DataFactory.namedNode(RDFS_SUBCLASS_OF),
-        DataFactory.namedNode(BLOOD_RELATION),
-      );
-      const result = await reasoner.isEntailed(store, axiom);
-      expect(result).toBe(true);
-    },
-    360000,
-  );
-
   // ── R2: not-entailed rdf:type ─────────────────────────────────────────────
 
   it(
@@ -149,6 +130,55 @@ describe.skipIf(!wasmExists)("isEntailed() integration (R1 + R2)", () => {
       );
       const result = await reasoner.isEntailed(store, axiom);
       expect(result).toBeNull();
+    },
+    360000,
+  );
+
+  it(
+    "batch isEntailed with unsupported predicate owl:sameAs returns null entry",
+    async () => {
+      // Exercises the batch code path (ts/index.ts queue body, not the fast-path).
+      // The unsupported owl:sameAs predicate must yield null even inside a batch call.
+      const sameAs = DataFactory.namedNode(OWL_SAME_AS);
+      const unsupportedAxiom = DataFactory.quad(
+        DataFactory.namedNode(HUMPHREY),
+        sameAs,
+        DataFactory.namedNode("http://example.org/X"),
+      );
+      const entailedAxiom = DataFactory.quad(
+        DataFactory.namedNode(HUMPHREY),
+        DataFactory.namedNode(RDF_TYPE),
+        DataFactory.namedNode(ANCESTOR),
+      );
+      const results = await reasoner.isEntailed(store, [unsupportedAxiom, entailedAxiom]);
+      expect(results).toHaveLength(2);
+      expect(results[0]).toBeNull();
+      expect(results[1]).toBe(true);
+    },
+    360000,
+  );
+
+  // ── R1: entailed rdfs:subClassOf (TBox) ──────────────────────────────────
+  // Note: isEntailed for rdfs:subClassOf always runs _classifyInline internally
+  // (per _opForPredicate). After materialize, _classifyCache is null, so this
+  // triggers an additional classify Worker call — expected behavior.
+  // This test runs last in the block because _classifyInline cross-invalidates
+  // _materializeCache; rdf:type checks after this point would require a fresh
+  // realization run (which has known sequencing constraints with classification).
+
+  it(
+    "R1: isEntailed rdfs:subClassOf — Ancestor rdfs:subClassOf BloodRelation → true",
+    async () => {
+      // Ancestor is a DIRECT subclass of BloodRelation in the Roberts Family TBox
+      // (tests/fixtures/roberts-native-tbox.nt line 1). The WASM classifier emits
+      // only direct (Hasse diagram) edges, so transitive-only pairs would return false.
+      const axiom = DataFactory.quad(
+        DataFactory.namedNode(ANCESTOR),
+        DataFactory.namedNode(RDFS_SUBCLASS_OF),
+        DataFactory.namedNode(BLOOD_RELATION),
+      );
+      const result = await reasoner.isEntailed(store, axiom);
+      expect(result).toBe(true);
     },
     360000,
   );
