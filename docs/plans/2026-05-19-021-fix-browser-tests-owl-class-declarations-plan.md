@@ -1,7 +1,7 @@
 ---
 title: "fix: Browser tests — add owl:Class declarations + transitive subClassOf output"
 type: fix
-status: active
+status: partial — 4 of 5 units complete; final unit deferred
 date: 2026-05-19
 ---
 

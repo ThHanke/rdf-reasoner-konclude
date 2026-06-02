@@ -1,7 +1,7 @@
 ---
 title: "fix: randomize ontology IDs to prevent BackendAssCache corruption on sequential calls"
 type: fix
-status: active
+status: complete
 date: 2026-05-28
 ---
 

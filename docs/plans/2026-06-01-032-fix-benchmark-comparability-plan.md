@@ -1,7 +1,7 @@
 ---
 title: "fix: Benchmark comparability — matching operations and inferred triple counts across TS, WASM, native"
 type: fix
-status: resolved 2026-06-02
+status: complete
 date: 2026-06-01
 ---
 

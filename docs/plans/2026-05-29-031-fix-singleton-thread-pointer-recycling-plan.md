@@ -1,7 +1,7 @@
 ---
 title: "fix: prevent stale-item and stale-callback failures from recycled ontology pointers in singleton threads"
 type: fix
-status: partial — RC1+RC2 applied; n=3 sameAs failure is BackendAssCache state issue (separate root cause; Unit 4 blocked)
+status: partial — closed; Unit 4 blocker resolved by plan-030 (BackendAssCache fix)
 date: 2026-05-29
 origin: docs/plans/2026-05-29-030-fix-backendasscache-sameas-detection-plan.md
 ---

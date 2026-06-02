@@ -1,7 +1,7 @@
 ---
 title: "perf: WASM hash map and memory allocation optimization"
 type: feat
-status: active
+status: partial — Unit 1 complete (robin_hood); Units 2-4 deferred
 date: 2026-05-18
 ---
 

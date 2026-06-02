@@ -1,7 +1,7 @@
 ---
 title: "feat: Compare native Konclude vs WASM build on OWL-DL violation cases (issue #13)"
 type: feat
-status: active
+status: complete
 date: 2026-05-28
 ---
 

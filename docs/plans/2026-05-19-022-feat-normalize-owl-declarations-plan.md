@@ -1,7 +1,7 @@
 ---
 title: "feat: Add normalizeDeclarations option — auto-inject OWL class declarations"
 type: feat
-status: active
+status: deferred — not implemented; feature deprioritized
 date: 2026-05-19
 ---
 

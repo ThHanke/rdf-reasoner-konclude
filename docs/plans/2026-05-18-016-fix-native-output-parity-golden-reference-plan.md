@@ -1,7 +1,7 @@
 ---
 title: "fix: Verify WASM port output parity with native Konclude via golden-reference test suite"
 type: fix
-status: active
+status: complete
 date: 2026-05-18
 ---
 

@@ -1,7 +1,7 @@
 ---
 title: "feat: OWL 2 DL parity verification and gap closure"
 type: feat
-status: in-progress
+status: complete
 date: 2026-06-02
 session_cutoff: 2026-06-02
 ---

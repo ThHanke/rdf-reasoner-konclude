@@ -1,7 +1,7 @@
 ---
 title: "fix: Close remaining WASM port parity gaps — ABox realization and TBox representative-IRI"
 type: fix
-status: active
+status: complete
 date: 2026-05-18
 origin: docs/plans/2026-05-18-016-fix-native-output-parity-golden-reference-plan.md
 ---

@@ -1,7 +1,7 @@
 ---
 title: "feat: Comprehensive API parity with native Konclude OWLlink surface"
 type: feat
-status: active
+status: complete
 date: 2026-06-01
 ---
 

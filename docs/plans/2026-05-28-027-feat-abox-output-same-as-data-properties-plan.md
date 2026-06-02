@@ -1,7 +1,7 @@
 ---
 title: "feat: emit owl:sameAs entailments and data property assertions from materialize()"
 type: feat
-status: active
+status: complete
 date: 2026-05-28
 ---
 
@@ -148,7 +148,7 @@ wired up in `buildInferredTripleBuffer()`.
 
 ## Implementation Units
 
-- [ ] **Unit 1: C++ — owl:sameAs visitor in buildInferredTripleBuffer()**
+- [x] **Unit 1: C++ — owl:sameAs visitor in buildInferredTripleBuffer()**
 
 **Goal:** Emit `owl:sameAs` pairs for all Konclude-merged individual equivalence classes.
 
@@ -196,7 +196,7 @@ wired up in `buildInferredTripleBuffer()`.
 
 ---
 
-- [ ] **Unit 2: C++ — data property assertions via COntologyTriplesAssertionsAccessor**
+- [x] **Unit 2: C++ — data property assertions via COntologyTriplesAssertionsAccessor**
 
 **Goal:** Emit `(individual, dataProperty, literal)` triples for all asserted data properties
 on named individuals.
@@ -249,7 +249,7 @@ on named individuals.
 
 ---
 
-- [ ] **Unit 3: WASM rebuild + integration baseline + docs update**
+- [x] **Unit 3: WASM rebuild + integration baseline + docs update**
 
 **Goal:** Rebuild WASM to include both new features; update README and integration test baseline.
 

@@ -1,7 +1,7 @@
 ---
 title: "chore: Remove dead code and debug logging overhead from WASM port"
 type: refactor
-status: active
+status: complete
 date: 2026-05-18
 ---
 

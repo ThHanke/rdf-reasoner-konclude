@@ -1,7 +1,7 @@
 ---
 title: "fix: Browser pthread on-demand worker hang — classify/checkConsistency timeout"
 type: fix
-status: active
+status: partial — deferred; see feat/browser-worker-compatibility branch
 date: 2026-05-18
 ---
 

@@ -1,7 +1,7 @@
 ---
 title: "fix: diagnose and fix BackendAssCache sameAs detection failure after n=3 ABox+classify"
 type: fix
-status: resolved 2026-06-02
+status: complete
 date: 2026-05-29
 ---
 

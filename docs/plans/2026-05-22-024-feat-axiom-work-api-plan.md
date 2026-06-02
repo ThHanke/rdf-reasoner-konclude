@@ -1,7 +1,7 @@
 ---
 title: "feat: Add axiom-work API — isEntailed, explain, whatIf, sameAs, isSatisfiable"
 type: feat
-status: active
+status: complete
 date: 2026-05-22
 origin: docs/brainstorms/2026-05-22-009-axiom-work-api-requirements.md
 ---
