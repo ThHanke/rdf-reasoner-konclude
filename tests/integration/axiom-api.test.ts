@@ -684,3 +684,180 @@ ex:EmptyClass a owl:Class ; rdfs:subClassOf owl:Nothing .
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Suite: Sequential call state isolation — R12, R13, R14
+//
+// All three tests share a single RdfReasoner instance to exercise cross-call
+// state isolation. No owl:sameAs entailments are tested here (BackendAssCache
+// n=3 slot-collision bug — see docs/solutions/logic-errors/).
+//
+// Inline ontology used throughout:
+//   ex:Animal a owl:Class .
+//   ex:Person a owl:Class ; rdfs:subClassOf ex:Animal .
+//   ex:alice a ex:Person .
+//
+// Expected TBox inference: Person rdfs:subClassOf Animal (in INFERRED_GRAPH_IRI)
+// Expected ABox inference: alice rdf:type Animal (in INFERRED_GRAPH_IRI)
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!wasmExists)(
+  "Sequential call state isolation (R12 + R13 + R14)",
+  () => {
+    const SEQ = "http://example.org/seq#";
+    const seq = (local: string) => `${SEQ}${local}`;
+
+    const TURTLE = `
+@prefix ex: <${SEQ}> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+<http://example.org/seq> a owl:Ontology .
+ex:Animal a owl:Class .
+ex:Person a owl:Class ; rdfs:subClassOf ex:Animal .
+ex:alice a ex:Person .
+`.trim();
+
+    let reasoner: RdfReasoner;
+
+    beforeAll(async () => {
+      reasoner = new RdfReasoner();
+      await reasoner.ready;
+    }, 360000);
+
+    afterAll(() => {
+      reasoner?.terminate();
+    });
+
+    // Helper: build a fresh Store from TURTLE for each test
+    const freshStore = (): Store => {
+      const parser = new Parser({ format: "Turtle" });
+      return new Store(parser.parse(TURTLE) as Quad[]);
+    };
+
+    // ── R12: classify() then materialize() on same instance ─────────────────
+    // Step 1: classify(store) → assert rdfs:subClassOf in INFERRED_GRAPH_IRI
+    // Step 2: materialize(store, { includeClassHierarchy: true }) → assert rdf:type in INFERRED_GRAPH_IRI
+    // Checking subClassOf BEFORE materialize avoids the _materializeOnStore
+    // removeQuads clearing the classify output.
+
+    it(
+      "R12: classify() then materialize(includeClassHierarchy:true) on same instance — both produce correct results",
+      async () => {
+        const store = freshStore();
+        const inferredGraph = DataFactory.namedNode(INFERRED_GRAPH_IRI);
+
+        // Step 1: classify
+        await reasoner.classify(store);
+        const subClassOfQuads = store.getQuads(null, RDFS_SUBCLASS_OF, null, inferredGraph);
+        expect(subClassOfQuads.length).toBeGreaterThan(0);
+        const personSubAnimal = subClassOfQuads.some(
+          q => q.subject.value === seq("Person") && q.object.value === seq("Animal"),
+        );
+        expect(personSubAnimal).toBe(true);
+
+        // Step 2: materialize with class hierarchy (re-writes INFERRED_GRAPH_IRI)
+        await reasoner.materialize(store, { includeClassHierarchy: true });
+        const rdfTypeQuads = store.getQuads(null, RDF_TYPE, null, inferredGraph);
+        expect(rdfTypeQuads.length).toBeGreaterThan(0);
+        const aliceAnimal = rdfTypeQuads.some(
+          q => q.subject.value === seq("alice") && q.object.value === seq("Animal"),
+        );
+        expect(aliceAnimal).toBe(true);
+      },
+      360000,
+    );
+
+    // ── R13: checkConsistency() then classify() on same instance ─────────────
+
+    it(
+      "R13: checkConsistency() then classify() on same instance — no hang, correct TBox output",
+      async () => {
+        const store = freshStore();
+        const inferredGraph = DataFactory.namedNode(INFERRED_GRAPH_IRI);
+
+        // Step 1: check consistency
+        const consistent = await reasoner.checkConsistency(store);
+        expect(consistent).toBe(true);
+
+        // Step 2: classify — must complete without hanging and produce inferred triples
+        await reasoner.classify(store);
+        const subClassOfQuads = store.getQuads(null, RDFS_SUBCLASS_OF, null, inferredGraph);
+        expect(subClassOfQuads.length).toBeGreaterThan(0);
+        const personSubAnimal = subClassOfQuads.some(
+          q => q.subject.value === seq("Person") && q.object.value === seq("Animal"),
+        );
+        expect(personSubAnimal).toBe(true);
+      },
+      360000,
+    );
+
+    // ── R14: whatIf() does not affect subsequent classify() ──────────────────
+    // Call whatIf with a harmless addition (new class ClassX subClassOf Animal).
+    // whatIf invalidates all caches. Subsequent classify(store) must re-load the
+    // unmodified base store and produce correct TBox output.
+    //
+    // Uses a distinct ontology prefix (seq14:) to avoid fingerprint cache
+    // collision with the R12/R13 stores that share the same TURTLE content.
+
+    it(
+      "R14: whatIf() does not contaminate subsequent classify() — correct TBox output after cache invalidation",
+      async () => {
+        // Distinct prefix avoids fingerprint collision with R12/R13 stores
+        const SEQ14 = "http://example.org/seq14#";
+        const seq14 = (local: string) => `${SEQ14}${local}`;
+        const TURTLE14 = `
+@prefix ex: <${SEQ14}> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+<http://example.org/seq14> a owl:Ontology .
+ex:Animal a owl:Class .
+ex:Person a owl:Class ; rdfs:subClassOf ex:Animal .
+ex:alice a ex:Person .
+`.trim();
+        const parser = new Parser({ format: "Turtle" });
+        const store = new Store(parser.parse(TURTLE14) as Quad[]);
+        const inferredGraph = DataFactory.namedNode(INFERRED_GRAPH_IRI);
+
+        // whatIf: add a new class ClassX subClassOf Animal
+        const additions: Quad[] = [
+          DataFactory.quad(
+            DataFactory.namedNode(seq14("ClassX")),
+            DataFactory.namedNode(RDF_TYPE),
+            DataFactory.namedNode("http://www.w3.org/2002/07/owl#Class"),
+          ) as unknown as Quad,
+          DataFactory.quad(
+            DataFactory.namedNode(seq14("ClassX")),
+            DataFactory.namedNode(RDFS_SUBCLASS_OF),
+            DataFactory.namedNode(seq14("Animal")),
+          ) as unknown as Quad,
+        ];
+        const delta = await reasoner.whatIf(store, additions);
+        expect(delta).toHaveProperty("added");
+        expect(delta).toHaveProperty("removed");
+
+        // whatIf must not write to INFERRED_GRAPH_IRI — store inferred graph is still empty
+        const afterWhatIfInferred = store.getQuads(null, null, null, inferredGraph);
+        expect(afterWhatIfInferred.length).toBe(0);
+
+        // Now classify — whatIf invalidated all caches, so this must re-load
+        // the unmodified base store and produce correct TBox output
+        await reasoner.classify(store);
+        const subClassOfQuads = store.getQuads(null, RDFS_SUBCLASS_OF, null, inferredGraph);
+        expect(subClassOfQuads.length).toBeGreaterThan(0);
+        const personSubAnimal = subClassOfQuads.some(
+          q => q.subject.value === seq14("Person") && q.object.value === seq14("Animal"),
+        );
+        expect(personSubAnimal).toBe(true);
+
+        // ClassX must NOT appear (it was only in the whatIf additions, not in the base store)
+        const classXPresent = subClassOfQuads.some(
+          q => q.subject.value === seq14("ClassX") || q.object.value === seq14("ClassX"),
+        );
+        expect(classXPresent).toBe(false);
+      },
+      360000,
+    );
+  },
+);
