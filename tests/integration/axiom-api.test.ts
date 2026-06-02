@@ -511,6 +511,14 @@ ex:ClassA rdfs:subClassOf ex:ClassB .
             q.object.value === classB,
         );
         expect(foundAxiom).toBe(true);
+
+        // Verify background declarations don't leak into justifications
+        const CLASS_IRI = "http://www.w3.org/2002/07/owl#Class";
+        const RDF_TYPE_IRI = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+        const hasClassDecl = justs[0].some(
+          q => q.predicate.value === RDF_TYPE_IRI && q.object.value === CLASS_IRI
+        );
+        expect(hasClassDecl).toBe(false);
       },
       360000,
     );

@@ -64,6 +64,7 @@ const OWL_CLASS = "http://www.w3.org/2002/07/owl#Class";
 const OWL_OBJECT_PROPERTY = "http://www.w3.org/2002/07/owl#ObjectProperty";
 const OWL_DATATYPE_PROPERTY = "http://www.w3.org/2002/07/owl#DatatypeProperty";
 const OWL_ANNOTATION_PROPERTY = "http://www.w3.org/2002/07/owl#AnnotationProperty";
+const OWL_ONTOLOGY = "http://www.w3.org/2002/07/owl#Ontology";
 const RDFS_CLASS = "http://www.w3.org/2000/01/rdf-schema#Class";
 const OWL_THING = "http://www.w3.org/2002/07/owl#Thing";
 const OWL_NOTHING = "http://www.w3.org/2002/07/owl#Nothing";
@@ -955,6 +956,7 @@ export class RdfReasoner {
       obj === OWL_OBJECT_PROPERTY ||
       obj === OWL_DATATYPE_PROPERTY ||
       obj === OWL_ANNOTATION_PROPERTY ||
+      obj === OWL_ONTOLOGY ||
       obj === RDFS_CLASS
     );
   }
