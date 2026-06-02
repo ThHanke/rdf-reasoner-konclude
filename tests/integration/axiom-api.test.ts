@@ -352,9 +352,10 @@ ex:alice a ex:Person .
 
       const delta = await reasoner.whatIf(store, additions);
 
-      // Direction-specific: contradiction collapses the inferred set.
-      // All previously-inferred triples are removed; nothing new is added.
-      expect(delta.added.length).toBe(0);
+      // Contradiction collapses the inferred set: removed.length > 0.
+      // We do not assert delta.added.length === 0 because Konclude may emit
+      // triples during inconsistency collapse (e.g. owl:Thing rdfs:subClassOf
+      // owl:Nothing) — that would be correct behaviour, not a test failure.
       expect(delta.removed.length).toBeGreaterThan(0);
 
       // alice rdf:type Animal is one of the collapsed inferences
@@ -428,6 +429,17 @@ ex:alice a ex:Person .
       expect(delta1HasY).toBe(false);
       expect(delta2HasY).toBe(true);
       expect(delta2HasX).toBe(false);
+
+      // Cross-contamination checks on removed arrays: state must not leak
+      // between the two independent whatIf calls.
+      const delta1RemovedHasY = delta1.removed.some(
+        q => q.subject.value === classY || q.object.value === classY,
+      );
+      const delta2RemovedHasX = delta2.removed.some(
+        q => q.subject.value === classX || q.object.value === classX,
+      );
+      expect(delta1RemovedHasY).toBe(false);
+      expect(delta2RemovedHasX).toBe(false);
     },
     360000,
   );
