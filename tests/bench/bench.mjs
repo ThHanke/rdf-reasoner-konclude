@@ -83,8 +83,8 @@ async function main() {
   const tsByName     = Object.fromEntries(tsResults.map(r => [r.name, r]));
   const binaryByName = Object.fromEntries(binaryResults.map(r => [r.name, r]));
 
-  const header = '| Ontology | Exp. | NTriples | Native parse ¹ | Native reasoning ² | WASM load ¹ | WASM classify ² | WASM total | TS total ³ | Enc (binary) ⁴ | Ratio ² |';
-  const sep    = '|---|---|---|---|---|---|---|---|---|---|---|';
+  const header = '| Ontology | Exp. | NTriples | Native parse ¹ | Native reasoning ² | WASM load ¹ | WASM classify ² | WASM total | TS total ³ | Enc (binary) ⁴ | Ratio ² | WASM inferred | TS inferred | Native inferred |';
+  const sep    = '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|';
   console.log(header);
   console.log(sep);
 
@@ -141,7 +141,11 @@ async function main() {
       encBinary = 'SKIP';
     }
 
-    console.log(`| ${c.name} | ${exp} | ${nt} | ${nParse} | ${nClassify} | ${wLoad} | ${wClassify} | ${wTotal} | ${tsTotal} | ${encBinary} | ${ratioStr(wasmClassifyMs, nativeClassifyMs)} |`);
+    const wInferred = wc?.result?.ok ? (wc.result.inferredTriples ?? '—') : '—';
+    const tsInferred = tc?.result?.ok ? (tc.result.inferredTriples ?? '—') : '—';
+    const nInferred = nc?.result && !nc.result.error ? (nc.result.inferredTriples ?? '—') : '—';
+
+    console.log(`| ${c.name} | ${exp} | ${nt} | ${nParse} | ${nClassify} | ${wLoad} | ${wClassify} | ${wTotal} | ${tsTotal} | ${encBinary} | ${ratioStr(wasmClassifyMs, nativeClassifyMs)} | ${wInferred} | ${tsInferred} | ${nInferred} |`);
   }
 
   console.log('');
@@ -150,6 +154,7 @@ async function main() {
   console.log('² "Native preprocess+precompute+classify(+realize)" and "WASM classify" perform the same logical work and are **directly comparable**. TBox-only ontologies (LUBM schema, GALEN) use native `classification`; ABox ontologies (Roberts, LUBM+data) use native `realization` (which internally includes classification).');
   console.log('³ "TS total" measures the full TypeScript layer: binary encode + Worker postMessage RTT + n3.Parser + store.addQuad loop. JS overhead = TS total − WASM total.');
   console.log('⁴ "Enc (binary)" is JS-only `encodeToBuffers` time; speedup vs old n3.Writer path shown in parentheses. Median of 5 runs.');
+  console.log('⁵ All three inferred counts use the same NTriples-equivalent method: subClassOf/equivalentClass (pairwise symmetric) + rdf:type/sameAs (pairwise symmetric). Native counts are derived from Konclude\'s OWL/XML output by expanding each axiom to its NTriples equivalent.');
   console.log(`- Native: 3 runs per ontology, median reported. WASM / TS: 1 warm-up discarded, median of 3 measured runs.`);
   console.log(`- WASM runtime: Node.js ${process.version} with Emscripten pthreads build.`);
   console.log('- LUBM+data native input: NTriples merged to RDF/XML via rdflib (auto-generated, .gitignored).');

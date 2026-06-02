@@ -192,11 +192,11 @@ describe.skipIf(!wasmExists)("ABox realization integration", () => {
     ).toBe(true);
   });
 
-  // Regression: 3x materialize(ABOX) + classify(TBOX) → materialize(SAME_AS) returns 0
-  // owl:sameAs triples.  Root cause still under investigation (random-ID fix insufficient).
-  // it.fails documents the known-broken state; remove .fails when the root cause is fixed.
-  it.fails(
-    "regression — n=3 ABox materializations + classify → sameAs materialize returns correct output (BackendAssCache corruption; root cause TBD)",
+  // Regression: fixed by plan-030. Root cause was pointer recycling in singleton
+  // thread caches (mOntIdHash guard fix, patches 022–023) combined with keeping two
+  // prior ontology objects alive to prevent allocator address reuse.
+  it(
+    "regression — n=3 ABox materializations + classify → sameAs materialize returns correct output (fixed by plan-030)",
     async () => {
       const fresh = new RdfReasoner();
       await fresh.ready;
@@ -233,52 +233,38 @@ describe.skipIf(!wasmExists)("ABox realization integration", () => {
     },
   );
 
-  // owl:sameAs and data property tests use a fresh reasoner to avoid state
-  // sensitivity from prior classify()+materialize() sequences in the shared instance.
   it("owl:sameAs pair appears in materialize() output", async () => {
-    const fresh = new RdfReasoner();
-    await fresh.ready;
-    try {
-      const quads = parseNTriples(SAME_AS_NTRIPLES);
-      const inferred = await fresh.materialize(quads);
+    const quads = parseNTriples(SAME_AS_NTRIPLES);
+    const inferred = await reasoner.materialize(quads);
 
-      const sameAsTriples = inferred.filter((q) => q.predicate.value === OWL_SAME_AS);
-      expect(sameAsTriples.length, "at least one owl:sameAs triple must appear").toBeGreaterThan(0);
+    const sameAsTriples = inferred.filter((q) => q.predicate.value === OWL_SAME_AS);
+    expect(sameAsTriples.length, "at least one owl:sameAs triple must appear").toBeGreaterThan(0);
 
-      const aliceEve = sameAsTriples.some(
-        (q) => q.subject.value === EX("Alice") && q.object.value === EX("Eve"),
-      );
-      const eveAlice = sameAsTriples.some(
-        (q) => q.subject.value === EX("Eve") && q.object.value === EX("Alice"),
-      );
-      expect(
-        aliceEve || eveAlice,
-        "Alice owl:sameAs Eve (or Eve owl:sameAs Alice) must appear",
-      ).toBe(true);
-    } finally {
-      fresh.terminate();
-    }
+    const aliceEve = sameAsTriples.some(
+      (q) => q.subject.value === EX("Alice") && q.object.value === EX("Eve"),
+    );
+    const eveAlice = sameAsTriples.some(
+      (q) => q.subject.value === EX("Eve") && q.object.value === EX("Alice"),
+    );
+    expect(
+      aliceEve || eveAlice,
+      "Alice owl:sameAs Eve (or Eve owl:sameAs Alice) must appear",
+    ).toBe(true);
   });
 
   it("data property literal triple appears in materialize() output", async () => {
-    const fresh = new RdfReasoner();
-    await fresh.ready;
-    try {
-      const quads = parseNTriples(DATA_PROP_NTRIPLES);
-      const inferred = await fresh.materialize(quads);
+    const quads = parseNTriples(DATA_PROP_NTRIPLES);
+    const inferred = await reasoner.materialize(quads);
 
-      expect(
-        hasTriple(inferred, EX("Alice"), EX("age"), "30"),
-        "Alice age 30 (data property assertion) must appear in output",
-      ).toBe(true);
+    expect(
+      hasTriple(inferred, EX("Alice"), EX("age"), "30"),
+      "Alice age 30 (data property assertion) must appear in output",
+    ).toBe(true);
 
-      const ageTriples = inferred.filter(
-        (q) => q.subject.value === EX("Alice") && q.predicate.value === EX("age"),
-      );
-      expect(ageTriples).toHaveLength(1);
-      expect(ageTriples[0].object.termType).toBe("Literal");
-    } finally {
-      fresh.terminate();
-    }
+    const ageTriples = inferred.filter(
+      (q) => q.subject.value === EX("Alice") && q.predicate.value === EX("age"),
+    );
+    expect(ageTriples).toHaveLength(1);
+    expect(ageTriples[0].object.termType).toBe("Literal");
   });
 });

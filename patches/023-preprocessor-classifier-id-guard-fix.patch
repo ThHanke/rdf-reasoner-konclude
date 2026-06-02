@@ -1,0 +1,80 @@
+diff --git a/Source/Reasoner/Classifier/CSubsumptionClassifierThread.cpp b/Source/Reasoner/Classifier/CSubsumptionClassifierThread.cpp
+index ac12cb8f..4bc76c6c 100644
+--- a/Source/Reasoner/Classifier/CSubsumptionClassifierThread.cpp
++++ b/Source/Reasoner/Classifier/CSubsumptionClassifierThread.cpp
+@@ -110,6 +110,7 @@ namespace Konclude {
+ 				ontItemList.append(ontClassItem);
+ 				processingOntItemList.append(ontClassItem);
+ 				ontItemHash.insert(ontology,ontClassItem);
++				mOntIdHash.insert(ontology, ontology->getOntologyID());
+ 				return this;
+ 			}
+ 
+@@ -196,14 +197,11 @@ namespace Konclude {
+ 					CCallbackData *callback = coe->getCallbackData();
+ 					CConfigurationBase* config = coe->getConfiguration();
+ 					QList<COntologyProcessingRequirement*>* reqList = coe->getClassificationRequirementList();
+-					// WASM: Guard against recycled pointer collision.  When a prior ontology
+-					// object is freed and a new one is allocated at the same address, the hash
+-					// may report the new call as "already scheduled".  Evict the stale entry.
+-					if (ontItemHash.contains(onto)) {
+-						COntologyClassificationItem* staleItem = ontItemHash.value(onto);
+-						if (staleItem && staleItem->getOntology() != onto) {
+-							ontItemHash.remove(onto);
+-						}
++					// WASM: Guard against recycled pointer collision.  Use mOntIdHash (ID at
++					// insertion time) — never compare pointers since freed memory may be reused.
++					if (ontItemHash.contains(onto) && mOntIdHash.value(onto, -1) != onto->getOntologyID()) {
++						ontItemHash.remove(onto);
++						mOntIdHash.remove(onto);
+ 					}
+ 					if (!isOntologyClassificationScheduled(onto)) {
+ 						scheduleOntologyClassification(onto,nullptr,config);
+diff --git a/Source/Reasoner/Classifier/CSubsumptionClassifierThread.h b/Source/Reasoner/Classifier/CSubsumptionClassifierThread.h
+index e914800b..13b25421 100644
+--- a/Source/Reasoner/Classifier/CSubsumptionClassifierThread.h
++++ b/Source/Reasoner/Classifier/CSubsumptionClassifierThread.h
+@@ -131,6 +131,7 @@ namespace Konclude {
+ 					QList<COntologyClassificationItem*> ontItemList;
+ 					QList<COntologyClassificationItem*> processingOntItemList;
+ 					QHash<CConcreteOntology*,COntologyClassificationItem*> ontItemHash;
++					QHash<CConcreteOntology*, cint64> mOntIdHash;
+ 					cint64 mClassificationCount;
+ 
+ 					CReasonerManager* reasoner;
+diff --git a/Source/Reasoner/Preprocess/CPreprocessingThread.cpp b/Source/Reasoner/Preprocess/CPreprocessingThread.cpp
+index 7f01ec81..e51c8ee4 100644
+--- a/Source/Reasoner/Preprocess/CPreprocessingThread.cpp
++++ b/Source/Reasoner/Preprocess/CPreprocessingThread.cpp
+@@ -151,14 +151,17 @@ namespace Konclude {
+ 
+ 
+ 					COntologyPreprocessingItem* item = mOntItemHash.value(ontology);
+-					// WASM: Guard against recycled pointer collision.
+-					if (item && item->getOntology()->getOntologyID() != ontology->getOntologyID()) {
++					// WASM: Guard against recycled pointer collision.  Use mOntIdHash (ID at
++					// insertion time) — never dereference item->getOntology() since stale.
++					if (item && mOntIdHash.value(ontology, -1) != ontology->getOntologyID()) {
+ 						mOntItemHash.remove(ontology);
++						mOntIdHash.remove(ontology);
+ 						item = nullptr;
+ 					}
+ 					if (!item) {
+ 						item = initializeOntologyPreprocessingItem(ontology,configBase);
+ 						mOntItemHash.insert(ontology,item);
++						mOntIdHash.insert(ontology, ontology->getOntologyID());
+ 						mActiveOntItemSet.insert(item);
+ 						mProcessingOntItemList.append(item);
+ 					} else {
+diff --git a/Source/Reasoner/Preprocess/CPreprocessingThread.h b/Source/Reasoner/Preprocess/CPreprocessingThread.h
+index 9703f56a..95ae7fe9 100644
+--- a/Source/Reasoner/Preprocess/CPreprocessingThread.h
++++ b/Source/Reasoner/Preprocess/CPreprocessingThread.h
+@@ -119,6 +119,7 @@ namespace Konclude {
+ 					QSet<COntologyPreprocessingItem*> mInactiveOntItemSet;
+ 					QList<COntologyPreprocessingItem*> mProcessingOntItemList;
+ 					QHash<CConcreteOntology*,COntologyPreprocessingItem*> mOntItemHash;
++					QHash<CConcreteOntology*, cint64> mOntIdHash;
+ 					cint64 mPreprocessingCount;
+ 
+ 					CReasonerManager* mReasoner;

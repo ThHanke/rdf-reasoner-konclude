@@ -1,0 +1,19 @@
+diff --git a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.cpp b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.cpp
+index eb6bf170..5675d7ff 100644
+--- a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.cpp
++++ b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.cpp
+@@ -1735,6 +1735,14 @@ namespace Konclude {
+ 							}
+ 						}
+ 
++						// WASM: Fresh association data (no getPreviousData()) was created this call
++						// cycle with no prior history. When mNextIndiUpdateId accumulated from
++						// prior calls, usedUpdateId can differ from the fresh data's init value (1),
++						// falsely triggering incompatibleChanges. Safe to treat as compatible.
++						if (!labelCompatible && mConfInterpretUnchangedLabelsAsCompatible
++								&& associationData && !associationData->getPreviousData()) {
++							labelCompatible = true;
++						}
+ 						if (!labelCompatible) {
+ 							labelAddition = true;
+ 							labelRemoval = false;
