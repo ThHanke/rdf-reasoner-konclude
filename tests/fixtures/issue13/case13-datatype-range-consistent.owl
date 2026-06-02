@@ -1,0 +1,41 @@
+<?xml version='1.0'?>
+<!DOCTYPE Ontology>
+<Ontology xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"
+          xml:base="http://example.org/reasoner-test"
+          xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+          xmlns="http://www.w3.org/2002/07/owl#"
+          xmlns:xml="http://www.w3.org/XML/1998/namespace"
+          xmlns:xsd="http://www.w3.org/2001/XMLSchema#"
+          ontologyIRI="http://example.org/reasoner-test/case13">
+ <Prefix name="" IRI="http://example.org/reasoner-test#"/>
+ <Prefix name="owl" IRI="http://www.w3.org/2002/07/owl#"/>
+ <Prefix name="rdf" IRI="http://www.w3.org/1999/02/22-rdf-syntax-ns#"/>
+ <Prefix name="rdfs" IRI="http://www.w3.org/2000/01/rdf-schema#"/>
+ <Prefix name="xsd" IRI="http://www.w3.org/2001/XMLSchema#"/>
+ <Declaration><DataProperty IRI="#age"/></Declaration>
+ <Declaration><NamedIndividual IRI="#alice"/></Declaration>
+ <Declaration><Class IRI="#AgeConstrained"/></Declaration>
+ <!-- AgeConstrained SubClassOf allValuesFrom(age >= 10) -->
+ <!-- alice has age 15, which satisfies >= 10 → consistent -->
+ <SubClassOf>
+  <Class IRI="#AgeConstrained"/>
+  <DataAllValuesFrom>
+   <DataProperty IRI="#age"/>
+   <DatatypeRestriction>
+    <Datatype IRI="http://www.w3.org/2001/XMLSchema#integer"/>
+    <FacetRestriction facet="http://www.w3.org/2001/XMLSchema#minInclusive">
+     <Literal datatypeIRI="http://www.w3.org/2001/XMLSchema#integer">10</Literal>
+    </FacetRestriction>
+   </DatatypeRestriction>
+  </DataAllValuesFrom>
+ </SubClassOf>
+ <ClassAssertion>
+  <Class IRI="#AgeConstrained"/>
+  <NamedIndividual IRI="#alice"/>
+ </ClassAssertion>
+ <DataPropertyAssertion>
+  <DataProperty IRI="#age"/>
+  <NamedIndividual IRI="#alice"/>
+  <Literal datatypeIRI="http://www.w3.org/2001/XMLSchema#integer">15</Literal>
+ </DataPropertyAssertion>
+</Ontology>

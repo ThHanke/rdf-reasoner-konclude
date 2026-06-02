@@ -23,6 +23,12 @@ declare -a CASES=(
   "4:case4-irreflexive-property.owl:IrreflexiveProperty violation"
   "5:case5-max-qualified-cardinality.owl:maxQualifiedCardinality + differentFrom"
   "6:case6-allvaluesfrom-disjoint.owl:allValuesFrom + disjointWith"
+  "7:case7-reflexive-property.owl:ReflexiveProperty + ObjectComplementOf(HasSelf)"
+  "8:case8-inverse-functional-property.owl:InverseFunctionalProperty + DifferentIndividuals"
+  "9:case9-all-disjoint-classes.owl:AllDisjointClasses (3-way) + double membership"
+  "10:case10-all-disjoint-properties.owl:DisjointObjectProperties + EquivalentObjectProperties"
+  "11:case11-disjoint-union.owl:DisjointUnion + double membership"
+  "12:case12-negative-property-assertion.owl:NegativeObjectPropertyAssertion contradiction"
 )
 
 echo "["

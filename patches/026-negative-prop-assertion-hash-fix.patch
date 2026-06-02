@@ -1,0 +1,36 @@
+diff --git a/Source/Reasoner/Generator/CConcreteOntologyRedlandTriplesDataExpressionMapper.cpp b/Source/Reasoner/Generator/CConcreteOntologyRedlandTriplesDataExpressionMapper.cpp
+index 072eac6f..20f942da 100644
+--- a/Source/Reasoner/Generator/CConcreteOntologyRedlandTriplesDataExpressionMapper.cpp
++++ b/Source/Reasoner/Generator/CConcreteOntologyRedlandTriplesDataExpressionMapper.cpp
+@@ -447,13 +447,13 @@
+ 								QList<CRedlandNodeProcessingData*>* targetValueLiteralProcessingDataList = getNodeProcessingDataListFromNodeStreamWithNewHandling(createRedlandNodeStreamWrapper()->init(getPartialStatementFilteredTripleStream(getAdaptedPartialFilteringStatement(node, nullptr, nullptr, mPartialFilteringStatementForOWLTargetValueSuccessors)), 2), mDataLiteralNodeIdentifierDataHash, [&](librdf_node* node)->CRedlandNodeProcessingData* { return createLiteralValueProcessingData(node); });
+ 								if (targetValueLiteralProcessingDataList) {
+ 
+-									QList<CRedlandNodeProcessingData*>* propertyProcessingDataList = getNodeProcessingDataListFromNodeStream(createRedlandNodeStreamWrapper()->init(getPartialStatementFilteredTripleStream(getAdaptedPartialFilteringStatement(node, nullptr, nullptr, mPartialFilteringStatementForOWLAssertionPropertySuccessors)), 2), mObjectPropertyNodeIdentifierDataHash);
++									QList<CRedlandNodeProcessingData*>* propertyProcessingDataList = getNodeProcessingDataListFromNodeStream(createRedlandNodeStreamWrapper()->init(getPartialStatementFilteredTripleStream(getAdaptedPartialFilteringStatement(node, nullptr, nullptr, mPartialFilteringStatementForOWLAssertionPropertySuccessors)), 2), mDataPropertyNodeIdentifierDataHash);
+ 									if (propertyProcessingDataList) {
+ 										QList<CBuildExpression*> expressionList;
+ 										collectBuildExpressionsFromProcessingDataList(*sourcendividualProcessingDataList, expressionList);
+ 										collectBuildExpressionsFromProcessingDataList(*targetValueLiteralProcessingDataList, expressionList);
+ 										collectBuildExpressionsFromProcessingDataList(*propertyProcessingDataList, expressionList);
+-										CAxiomExpression* axiomExpression = mOntologyBuilder->getNegativeObjectPropertyAssertion(expressionList);
++										CAxiomExpression* axiomExpression = mOntologyBuilder->getNegativeDataPropertyAssertion(expressionList);
+ 										if (axiomExpression) {
+ 											processed = true;
+ 											axiomExpressionList.append(axiomExpression);
+@@ -469,13 +469,13 @@
+ 							if (!processed) {
+ 								QList<CRedlandNodeProcessingData*>* targetIndividualProcessingDataList = getNodeProcessingDataListFromNodeStreamWithNewHandling(createRedlandNodeStreamWrapper()->init(getPartialStatementFilteredTripleStream(getAdaptedPartialFilteringStatement(node, nullptr, nullptr, mPartialFilteringStatementForOWLTargetIndividualSuccessors)), 2), mNamedIndividualNodeIdentifierDataHash, [&](librdf_node* node)->CRedlandNodeProcessingData* { return createNamedIndividualProcessingData(node); });
+ 								if (targetIndividualProcessingDataList) {
+-									QList<CRedlandNodeProcessingData*>* propertyProcessingDataList = getNodeProcessingDataListFromNodeStream(createRedlandNodeStreamWrapper()->init(getPartialStatementFilteredTripleStream(getAdaptedPartialFilteringStatement(node, nullptr, nullptr, mPartialFilteringStatementForOWLAssertionPropertySuccessors)), 2), mDataPropertyNodeIdentifierDataHash);
++									QList<CRedlandNodeProcessingData*>* propertyProcessingDataList = getNodeProcessingDataListFromNodeStream(createRedlandNodeStreamWrapper()->init(getPartialStatementFilteredTripleStream(getAdaptedPartialFilteringStatement(node, nullptr, nullptr, mPartialFilteringStatementForOWLAssertionPropertySuccessors)), 2), mObjectPropertyNodeIdentifierDataHash);
+ 									if (propertyProcessingDataList) {
+ 										QList<CBuildExpression*> expressionList;
+ 										collectBuildExpressionsFromProcessingDataList(*sourcendividualProcessingDataList, expressionList);
+ 										collectBuildExpressionsFromProcessingDataList(*targetIndividualProcessingDataList, expressionList);
+ 										collectBuildExpressionsFromProcessingDataList(*propertyProcessingDataList, expressionList);
+-										CAxiomExpression* axiomExpression = mOntologyBuilder->getNegativeDataPropertyAssertion(expressionList);
++										CAxiomExpression* axiomExpression = mOntologyBuilder->getNegativeObjectPropertyAssertion(expressionList);
+ 										if (axiomExpression) {
+ 											processed = true;
+ 											axiomExpressionList.append(axiomExpression);

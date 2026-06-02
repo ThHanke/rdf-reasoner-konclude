@@ -4,5 +4,13 @@
   { "case": 3, "name": "AsymmetricProperty violation", "fixture": "case3-asymmetric-property.owl", "verdict": "consistent", "exitCode": 0 },
   { "case": 4, "name": "IrreflexiveProperty violation", "fixture": "case4-irreflexive-property.owl", "verdict": "consistent", "exitCode": 0 },
   { "case": 5, "name": "maxQualifiedCardinality + differentFrom", "fixture": "case5-max-qualified-cardinality.owl", "verdict": "inconsistent", "exitCode": 0 },
-  { "case": 6, "name": "allValuesFrom + disjointWith", "fixture": "case6-allvaluesfrom-disjoint.owl", "verdict": "inconsistent", "exitCode": 0 }
+  { "case": 6, "name": "allValuesFrom + disjointWith", "fixture": "case6-allvaluesfrom-disjoint.owl", "verdict": "inconsistent", "exitCode": 0 },
+  { "case": 7, "name": "ReflexiveProperty + ObjectComplementOf(HasSelf)", "fixture": "case7-reflexive-property.owl", "verdict": "inconsistent", "exitCode": 0 },
+  { "case": 8, "name": "InverseFunctionalProperty + DifferentIndividuals", "fixture": "case8-inverse-functional-property.owl", "verdict": "inconsistent", "exitCode": 0 },
+  { "case": 9, "name": "AllDisjointClasses (3-way) + double membership", "fixture": "case9-all-disjoint-classes.owl", "verdict": "inconsistent", "exitCode": 0 },
+  { "case": 10, "name": "DisjointObjectProperties + EquivalentObjectProperties", "fixture": "case10-all-disjoint-properties.owl", "verdict": "consistent", "exitCode": 0 },
+  { "case": 11, "name": "DisjointUnion + double membership", "fixture": "case11-disjoint-union.owl", "verdict": "inconsistent", "exitCode": 0 },
+  { "case": 12, "name": "NegativeObjectPropertyAssertion contradiction", "fixture": "case12-negative-property-assertion.owl", "verdict": "inconsistent", "exitCode": 0 },
+  { "case": 13, "name": "DataAllValuesFrom minInclusive (consistent: age=15 >= 10)", "fixture": "case13-datatype-range-consistent.owl", "verdict": "consistent", "exitCode": 0 },
+  { "case": 14, "name": "DataAllValuesFrom minInclusive violation (inconsistent: age=5 < 10)", "fixture": "case14-datatype-range-inconsistent.owl", "verdict": "inconsistent", "exitCode": 0 }
 ]
