@@ -15,8 +15,6 @@ import { existsSync, readFileSync } from "node:fs";
 import { Parser } from "n3";
 import type { Quad } from "@rdfjs/types";
 
-import { RdfReasoner } from "../../ts/index.js"; // used by subsequent test units
-
 // ---------------------------------------------------------------------------
 // WASM availability guard
 // ---------------------------------------------------------------------------
@@ -39,12 +37,7 @@ const OWL_SAME_AS = "http://www.w3.org/2002/07/owl#sameAs";
 
 function parseTurtle(content: string): Quad[] {
   const parser = new Parser({ format: "Turtle" });
-  const quads: Quad[] = [];
-  parser.parse(content, (err, quad) => {
-    if (err) throw err;
-    if (quad) quads.push(quad as Quad);
-  });
-  return quads;
+  return parser.parse(content) as Quad[];
 }
 
 function hasTriple(quads: Quad[], s: string, p: string, o: string): boolean {
