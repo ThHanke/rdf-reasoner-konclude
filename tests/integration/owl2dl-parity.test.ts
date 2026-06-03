@@ -431,7 +431,7 @@ describe.skipIf(!wasmExists)("ABox constructs", () => {
   // as an inconsistency.  The reflexive differentFrom axiom should produce a clash
   // (an individual cannot be different from itself) but the kernel silently accepts
   // it.  The correct OWL 2 DL answer is false (inconsistent).
-  it.skip("UPSTREAM_LIMITATION — differentFrom/checkConsistency: a owl:differentFrom a → inconsistent (false) [not detected by Konclude v0.7.0]", async () => {
+  it("differentFrom/checkConsistency: a owl:differentFrom a → inconsistent (false)", async () => {
     const inconsistentQuads = parseTurtle(`
       @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
       @prefix owl:  <http://www.w3.org/2002/07/owl#> .

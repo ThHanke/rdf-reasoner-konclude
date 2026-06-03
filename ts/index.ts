@@ -69,6 +69,7 @@ const OWL_ONTOLOGY = "http://www.w3.org/2002/07/owl#Ontology";
 const RDFS_CLASS = "http://www.w3.org/2000/01/rdf-schema#Class";
 const OWL_THING = "http://www.w3.org/2002/07/owl#Thing";
 const OWL_NOTHING = "http://www.w3.org/2002/07/owl#Nothing";
+const OWL_DIFFERENT_FROM = "http://www.w3.org/2002/07/owl#differentFrom";
 
 // ---------------------------------------------------------------------------
 // RdfReasoner
@@ -344,13 +345,31 @@ export class RdfReasoner {
     const quads = isStore
       ? (input as Store).getQuads(null, null, null, null)
       : input as Iterable<Quad>;
+    // Pre-check: materialise quads once so we can scan and encode from the same array.
+    const quadsArray = Array.isArray(quads) ? quads as Quad[] : Array.from(quads);
     const result = this._queue.then(async () => {
       // Cache hit: only available for Store-based calls
       if (fingerprint !== null && this._consistencyCache !== null && this._consistencyCache.hash === fingerprint) {
         return this._consistencyCache.result;
       }
 
-      const { tripleBuffer, strTableBuffer } = encodeToBuffers(quads);
+      // Trivial inconsistency: `x owl:differentFrom x` is always a clash (x ≠ x).
+      // Konclude v0.7.0 does not detect this, so we short-circuit here.
+      for (const q of quadsArray) {
+        if (
+          q.predicate.termType === "NamedNode" &&
+          q.predicate.value === OWL_DIFFERENT_FROM &&
+          q.subject.termType === q.object.termType &&
+          q.subject.value === q.object.value
+        ) {
+          if (fingerprint !== null) {
+            this._consistencyCache = { hash: fingerprint, result: false };
+          }
+          return false;
+        }
+      }
+
+      const { tripleBuffer, strTableBuffer } = encodeToBuffers(quadsArray);
       await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
       await this._call("classification", []);
       const consistent = (await this._call("consistency", [])) as boolean;
