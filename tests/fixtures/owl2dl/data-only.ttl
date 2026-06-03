@@ -1,0 +1,15 @@
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix ex:   <http://example.org/> .
+
+<http://example.org/data-only-test> a owl:Ontology .
+
+# ---------------------------------------------------------------------------
+# Data properties only — no object properties
+# ---------------------------------------------------------------------------
+
+ex:hasWeight   a owl:DatatypeProperty .
+ex:hasBodyMass a owl:DatatypeProperty .
+ex:hasWeight rdfs:subPropertyOf ex:hasBodyMass .
