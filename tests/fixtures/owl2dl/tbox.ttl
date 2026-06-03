@@ -1,0 +1,52 @@
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix ex:   <http://example.org/> .
+
+<http://example.org/tbox-test> a owl:Ontology .
+
+# ---------------------------------------------------------------------------
+# SubClassOf chain: A ⊑ B ⊑ C
+# Konclude emits the Hasse diagram: A⊑B and B⊑C are direct edges;
+# A⊑C is NOT emitted (transitive, already covered by the chain).
+# ---------------------------------------------------------------------------
+
+ex:A a owl:Class .
+ex:B a owl:Class .
+ex:C a owl:Class .
+ex:A rdfs:subClassOf ex:B .
+ex:B rdfs:subClassOf ex:C .
+
+# ---------------------------------------------------------------------------
+# EquivalentClass pair: D ≡ E
+# ---------------------------------------------------------------------------
+
+ex:D a owl:Class .
+ex:E a owl:Class .
+ex:D owl:equivalentClass ex:E .
+
+# ---------------------------------------------------------------------------
+# DisjointWith: ex:Meat owl:disjointWith ex:Vegetable
+# ---------------------------------------------------------------------------
+
+ex:Meat      a owl:Class .
+ex:Vegetable a owl:Class .
+ex:Meat owl:disjointWith ex:Vegetable .
+
+# ---------------------------------------------------------------------------
+# ComplementOf: ex:Pos owl:complementOf ex:Neg
+# ---------------------------------------------------------------------------
+
+ex:Pos a owl:Class .
+ex:Neg a owl:Class .
+ex:Pos owl:complementOf ex:Neg .
+
+# ---------------------------------------------------------------------------
+# ABox individuals for materialize() tests
+# ---------------------------------------------------------------------------
+
+# alice is typed A → should gain B and C via subClassOf propagation
+ex:alice a owl:NamedIndividual, ex:A .
+
+# bob is typed D → should gain E via equivalentClass
+ex:bob a owl:NamedIndividual, ex:D .
