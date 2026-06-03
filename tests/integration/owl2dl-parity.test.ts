@@ -566,17 +566,6 @@ describe.skipIf(!wasmExists)("Property characteristics", () => {
 
   // ── owl:inverseOf ──────────────────────────────────────────────────────────
 
-  it("owl:inverseOf — classify: hasChild inverseOf hasParent (TBox axiom processed)", () => {
-    // The classify() result should contain the property relationship.
-    // Konclude emits rdfs:subPropertyOf edges for inverseOf pairs via the TBox.
-    // We verify materialize infers the role assertion (the classify TBox probe is
-    // covered by the materialize role-assertion test directly).
-    expect(
-      hasTriple(materialized, EX("Bob"), EX("hasParent"), EX("Alice")),
-      "Bob hasParent Alice must be inferred via owl:inverseOf hasChild↔hasParent and Alice hasChild Bob",
-    ).toBe(true);
-  });
-
   it("owl:inverseOf — materialize: Alice hasChild Bob → Bob hasParent Alice (role assertion)", () => {
     expect(
       hasTriple(materialized, EX("Bob"), EX("hasParent"), EX("Alice")),
