@@ -48,7 +48,7 @@ Integration tests: `tests/integration/issue13-owl-violations.test.ts` (consisten
 | 13 | DataAllValuesFrom minInclusive — consistent (age=15) | consistent ✓ | consistent ✓ | **PARITY** |
 | 14 | DataAllValuesFrom minInclusive — inconsistent (age=5) | inconsistent ✓ | inconsistent ✓ | **PARITY** |
 
-## Gap Matrix — ABox materialize inferences (property-characteristics.test.ts)
+## Gap Matrix — ABox materialize inferences (property-characteristics.test.ts, owl2dl-parity.test.ts)
 
 | Construct | Expected | WASM result | Classification |
 |-----------|----------|-------------|----------------|
@@ -56,9 +56,15 @@ Integration tests: `tests/integration/issue13-owl-violations.test.ts` (consisten
 | inverseOf ABox inference | `Bob q Alice` inferred | ✓ | **PARITY** |
 | hasValue ABox inference | `Bob hasFriend Alice` inferred | ✓ | **PARITY** (commit 0c86d54) |
 | rdfs:domain / rdfs:range ABox inference | `Alice rdf:type Professor` inferred | ✓ | **PARITY** |
-| FunctionalProperty → sameAs | `Eve owl:sameAs Carol` inferred | hangs at ALIF+ precompute | **UPSTREAM_LIMITATION** |
-| AllDisjointClasses — no spurious type | `x rdf:type B` must NOT appear | materialize() hangs 30s+ | **UPSTREAM_LIMITATION** |
-| disjointUnionOf — superclass entailment | `x rdf:type C` probe | materialize() hangs 30s+ | **UPSTREAM_LIMITATION** |
+| EquivalentObjectProperties classify | property emits `p rdfs:subPropertyOf q` | ✓ (TS post-process) | **PARITY** (R1, plan-039) |
+| AllDisjointProperties ABox clash | inconsistency detected | ✓ (C++ saturation patch 029) | **PARITY** (R2, plan-039) |
+| differentFrom reflexive | `a owl:differentFrom a` → inconsistent | ✓ (TS pre-check) | **PARITY** (R3, plan-039) |
+| someValuesFrom filler type | filler `rdf:type` inferred | ✓ (TS post-process) | **PARITY** (R5, plan-039) |
+| disjointUnionOf classify A⊑C | member emits `rdfs:subClassOf` union class | ✓ (TS post-process) | **PARITY** (R6, plan-039) |
+| complementOf named-class ABox clash | individual in A ∩ complementOf(A) → inconsistent | C++ fix causes TBox regression | **DEFERRED** (R4, plan-039) |
+| FunctionalProperty → sameAs | `Eve owl:sameAs Carol` inferred | hangs at ALIF+ precompute | **UPSTREAM_LIMITATION** (R8) |
+| AllDisjointClasses — no spurious type | `x rdf:type B` must NOT appear | materialize() hangs 30s+ | **WASM_REGRESSION** (R7a, native works in ~8ms) |
+| disjointUnionOf — superclass entailment | `x rdf:type C` probe | materialize() hangs 30s+ | **WASM_REGRESSION** (R7b, native works in ~8ms) |
 | NegativePropertyAssertion — no spurious positive | `alice knows bob` must NOT appear | materialize() hangs 30s+ | **UPSTREAM_LIMITATION** |
 
 ### Classification Taxonomy
@@ -66,6 +72,8 @@ Integration tests: `tests/integration/issue13-owl-violations.test.ts` (consisten
 - **PARITY** — native and WASM agree; no gap
 - **UPSTREAM_LIMITATION** — native also fails or hangs; inherent in Konclude v0.7.0; not fixable in this repo without upstream changes
 - **WASM_BUG_FIXED** — was a WASM port bug; fixed by a patch in `patches/`
+- **WASM_REGRESSION** — native works correctly; WASM-specific hang or wrong result; root cause in WASM realization thread lifecycle
+- **DEFERRED** — fix attempted but caused a regression elsewhere; postponed for future investigation
 
 ## Case Analysis
 
@@ -155,23 +163,35 @@ See project_upstream_konclude_bugs.md Bug 4.
 Datatype restriction reasoning works correctly. `age=15 >= 10` → consistent; `age=5 < 10` → inconsistent.
 Both match native Konclude ground truth.
 
-### UPSTREAM_LIMITATION — materialize() hang on blank-node constructs
+### WASM_REGRESSION — materialize() hang on AllDisjointClasses / disjointUnionOf (R7a, R7b)
+
+`materialize()` (full realization pipeline) hangs indefinitely in WASM on consistent ontologies
+with these constructs when used with ABox individuals:
+
+- `owl:AllDisjointClasses` + `owl:members` RDF list (R7a)
+- `owl:disjointUnionOf` RDF list (R7b)
+
+**This is a WASM-specific regression.** Native Konclude v0.7.0 completes correctly in ~8ms for
+identical ontologies (confirmed via Unit 2 investigation documented in
+`docs/plans/parity-gap-native-investigation-2026-06-03.md`). The hang is caused by a WASM
+realization thread lifecycle regression — likely related to SI-expressiveness triggering a
+different realization code path that stalls in the WASM pthread environment.
+
+Note: `checkConsistency()` on equivalent Turtle-format ontologies (cases 9, 11) works fine.
+The hang is realization-pipeline specific.
+
+### UPSTREAM_LIMITATION — materialize() hang on NegativePropertyAssertion (consistent ontology)
 
 `materialize()` (full realization pipeline) hangs indefinitely on consistent ontologies with
-these blank-node constructs in NTriples format:
+`owl:NegativePropertyAssertion` blank nodes in NTriples format.
 
-- `owl:AllDisjointClasses` + `owl:members` RDF list
-- `owl:disjointUnionOf` RDF list
-- `owl:NegativePropertyAssertion` blank node (consistent ontology)
-
-Note: `checkConsistency()` on equivalent Turtle-format ontologies (cases 9, 11, 12) works fine.
-The hang is realization-pipeline specific, not parsing-specific.
+Note: `checkConsistency()` on equivalent Turtle-format ontologies (case 12) works fine.
 
 Compare: case 12 `checkConsistency()` with an INCONSISTENT NPA ontology now passes after patches
 025+026. But `materialize()` on a CONSISTENT NPA ontology still hangs. Different pipeline.
 
 **Fixability:** Not fixable in this port without upstream changes to the realization pipeline
-for these constructs.
+for NPA constructs.
 
 ### UPSTREAM_LIMITATION — FunctionalProperty + ABox realization (ALIF+)
 
@@ -183,8 +203,10 @@ in native Docker binary. See project_upstream_konclude_bugs.md Bug 2.
 
 | Classification | Action |
 |---------------|--------|
-| UPSTREAM_LIMITATION (materialize hangs) | File issue; workaround: use `checkConsistency()` where possible |
-| PARITY (cases 1–14) | No action needed; all tests passing |
+| UPSTREAM_LIMITATION (NPA materialize hang) | File issue; workaround: use `checkConsistency()` where possible |
+| WASM_REGRESSION (R7a/R7b materialize hang) | Investigate WASM realization thread lifecycle for SI-expressiveness ontologies; compare pthread stack/semaphore state vs native |
+| DEFERRED (R4 complementOf) | Find TBox regression root cause before re-enabling; may require mapper-level scoping fix |
+| PARITY (cases 1–14 + R1/R2/R3/R5/R6) | No action needed; all tests passing (311 passing, 12 skipped as of plan-039) |
 | WASM_BUG_FIXED (case 12, patches 025+026) | Upstream PRs pending for both NPA bugs |
 | WASM_SURPASSES_NATIVE (cases 3–4, patches 027-028) | File upstream PRs for AsymmetricProperty + IrreflexiveProperty saturation clash fixes |
 | WASM_SURPASSES_NATIVE (case 10, patch 029) | File upstream PR for AllDisjointProperties + EquivalentObjectProperties clash fix |
