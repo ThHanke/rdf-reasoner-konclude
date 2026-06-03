@@ -909,3 +909,159 @@ describe.skipIf(!wasmExists)("Property characteristics", () => {
     ).toBe(true);
   }, 30_000);
 });
+
+// ---------------------------------------------------------------------------
+// Data properties (R13–R15): DatatypeProperty, data subPropertyOf,
+// FunctionalProperty on data props, rdfs:range with datatype,
+// classifyProperties() data/object-only cross-fixture exclusion
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!wasmExists)("Data properties (R13–R15)", () => {
+  let reasoner: RdfReasoner;
+  let quads: Quad[];
+
+  beforeAll(async () => {
+    reasoner = new RdfReasoner();
+    await reasoner.ready;
+    quads = loadTtl("data-properties.ttl");
+  }, 60_000);
+
+  afterAll(() => {
+    reasoner?.terminate();
+  });
+
+  // ── checkConsistency: happy path ───────────────────────────────────────────
+
+  it("checkConsistency: data-properties.ttl (DatatypeProperty + subPropertyOf + FunctionalProperty + range) → consistent (true)", async () => {
+    const result = await reasoner.checkConsistency(quads);
+    expect(result, "data-properties.ttl with a single consistent ABox must be consistent").toBe(true);
+  }, 30_000);
+
+  // ── checkConsistency: rdfs:range with datatype — happy path ───────────────
+
+  it("checkConsistency: rdfs:range xsd:integer with integer literal value → consistent (true)", async () => {
+    const result = await reasoner.checkConsistency(quads);
+    expect(result, "hasScore rdfs:range xsd:integer with matching literal type must be consistent").toBe(true);
+  }, 30_000);
+
+  // ── FunctionalProperty (data): error path — two distinct literal values ────
+
+  // NOTE: Data property FunctionalProperty may or may not trigger the ALIF+ hang
+  // that affects object property FunctionalProperty + sameAs inference.  For data
+  // properties with literals there is no sameAs merging, so the reasoner may handle
+  // it differently (detect the clash without hanging).  The test is live — if it
+  // hangs in practice, mark it.skip with UPSTREAM_LIMITATION.
+  it("FunctionalProperty (data) — checkConsistency: two distinct literal values → inconsistent (false)", async () => {
+    const inconsistentQuads = parseTurtle(`
+      @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+      @prefix owl:  <http://www.w3.org/2002/07/owl#> .
+      @prefix ex:   <http://example.org/> .
+      <http://example.org/functional-data-violation-test> a owl:Ontology .
+      ex:hasSSN a owl:DatatypeProperty, owl:FunctionalProperty .
+      ex:Alice a owl:NamedIndividual ;
+          ex:hasSSN "111" ;
+          ex:hasSSN "222" .
+    `);
+    const result = await reasoner.checkConsistency(inconsistentQuads);
+    expect(result, "FunctionalProperty data + two distinct literal values must be detected as inconsistent").toBe(false);
+  }, 30_000);
+
+  // ── FunctionalProperty (data): happy path — single value ──────────────────
+
+  it("FunctionalProperty (data) — checkConsistency: single literal value → consistent (true)", async () => {
+    const consistentQuads = parseTurtle(`
+      @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+      @prefix owl:  <http://www.w3.org/2002/07/owl#> .
+      @prefix ex:   <http://example.org/> .
+      <http://example.org/functional-data-consistent-test> a owl:Ontology .
+      ex:hasSSN a owl:DatatypeProperty, owl:FunctionalProperty .
+      ex:Alice a owl:NamedIndividual ;
+          ex:hasSSN "123-45-6789" .
+    `);
+    const result = await reasoner.checkConsistency(consistentQuads);
+    expect(result, "FunctionalProperty data + single literal value must be consistent").toBe(true);
+  }, 30_000);
+
+  // ── classifyProperties: data subPropertyOf (R14) ──────────────────────────
+
+  // NOTE: classifyProperties() existing tests only cover object properties.
+  // Data property subPropertyOf behaviour is unknown before this test.
+  // If the reasoner returns the edge, we assert it positively.
+  // If it returns nothing for data properties, the test is marked it.skip
+  // with a note about native verification needed.
+  it("classifyProperties (R14) — data subPropertyOf: hasAge rdfs:subPropertyOf hasNumber", async () => {
+    const result = await reasoner.classifyProperties(quads);
+    expect(
+      hasTriple(result, EX("hasAge"), RDFS_SUB_PROPERTY_OF, EX("hasNumber")),
+      "hasAge rdfs:subPropertyOf hasNumber must appear in classifyProperties() output for data property hierarchy",
+    ).toBe(true);
+  }, 30_000);
+
+  // ── classifyProperties: no rdf:type triples in result (R14) ───────────────
+
+  it("classifyProperties (R14) — result contains no rdf:type triples", async () => {
+    const result = await reasoner.classifyProperties(quads);
+    const typeTriples = result.filter((q) => q.predicate.value === RDF_TYPE);
+    expect(typeTriples, "classifyProperties() must not return rdf:type triples (data property fixture)").toHaveLength(0);
+  }, 30_000);
+});
+
+// ---------------------------------------------------------------------------
+// Property-type exclusion (R15): classifyProperties() on data-only and
+// object-only fixtures must not bleed IRIs across property type boundaries
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!wasmExists)("Property-type exclusion (R15)", () => {
+  let reasoner: RdfReasoner;
+
+  beforeAll(async () => {
+    reasoner = new RdfReasoner();
+    await reasoner.ready;
+  }, 60_000);
+
+  afterAll(() => {
+    reasoner?.terminate();
+  });
+
+  // ── data-only fixture ──────────────────────────────────────────────────────
+
+  it("classifyProperties (R15/data-only) — hasWeight rdfs:subPropertyOf hasBodyMass present in result", async () => {
+    const dataOnlyQuads = loadTtl("data-only.ttl");
+    const result = await reasoner.classifyProperties(dataOnlyQuads);
+    expect(
+      hasTriple(result, EX("hasWeight"), RDFS_SUB_PROPERTY_OF, EX("hasBodyMass")),
+      "hasWeight rdfs:subPropertyOf hasBodyMass must appear in classifyProperties() output for data-only fixture",
+    ).toBe(true);
+  }, 30_000);
+
+  it("classifyProperties (R15/data-only) — result contains no object property IRIs (knows, friendOf)", async () => {
+    const dataOnlyQuads = loadTtl("data-only.ttl");
+    const result = await reasoner.classifyProperties(dataOnlyQuads);
+    const objectPropertyIRIs = [EX("knows"), EX("friendOf")];
+    const leaked = result.filter(
+      (q) => objectPropertyIRIs.includes(q.subject.value) || objectPropertyIRIs.includes(q.object.value),
+    );
+    expect(leaked, "data-only classifyProperties() must not emit triples involving object property IRIs").toHaveLength(0);
+  }, 30_000);
+
+  // ── object-only fixture ────────────────────────────────────────────────────
+
+  it("classifyProperties (R15/object-only) — friendOf rdfs:subPropertyOf knows present in result", async () => {
+    const objectOnlyQuads = loadTtl("object-only.ttl");
+    const result = await reasoner.classifyProperties(objectOnlyQuads);
+    expect(
+      hasTriple(result, EX("friendOf"), RDFS_SUB_PROPERTY_OF, EX("knows")),
+      "friendOf rdfs:subPropertyOf knows must appear in classifyProperties() output for object-only fixture",
+    ).toBe(true);
+  }, 30_000);
+
+  it("classifyProperties (R15/object-only) — result contains no data property IRIs (hasWeight, hasBodyMass)", async () => {
+    const objectOnlyQuads = loadTtl("object-only.ttl");
+    const result = await reasoner.classifyProperties(objectOnlyQuads);
+    const dataPropertyIRIs = [EX("hasWeight"), EX("hasBodyMass")];
+    const leaked = result.filter(
+      (q) => dataPropertyIRIs.includes(q.subject.value) || dataPropertyIRIs.includes(q.object.value),
+    );
+    expect(leaked, "object-only classifyProperties() must not emit triples involving data property IRIs").toHaveLength(0);
+  }, 30_000);
+});
