@@ -74,6 +74,9 @@ const RDFS_CLASS = "http://www.w3.org/2000/01/rdf-schema#Class";
 const OWL_THING = "http://www.w3.org/2002/07/owl#Thing";
 const OWL_NOTHING = "http://www.w3.org/2002/07/owl#Nothing";
 const OWL_DIFFERENT_FROM = "http://www.w3.org/2002/07/owl#differentFrom";
+const OWL_ON_PROPERTY = "http://www.w3.org/2002/07/owl#onProperty";
+const OWL_SOME_VALUES_FROM = "http://www.w3.org/2002/07/owl#someValuesFrom";
+const OWL_RESTRICTION = "http://www.w3.org/2002/07/owl#Restriction";
 
 // ---------------------------------------------------------------------------
 // Helper: walk an RDF list (rdf:first / rdf:rest) and return member IRIs
@@ -94,6 +97,175 @@ function expandRdfList(head: string, quadsArr: Quad[]): string[] {
     current = restTriple.object.value;
   }
   return members;
+}
+
+// ---------------------------------------------------------------------------
+// Helper: build someValuesFrom index from a quad array
+//
+// Returns a Map from class IRI → Array<{property, fillerClass}>
+// Handles both owl:equivalentClass and owl:subClassOf linking a named class
+// to a blank-node restriction.
+// ---------------------------------------------------------------------------
+
+interface SomeValuesFromEntry {
+  property: string;
+  fillerClass: string;
+}
+
+function buildSomeValuesFromIndex(quadsArr: Quad[]): Map<string, SomeValuesFromEntry[]> {
+  // Step 1: collect all blank nodes that are owl:Restriction with someValuesFrom
+  // bnodeId → { property, fillerClass }
+  const restrictionMap = new Map<string, SomeValuesFromEntry>();
+
+  // Collect rdf:type owl:Restriction assertions
+  const restrictionBNodes = new Set<string>();
+  for (const q of quadsArr) {
+    if (
+      q.predicate.value === RDF_TYPE &&
+      q.object.value === OWL_RESTRICTION &&
+      q.subject.termType === "BlankNode"
+    ) {
+      restrictionBNodes.add(q.subject.value);
+    }
+  }
+
+  // For each restriction blank node, collect onProperty + someValuesFrom
+  const onPropertyMap = new Map<string, string>();
+  const someValuesFromMap = new Map<string, string>();
+  for (const q of quadsArr) {
+    if (q.subject.termType !== "BlankNode") continue;
+    if (!restrictionBNodes.has(q.subject.value)) continue;
+    if (q.predicate.value === OWL_ON_PROPERTY && q.object.termType === "NamedNode") {
+      onPropertyMap.set(q.subject.value, q.object.value);
+    }
+    if (q.predicate.value === OWL_SOME_VALUES_FROM && q.object.termType === "NamedNode") {
+      someValuesFromMap.set(q.subject.value, q.object.value);
+    }
+  }
+
+  for (const bnodeId of restrictionBNodes) {
+    const prop = onPropertyMap.get(bnodeId);
+    const filler = someValuesFromMap.get(bnodeId);
+    if (prop !== undefined && filler !== undefined) {
+      restrictionMap.set(bnodeId, { property: prop, fillerClass: filler });
+    }
+  }
+
+  // Step 2: link named classes to restrictions via equivalentClass or subClassOf
+  const index = new Map<string, SomeValuesFromEntry[]>();
+
+  const linkClassToRestriction = (classIRI: string, bnodeId: string) => {
+    const entry = restrictionMap.get(bnodeId);
+    if (entry === undefined) return;
+    const arr = index.get(classIRI);
+    if (arr === undefined) {
+      index.set(classIRI, [entry]);
+    } else {
+      // Avoid duplicates
+      if (!arr.some(e => e.property === entry.property && e.fillerClass === entry.fillerClass)) {
+        arr.push(entry);
+      }
+    }
+  };
+
+  for (const q of quadsArr) {
+    if (
+      (q.predicate.value === OWL_EQUIVALENT_CLASS || q.predicate.value === RDFS_SUB_CLASS_OF)
+    ) {
+      if (q.subject.termType === "NamedNode" && q.object.termType === "BlankNode") {
+        linkClassToRestriction(q.subject.value, q.object.value);
+      }
+      // symmetric direction for equivalentClass: _:r owl:equivalentClass C
+      if (
+        q.predicate.value === OWL_EQUIVALENT_CLASS &&
+        q.subject.termType === "BlankNode" &&
+        q.object.termType === "NamedNode"
+      ) {
+        linkClassToRestriction(q.object.value, q.subject.value);
+      }
+    }
+  }
+
+  return index;
+}
+
+// ---------------------------------------------------------------------------
+// Helper: propagate someValuesFrom filler types to fixpoint
+//
+// Given:
+//   - someValuesFromIndex: class IRI → [{property, fillerClass}]
+//   - inputQuadsArr: the base (ABox + TBox) quads
+//   - resultQuads: the current inferred quads (modified in-place)
+//   - existingKeys: Set of "s\0p\0o" keys already in resultQuads (updated in-place)
+//   - defaultGraph: the graph to use for new quads
+// ---------------------------------------------------------------------------
+
+function propagateSomeValuesFromFillers(
+  someValuesFromIndex: Map<string, SomeValuesFromEntry[]>,
+  inputQuadsArr: Quad[],
+  resultQuads: Quad[],
+  existingKeys: Set<string>,
+  defaultGraph: import("@rdfjs/types").DefaultGraph | import("@rdfjs/types").NamedNode,
+): void {
+  if (someValuesFromIndex.size === 0) return;
+
+  // Build a quick lookup for role assertions from input quads: "subject\0property" → [object IRIs]
+  const roleIndex = new Map<string, string[]>();
+  for (const q of inputQuadsArr) {
+    if (q.subject.termType !== "NamedNode" || q.predicate.termType !== "NamedNode" || q.object.termType !== "NamedNode") continue;
+    const key = `${q.subject.value}\0${q.predicate.value}`;
+    const arr = roleIndex.get(key);
+    if (arr === undefined) {
+      roleIndex.set(key, [q.object.value]);
+    } else {
+      arr.push(q.object.value);
+    }
+  }
+
+  const rdfTypeNode = DataFactory.namedNode(RDF_TYPE);
+
+  // Fixpoint loop: keep propagating until no new quads are added
+  let changed = true;
+  while (changed) {
+    changed = false;
+
+    // Collect all current type assertions (from resultQuads snapshot + inputQuadsArr)
+    // We need to scan both since newly inferred types may trigger further propagation.
+    const typeAssertions: Array<{ subject: string; type: string }> = [];
+    for (const q of inputQuadsArr) {
+      if (q.predicate.value === RDF_TYPE && q.subject.termType === "NamedNode" && q.object.termType === "NamedNode") {
+        typeAssertions.push({ subject: q.subject.value, type: q.object.value });
+      }
+    }
+    for (const q of resultQuads) {
+      if (q.predicate.value === RDF_TYPE && q.subject.termType === "NamedNode" && q.object.termType === "NamedNode") {
+        typeAssertions.push({ subject: q.subject.value, type: q.object.value });
+      }
+    }
+
+    for (const { subject: indivIRI, type: classIRI } of typeAssertions) {
+      const entries = someValuesFromIndex.get(classIRI);
+      if (!entries) continue;
+      for (const { property, fillerClass } of entries) {
+        const roleKey = `${indivIRI}\0${property}`;
+        const fillers = roleIndex.get(roleKey);
+        if (!fillers) continue;
+        for (const fillerIRI of fillers) {
+          const newKey = `${fillerIRI}\0${RDF_TYPE}\0${fillerClass}`;
+          if (!existingKeys.has(newKey)) {
+            existingKeys.add(newKey);
+            resultQuads.push(DataFactory.quad(
+              DataFactory.namedNode(fillerIRI),
+              rdfTypeNode,
+              DataFactory.namedNode(fillerClass),
+              defaultGraph,
+            ));
+            changed = true;
+          }
+        }
+      }
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -551,13 +723,34 @@ export class RdfReasoner {
 
       store.removeQuads(store.getQuads(null, null, null, inferredGraphNode));
 
-      const { tripleBuffer, strTableBuffer } = encodeToBuffers(store.getQuads(null, null, null, null));
+      // Capture base quads BEFORE writing inferred quads so the someValuesFrom scan
+      // only sees the original store contents (base ABox assertions).
+      const baseQuads = store.getQuads(null, null, null, null);
+
+      const { tripleBuffer, strTableBuffer } = encodeToBuffers(baseQuads);
 
       await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
       await this._call("realization", []);
 
       const resultBuf = (await this._call("getInferredTripleBuffer", [])) as ArrayBuffer;
       const allQuads = decodeBuffers(resultBuf);
+
+      // OWL 2 DL: someValuesFrom filler type propagation.
+      // Konclude v0.7.0 does not propagate rdf:type to named individual fillers;
+      // handle it at the JS layer.
+      const someValuesFromIndex = buildSomeValuesFromIndex(baseQuads);
+      if (someValuesFromIndex.size > 0) {
+        const existingKeys = new Set(
+          allQuads.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`),
+        );
+        propagateSomeValuesFromFillers(
+          someValuesFromIndex,
+          baseQuads,
+          allQuads,
+          existingKeys,
+          inferredGraphNode,
+        );
+      }
 
       const inferredQuads = opts?.includeClassHierarchy === true
         ? allQuads
@@ -606,13 +799,33 @@ export class RdfReasoner {
 
   private _materializeOnQuads(quads: Iterable<Quad>, opts?: MaterializeOptions): Promise<Quad[]> {
     const result = this._queue.then(async () => {
-      const { tripleBuffer, strTableBuffer } = encodeToBuffers(quads);
+      // Materialize iterable so we can both encode it and post-process it.
+      const inputQuads = Array.isArray(quads) ? (quads as Quad[]) : [...quads];
+
+      const { tripleBuffer, strTableBuffer } = encodeToBuffers(inputQuads);
 
       await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
       await this._call("realization", []);
 
       const resultBuf = (await this._call("getInferredTripleBuffer", [])) as ArrayBuffer;
       const allQuads = decodeBuffers(resultBuf);
+
+      // OWL 2 DL: someValuesFrom filler type propagation.
+      // Konclude v0.7.0 does not propagate rdf:type to named individual fillers;
+      // handle it at the JS layer.
+      const someValuesFromIndex = buildSomeValuesFromIndex(inputQuads);
+      if (someValuesFromIndex.size > 0) {
+        const existingKeys = new Set(
+          allQuads.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`),
+        );
+        propagateSomeValuesFromFillers(
+          someValuesFromIndex,
+          inputQuads,
+          allQuads,
+          existingKeys,
+          DataFactory.defaultGraph(),
+        );
+      }
 
       if (opts?.includeClassHierarchy === true) {
         return allQuads;
@@ -815,12 +1028,24 @@ export class RdfReasoner {
     if (this._materializeCache?.hash === fingerprint) return;
     const ig = DataFactory.namedNode(INFERRED_GRAPH_IRI);
     store.removeQuads(store.getQuads(null, null, null, ig));
-    const { tripleBuffer, strTableBuffer } = encodeToBuffers(store.getQuads(null, null, null, null));
+    // Capture base quads BEFORE writing inferred quads so someValuesFrom scan
+    // only sees the original store contents.
+    const baseQuads = store.getQuads(null, null, null, null);
+    const { tripleBuffer, strTableBuffer } = encodeToBuffers(baseQuads);
     await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
     await this._call("realization", []);
     const buf = (await this._call("getInferredTripleBuffer", [])) as ArrayBuffer;
+    const allQuads = decodeBuffers(buf);
+    // OWL 2 DL: someValuesFrom filler type propagation.
+    const someValuesFromIndex = buildSomeValuesFromIndex(baseQuads);
+    if (someValuesFromIndex.size > 0) {
+      const existingKeys = new Set(
+        allQuads.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`),
+      );
+      propagateSomeValuesFromFillers(someValuesFromIndex, baseQuads, allQuads, existingKeys, ig);
+    }
     // Write ALL results (including subClassOf) so rdf:type AND subClassOf checks work
-    for (const q of decodeBuffers(buf))
+    for (const q of allQuads)
       store.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, ig));
     this._materializeCache = { hash: fingerprint, result: undefined as void };
     this._classifyCache = null;              // cross-invalidate

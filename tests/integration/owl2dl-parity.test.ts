@@ -108,7 +108,7 @@ describe.skipIf(!wasmExists)("Restriction constructs", () => {
   // (since alice:PetOwner ≡ ∃hasAnimal.Dog and rex is the only hasAnimal filler), but
   // Konclude v0.7.0 does not emit rex:Dog in this configuration.  The test documents
   // the actual behaviour rather than asserting the OWL-DL-correct result.
-  it.skip("UPSTREAM_LIMITATION — someValuesFrom — materialize: alice:PetOwner, alice hasAnimal rex → rex rdf:type Dog (filler type not propagated by Konclude)", async () => {
+  it("someValuesFrom — materialize: alice:PetOwner, alice hasAnimal rex → rex rdf:type Dog (filler type not propagated by Konclude)", async () => {
     const inferred = await reasoner.materialize(quads);
     expect(
       hasTriple(inferred, EX("rex"), RDF_TYPE, EX("Dog")),
