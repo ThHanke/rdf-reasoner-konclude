@@ -1,0 +1,90 @@
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix ex:   <http://example.org/> .
+
+<http://example.org/property-characteristics-test> a owl:Ontology .
+
+# ---------------------------------------------------------------------------
+# SymmetricProperty: directSiblingOf(Alice, Bob) → directSiblingOf(Bob, Alice)
+# ---------------------------------------------------------------------------
+
+ex:directSiblingOf a owl:ObjectProperty, owl:SymmetricProperty .
+
+ex:Alice a owl:NamedIndividual .
+ex:Bob   a owl:NamedIndividual .
+ex:Alice ex:directSiblingOf ex:Bob .
+
+# ---------------------------------------------------------------------------
+# AsymmetricProperty: isOlderThan (consistent ABox — no violations in this fixture)
+#
+# The inconsistency tests (both directions) are written inline in the test file
+# using separate Turtle strings, following the maxCardinality pattern.
+# ---------------------------------------------------------------------------
+
+ex:isOlderThan a owl:ObjectProperty, owl:AsymmetricProperty .
+
+# Alice is older than Charlie — no reverse assertion, so consistent.
+ex:Charlie a owl:NamedIndividual .
+ex:Alice ex:isOlderThan ex:Charlie .
+
+# ---------------------------------------------------------------------------
+# IrreflexiveProperty: isStrictlyBetterThan (consistent ABox — no self-loop)
+#
+# The inconsistency test (self-loop) is written inline in the test file.
+# ---------------------------------------------------------------------------
+
+ex:isStrictlyBetterThan a owl:ObjectProperty, owl:IrreflexiveProperty .
+
+# Alice is strictly better than Charlie — no self-loop, so consistent.
+ex:Alice ex:isStrictlyBetterThan ex:Charlie .
+
+# ---------------------------------------------------------------------------
+# ReflexiveProperty: sameOrOlderThan
+#
+# Any individual in the domain gets a self-loop from materialize().
+# Dave is the designated individual to check for the self-loop.
+# ---------------------------------------------------------------------------
+
+ex:sameOrOlderThan a owl:ObjectProperty, owl:ReflexiveProperty .
+
+ex:Dave a owl:NamedIndividual .
+ex:Alice ex:sameOrOlderThan ex:Dave .
+
+# ---------------------------------------------------------------------------
+# TransitiveProperty: ancestorOf (chain closure)
+#
+# Alice ancestorOf Bob, Bob ancestorOf Carol → Alice ancestorOf Carol
+# ---------------------------------------------------------------------------
+
+ex:ancestorOf a owl:ObjectProperty, owl:TransitiveProperty .
+
+ex:Carol a owl:NamedIndividual .
+ex:Alice ex:ancestorOf ex:Bob .
+ex:Bob   ex:ancestorOf ex:Carol .
+
+# ---------------------------------------------------------------------------
+# owl:inverseOf: hasChild / hasParent (TBox axiom + ABox assertion)
+#
+# Alice hasChild Bob → Bob hasParent Alice
+# ---------------------------------------------------------------------------
+
+ex:hasChild  a owl:ObjectProperty .
+ex:hasParent a owl:ObjectProperty .
+ex:hasChild owl:inverseOf ex:hasParent .
+
+ex:Alice ex:hasChild ex:Bob .
+
+# ---------------------------------------------------------------------------
+# InverseFunctionalProperty: hasDNA
+#
+# Alice hasDNA Seq1, Bob hasDNA Seq1 → Alice owl:sameAs Bob (if no differentFrom).
+# Note: this uses the same two individuals (Alice + Bob) who are NOT declared
+# differentFrom each other, so the reasoner should infer owl:sameAs.
+# ---------------------------------------------------------------------------
+
+ex:hasDNA a owl:ObjectProperty, owl:InverseFunctionalProperty .
+
+ex:Seq1 a owl:NamedIndividual .
+ex:Alice ex:hasDNA ex:Seq1 .
+ex:Bob   ex:hasDNA ex:Seq1 .
