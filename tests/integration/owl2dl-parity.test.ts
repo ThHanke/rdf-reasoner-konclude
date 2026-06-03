@@ -544,15 +544,14 @@ describe.skipIf(!wasmExists)("Class collections (R12)", () => {
     expect(result, "individual in two AllDisjointClasses members must be detected as inconsistent").toBe(false);
   }, 30_000);
 
-  // ── AllDisjointClasses — materialize: UPSTREAM_LIMITATION ─────────────────
+  // ── AllDisjointClasses — materialize: WASM REGRESSION ────────────────────
 
-  // UPSTREAM_LIMITATION: materialize() with owl:AllDisjointClasses blank-node
-  // collections causes the WASM kernel to hang indefinitely.  The blank-node
-  // structure is processed correctly by checkConsistency() but the
-  // realization/materialize code path triggers an unresolved hang in the
-  // upstream Konclude kernel (same root cause as NegativePropertyAssertion).
-  it.skip("UPSTREAM_LIMITATION — AllDisjointClasses/materialize: blank-node hang (upstream Konclude limitation)", async () => {
-    // Not testable — materialize() with AllDisjointClasses blank nodes hangs indefinitely
+  // WASM REGRESSION: native Konclude v0.7.0 completes correctly in ~8ms.
+  // The WASM realization pipeline hangs for ontologies with SI-expressiveness
+  // (AllDisjointClasses triggers SI). Root cause: WASM-specific realization
+  // thread lifecycle regression. See parity-gap-native-investigation-2026-06-03.md.
+  it.skip("WASM REGRESSION — AllDisjointClasses/materialize: realization hang (WASM regression, native works)", async () => {
+    // Not testable — materialize() with AllDisjointClasses hangs in WASM; native works in ~8ms
   }, 30_000);
 
   // ── disjointUnionOf — checkConsistency: happy path ────────────────────────
@@ -604,13 +603,14 @@ describe.skipIf(!wasmExists)("Class collections (R12)", () => {
     ).toBe(true);
   }, 30_000);
 
-  // ── disjointUnionOf — materialize: UPSTREAM_LIMITATION ────────────────────
+  // ── disjointUnionOf — materialize: WASM REGRESSION ───────────────────────
 
-  // UPSTREAM_LIMITATION: materialize() with owl:disjointUnionOf blank-node
-  // RDF list causes the WASM kernel to hang indefinitely (same root cause as
-  // AllDisjointClasses materialize hang above).
-  it.skip("UPSTREAM_LIMITATION — disjointUnionOf/materialize: blank-node hang (upstream Konclude limitation)", async () => {
-    // Not testable — materialize() with disjointUnionOf blank nodes hangs indefinitely
+  // WASM REGRESSION: native Konclude v0.7.0 completes correctly in ~8ms.
+  // The WASM realization pipeline hangs for ontologies with SI-expressiveness
+  // (AllDisjointClasses triggers SI). Root cause: WASM-specific realization
+  // thread lifecycle regression. See parity-gap-native-investigation-2026-06-03.md.
+  it.skip("WASM REGRESSION — disjointUnionOf/materialize: realization hang (WASM regression, native works)", async () => {
+    // Not testable — materialize() with disjointUnionOf hangs in WASM; native works in ~8ms
   }, 30_000);
 });
 
