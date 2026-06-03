@@ -1,0 +1,41 @@
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix ex:   <http://example.org/> .
+
+<http://example.org/class-collections-test> a owl:Ontology .
+
+# ---------------------------------------------------------------------------
+# AllDisjointClasses: A, B, C are pairwise disjoint
+#
+# The blank-node owl:AllDisjointClasses form works for checkConsistency()
+# (confirmed: issue13 case 9).  materialize() with blank-node collections
+# causes a hang → UPSTREAM_LIMITATION (skipped).
+# ---------------------------------------------------------------------------
+
+ex:A a owl:Class .
+ex:B a owl:Class .
+ex:C a owl:Class .
+
+[] a owl:AllDisjointClasses ;
+   owl:members ( ex:A ex:B ex:C ) .
+
+# Individual X is typed A only → consistent (not in B or C)
+ex:X a owl:NamedIndividual, ex:A .
+
+# ---------------------------------------------------------------------------
+# disjointUnionOf: D owl:disjointUnionOf (E F)
+#
+# Semantics: D ≡ E ⊔ F  AND  E owl:disjointWith F
+# classify() may emit E rdfs:subClassOf D (documented below — soft test).
+# ---------------------------------------------------------------------------
+
+ex:D a owl:Class .
+ex:E a owl:Class .
+ex:F a owl:Class .
+
+ex:D owl:disjointUnionOf ( ex:E ex:F ) .
+
+# Individual Y is typed E only → consistent (E and F are disjoint members but
+# Y is not in F, so no clash)
+ex:Y a owl:NamedIndividual, ex:E .

@@ -1,0 +1,47 @@
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix ex:   <http://example.org/> .
+
+<http://example.org/property-disjointness-test> a owl:Ontology .
+
+# ---------------------------------------------------------------------------
+# ObjectProperties
+# ---------------------------------------------------------------------------
+
+ex:p a owl:ObjectProperty .
+ex:q a owl:ObjectProperty .
+ex:r a owl:ObjectProperty .
+
+# ---------------------------------------------------------------------------
+# EquivalentObjectProperties: p ≡ q
+#
+# classifyProperties() should emit:
+#   p rdfs:subPropertyOf q
+#   q rdfs:subPropertyOf p
+# ---------------------------------------------------------------------------
+
+ex:p owl:equivalentProperty ex:q .
+
+# ---------------------------------------------------------------------------
+# AllDisjointProperties: p and r are all-disjoint
+#
+# Semantics: p owl:propertyDisjointWith r
+# classifyProperties() must NOT emit p rdfs:subPropertyOf r or vice versa.
+# ---------------------------------------------------------------------------
+
+[] a owl:AllDisjointProperties ;
+   owl:members ( ex:p ex:r ) .
+
+# ---------------------------------------------------------------------------
+# ABox: individual alice related to bob via p
+#
+# checkConsistency test: alice p bob, alice r bob → inconsistency?
+# Note: Konclude may or may not detect ABox-level property disjointness clash
+# (documented in test below — not necessarily UPSTREAM_LIMITATION).
+# ---------------------------------------------------------------------------
+
+ex:alice a owl:NamedIndividual .
+ex:bob   a owl:NamedIndividual .
+
+ex:alice ex:p ex:bob .
