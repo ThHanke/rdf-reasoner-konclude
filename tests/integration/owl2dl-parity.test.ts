@@ -67,10 +67,6 @@ function loadTtl(name: string): Quad[] {
 // Suite (skipped when WASM is absent)
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!wasmExists)("OWL 2 DL parity", () => {
-  it.todo("test cases added in subsequent units");
-});
-
 // ---------------------------------------------------------------------------
 // TBox constructs (R6)
 // ---------------------------------------------------------------------------
@@ -157,7 +153,7 @@ describe.skipIf(!wasmExists)("TBox constructs", () => {
   // tableau clash rule in the current kernel.  Contrast with case 7 in
   // issue13-owl-violations.test.ts where complementOf wraps a hasSelf restriction —
   // that structural variant works because it is processed via a different code path.
-  it.skip("checkConsistency: individual in class ∩ complementOf(class) → false [UPSTREAM_LIMITATION: named-class complementOf ABox clash not detected]", async () => {
+  it.skip("UPSTREAM_LIMITATION — checkConsistency: individual in class ∩ complementOf(class) → false [named-class complementOf ABox clash not detected]", async () => {
     const inconsistentQuads = parseTurtle(`
       @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
       @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
@@ -171,7 +167,7 @@ describe.skipIf(!wasmExists)("TBox constructs", () => {
     `);
     const result = await reasoner.checkConsistency(inconsistentQuads);
     expect(result).toBe(false);
-  });
+  }, 30_000);
 
   // ── materialize ────────────────────────────────────────────────────────────
 
