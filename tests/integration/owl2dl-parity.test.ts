@@ -583,31 +583,25 @@ describe.skipIf(!wasmExists)("Class collections (R12)", () => {
     expect(result, "individual in both disjointUnionOf members must be detected as inconsistent").toBe(false);
   }, 30_000);
 
-  // ── disjointUnionOf — classify: soft test (document actual behaviour) ──────
+  // ── disjointUnionOf — classify: E rdfs:subClassOf D and F rdfs:subClassOf D ──
 
   // OWL 2 DL semantics: D owl:disjointUnionOf (E F) implies E rdfs:subClassOf D
-  // and F rdfs:subClassOf D.  Konclude emits only the Hasse diagram (direct edges).
-  // Whether E⊑D / F⊑D appear depends on whether Konclude registers the union
-  // membership as a named-class hierarchy edge.
-  // This test is intentionally "soft": it documents the actual result without
-  // failing if the edge is not emitted (Konclude may not derive named subClassOf
-  // edges from disjointUnionOf alone).
-  it("disjointUnionOf — classify: document whether E rdfs:subClassOf D is emitted (soft)", async () => {
+  // and F rdfs:subClassOf D.  The WASM kernel does not emit these edges; they are
+  // synthesized at the JS post-processing layer (same approach as EquivalentObjectProperties).
+  it("disjointUnionOf — classify: E rdfs:subClassOf D emitted for disjointUnionOf member", async () => {
     const classified = await reasoner.classify(quads);
-    const eSubD = hasTriple(classified, EX("E"), RDFS_SUB_CLASS_OF, EX("D"));
-    const fSubD = hasTriple(classified, EX("F"), RDFS_SUB_CLASS_OF, EX("D"));
-    // Document actual behaviour — not a hard assertion.
-    // OWL 2 DL: E⊑D and F⊑D should hold (disjoint union members ⊆ union class).
-    // Konclude v0.7.0: may not emit these edges (Hasse diagram + named-class path only).
-    if (!eSubD) {
-      // Soft note: E rdfs:subClassOf D not emitted by Konclude for disjointUnionOf.
-      // This is a known limitation of the Hasse-diagram-only output.
-    }
-    if (!fSubD) {
-      // Soft note: F rdfs:subClassOf D not emitted by Konclude for disjointUnionOf.
-    }
-    // At minimum the classification must complete without error
-    expect(Array.isArray(classified), "classify() must return an array of quads").toBe(true);
+    expect(
+      hasTriple(classified, EX("E"), RDFS_SUB_CLASS_OF, EX("D")),
+      "E rdfs:subClassOf D must be emitted for D owl:disjointUnionOf (E F)",
+    ).toBe(true);
+  }, 30_000);
+
+  it("disjointUnionOf — classify: F rdfs:subClassOf D emitted for disjointUnionOf member", async () => {
+    const classified = await reasoner.classify(quads);
+    expect(
+      hasTriple(classified, EX("F"), RDFS_SUB_CLASS_OF, EX("D")),
+      "F rdfs:subClassOf D must be emitted for D owl:disjointUnionOf (E F)",
+    ).toBe(true);
   }, 30_000);
 
   // ── disjointUnionOf — materialize: UPSTREAM_LIMITATION ────────────────────

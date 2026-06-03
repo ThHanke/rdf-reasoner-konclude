@@ -58,6 +58,10 @@ type WorkerInboundMessage =
 
 const RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
 const RDFS_SUB_CLASS_OF = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
+const OWL_DISJOINT_UNION_OF = "http://www.w3.org/2002/07/owl#disjointUnionOf";
+const RDF_FIRST = "http://www.w3.org/1999/02/22-rdf-syntax-ns#first";
+const RDF_REST = "http://www.w3.org/1999/02/22-rdf-syntax-ns#rest";
+const RDF_NIL = "http://www.w3.org/1999/02/22-rdf-syntax-ns#nil";
 const RDFS_SUB_PROPERTY_OF = "http://www.w3.org/2000/01/rdf-schema#subPropertyOf";
 const OWL_EQUIVALENT_CLASS = "http://www.w3.org/2002/07/owl#equivalentClass";
 const OWL_EQUIVALENT_PROPERTY = "http://www.w3.org/2002/07/owl#equivalentProperty";
@@ -70,6 +74,27 @@ const RDFS_CLASS = "http://www.w3.org/2000/01/rdf-schema#Class";
 const OWL_THING = "http://www.w3.org/2002/07/owl#Thing";
 const OWL_NOTHING = "http://www.w3.org/2002/07/owl#Nothing";
 const OWL_DIFFERENT_FROM = "http://www.w3.org/2002/07/owl#differentFrom";
+
+// ---------------------------------------------------------------------------
+// Helper: walk an RDF list (rdf:first / rdf:rest) and return member IRIs
+// ---------------------------------------------------------------------------
+
+function expandRdfList(head: string, quadsArr: Quad[]): string[] {
+  const members: string[] = [];
+  const seen = new Set<string>();
+  let current = head;
+  while (current && current !== RDF_NIL) {
+    if (seen.has(current)) break;  // cycle guard
+    seen.add(current);
+    const firstTriple = quadsArr.find(q => q.subject.value === current && q.predicate.value === RDF_FIRST);
+    if (!firstTriple || firstTriple.object.termType !== "NamedNode") break;
+    members.push(firstTriple.object.value);
+    const restTriple = quadsArr.find(q => q.subject.value === current && q.predicate.value === RDF_REST);
+    if (!restTriple) break;
+    current = restTriple.object.value;
+  }
+  return members;
+}
 
 // ---------------------------------------------------------------------------
 // RdfReasoner
@@ -245,6 +270,27 @@ export class RdfReasoner {
         );
       }
 
+      // OWL 2 DL: C owl:disjointUnionOf (A B ...) ⇒ A rdfs:subClassOf C, B rdfs:subClassOf C, ...
+      // The WASM kernel does not emit these edges; synthesize them from base quads.
+      const subClassNode = DataFactory.namedNode(RDFS_SUB_CLASS_OF);
+      const allBaseQuads = store.getQuads(null, null, null, null);
+      for (const q of store.getQuads(null, DataFactory.namedNode(OWL_DISJOINT_UNION_OF), null, null)) {
+        if (q.graph.value === inferredGraphNode.value) continue;
+        if (q.subject.termType !== "NamedNode" || q.object.termType !== "BlankNode") continue;
+        const unionClassIRI = q.subject.value;
+        const members = expandRdfList(q.object.value, allBaseQuads);
+        for (const memberIRI of members) {
+          if (store.countQuads(DataFactory.namedNode(memberIRI), subClassNode, DataFactory.namedNode(unionClassIRI), inferredGraphNode) === 0) {
+            store.addQuad(DataFactory.quad(
+              DataFactory.namedNode(memberIRI),
+              subClassNode,
+              DataFactory.namedNode(unionClassIRI),
+              inferredGraphNode,
+            ));
+          }
+        }
+      }
+
       this._classifyCache = { hash: fingerprint, result: undefined as void };
       this._materializeCache = null;
       this._classifyPropertiesCache = null;
@@ -260,7 +306,10 @@ export class RdfReasoner {
     const result = this._queue.then(async () => {
       const mode = opts?.mode ?? "classify";
 
-      const { tripleBuffer, strTableBuffer } = encodeToBuffers(quads);
+      // Materialize iterable so we can both encode it and post-process it.
+      const inputQuads = Array.isArray(quads) ? (quads as Quad[]) : [...quads];
+
+      const { tripleBuffer, strTableBuffer } = encodeToBuffers(inputQuads);
 
       await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
 
@@ -275,7 +324,37 @@ export class RdfReasoner {
       await this._call(mode === "full" ? "realization" : "classification", []);
 
       const resultBuf = (await this._call("getInferredTripleBuffer", [])) as ArrayBuffer;
-      return decodeBuffers(resultBuf);
+      const resultQuads = decodeBuffers(resultBuf);
+
+      // OWL 2 DL: C owl:disjointUnionOf (A B ...) ⇒ A rdfs:subClassOf C, B rdfs:subClassOf C, ...
+      // The WASM kernel does not emit these edges; synthesize them from input quads.
+      if (mode !== "full") {
+        const existingKeys = new Set(
+          resultQuads.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`),
+        );
+        const defaultGraph = DataFactory.defaultGraph();
+        const subClassNode = DataFactory.namedNode(RDFS_SUB_CLASS_OF);
+        for (const q of inputQuads) {
+          if (q.predicate.value !== OWL_DISJOINT_UNION_OF) continue;
+          if (q.subject.termType !== "NamedNode" || q.object.termType !== "BlankNode") continue;
+          const unionClassIRI = q.subject.value;
+          const members = expandRdfList(q.object.value, inputQuads);
+          for (const memberIRI of members) {
+            const key = `${memberIRI}\0${RDFS_SUB_CLASS_OF}\0${unionClassIRI}`;
+            if (!existingKeys.has(key)) {
+              existingKeys.add(key);
+              resultQuads.push(DataFactory.quad(
+                DataFactory.namedNode(memberIRI),
+                subClassNode,
+                DataFactory.namedNode(unionClassIRI),
+                defaultGraph,
+              ));
+            }
+          }
+        }
+      }
+
+      return resultQuads;
     });
     // Swallow errors so a failed call doesn't stall the queue for subsequent
     // callers; each caller still receives the rejection on their own promise.
@@ -709,8 +788,24 @@ export class RdfReasoner {
     await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
     await this._call("classification", []);
     const buf = (await this._call("getInferredTripleBuffer", [])) as ArrayBuffer;
+    // Capture base quads BEFORE writing inferred quads so the disjointUnionOf scan
+    // only sees the original store contents, not the newly added inferred triples.
+    const allQuads = store.getQuads(null, null, null, null);
     for (const q of decodeBuffers(buf))
       store.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, ig));
+    // OWL 2 DL: C owl:disjointUnionOf (A B ...) ⇒ A rdfs:subClassOf C, B rdfs:subClassOf C, ...
+    // The WASM kernel does not emit these edges; synthesize them from base quads.
+    const subClassNode = DataFactory.namedNode(RDFS_SUB_CLASS_OF);
+    for (const q of store.getQuads(null, DataFactory.namedNode(OWL_DISJOINT_UNION_OF), null, null)) {
+      if (q.graph.value === ig.value) continue;
+      if (q.subject.termType !== "NamedNode" || q.object.termType !== "BlankNode") continue;
+      const unionClassIRI = q.subject.value;
+      const members = expandRdfList(q.object.value, allQuads);
+      for (const memberIRI of members) {
+        if (store.countQuads(DataFactory.namedNode(memberIRI), subClassNode, DataFactory.namedNode(unionClassIRI), ig) === 0)
+          store.addQuad(DataFactory.quad(DataFactory.namedNode(memberIRI), subClassNode, DataFactory.namedNode(unionClassIRI), ig));
+      }
+    }
     this._classifyCache = { hash: fingerprint, result: undefined as void };
     this._materializeCache = null;           // cross-invalidate
     this._classifyPropertiesCache = null;    // cross-invalidate
