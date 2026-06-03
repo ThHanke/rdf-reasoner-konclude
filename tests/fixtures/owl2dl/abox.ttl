@@ -1,0 +1,58 @@
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix ex:   <http://example.org/> .
+
+<http://example.org/abox-test> a owl:Ontology .
+
+# ---------------------------------------------------------------------------
+# Named classes (required: rdf:type owl:Class for every class)
+# ---------------------------------------------------------------------------
+
+ex:Person a owl:Class .
+
+# ---------------------------------------------------------------------------
+# Properties
+# ---------------------------------------------------------------------------
+
+ex:knows a owl:ObjectProperty .
+
+# ---------------------------------------------------------------------------
+# owl:sameAs — type propagation test
+#
+# Alice is typed Person and is declared sameAs AliceAlias.
+# materialize() should infer AliceAlias rdf:type Person.
+# Note: AliceAlias is kept out of the AllDifferent group to avoid contradiction.
+# ---------------------------------------------------------------------------
+
+ex:Alice      a owl:NamedIndividual, ex:Person .
+ex:AliceAlias a owl:NamedIndividual .
+ex:Alice owl:sameAs ex:AliceAlias .
+
+# ---------------------------------------------------------------------------
+# owl:AllDifferent — three mutually distinct individuals
+#
+# Bob, Carol, Dave are all different from each other → consistent.
+# These individuals are distinct from Alice/AliceAlias to avoid sameAs conflict.
+# ---------------------------------------------------------------------------
+
+ex:Bob   a owl:NamedIndividual .
+ex:Carol a owl:NamedIndividual .
+ex:Dave  a owl:NamedIndividual .
+
+[] a owl:AllDifferent ;
+   owl:distinctMembers ( ex:Bob ex:Carol ex:Dave ) .
+
+# ---------------------------------------------------------------------------
+# owl:NegativePropertyAssertion — consistent scenario
+#
+# NPA asserts that Alice does NOT know Eve.
+# Since there is no positive assertion "Alice knows Eve", this is consistent.
+# ---------------------------------------------------------------------------
+
+ex:Eve a owl:NamedIndividual .
+
+[] a owl:NegativePropertyAssertion ;
+   owl:sourceIndividual ex:Alice ;
+   owl:assertionProperty ex:knows ;
+   owl:targetIndividual ex:Eve .
