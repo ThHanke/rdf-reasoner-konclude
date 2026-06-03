@@ -1,0 +1,104 @@
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix ex:   <http://example.org/> .
+
+<http://example.org/cardinality-test> a owl:Ontology .
+
+# ---------------------------------------------------------------------------
+# Properties
+# ---------------------------------------------------------------------------
+
+ex:hasSpouse  a owl:ObjectProperty .
+ex:hasParent  a owl:ObjectProperty .
+ex:hasHobby   a owl:ObjectProperty .
+ex:hasPet     a owl:ObjectProperty .
+
+# ---------------------------------------------------------------------------
+# Named classes (required: rdf:type owl:Class for every class)
+# ---------------------------------------------------------------------------
+
+ex:Person   a owl:Class .
+ex:Hobby    a owl:Class .
+ex:Cat      a owl:Class .
+ex:Parent   a owl:Class .
+
+# ---------------------------------------------------------------------------
+# Unqualified minCardinality: AtLeastOneHobby ≡ ≥1 hasHobby
+# ---------------------------------------------------------------------------
+
+ex:AtLeastOneHobby a owl:Class ;
+    owl:equivalentClass [
+        a owl:Restriction ;
+        owl:onProperty ex:hasHobby ;
+        owl:minCardinality 1
+    ] ;
+    rdfs:subClassOf ex:Person .
+
+# ---------------------------------------------------------------------------
+# Unqualified maxCardinality: AtMostOneSpouse ≡ ≤1 hasSpouse
+# ---------------------------------------------------------------------------
+
+ex:AtMostOneSpouse a owl:Class ;
+    owl:equivalentClass [
+        a owl:Restriction ;
+        owl:onProperty ex:hasSpouse ;
+        owl:maxCardinality 1
+    ] ;
+    rdfs:subClassOf ex:Person .
+
+# ---------------------------------------------------------------------------
+# Unqualified exactCardinality: ExactlyOneParent ≡ =1 hasParent
+# An explicit rdfs:subClassOf ex:Parent ensures a direct edge in the Hasse
+# diagram that classify() can emit and materialize() can propagate.
+# ---------------------------------------------------------------------------
+
+ex:ExactlyOneParent a owl:Class ;
+    owl:equivalentClass [
+        a owl:Restriction ;
+        owl:onProperty ex:hasParent ;
+        owl:exactCardinality 1
+    ] ;
+    rdfs:subClassOf ex:Parent .
+
+# ---------------------------------------------------------------------------
+# Qualified minQualifiedCardinality: AtLeastTwoCats ≡ ≥2 hasPet.Cat
+# ---------------------------------------------------------------------------
+
+ex:AtLeastTwoCats a owl:Class ;
+    owl:equivalentClass [
+        a owl:Restriction ;
+        owl:onProperty ex:hasPet ;
+        owl:minQualifiedCardinality 2 ;
+        owl:onClass ex:Cat
+    ] ;
+    rdfs:subClassOf ex:Person .
+
+# ---------------------------------------------------------------------------
+# Qualified maxQualifiedCardinality: AtMostOneCat ≡ ≤1 hasPet.Cat
+# ---------------------------------------------------------------------------
+
+ex:AtMostOneCat a owl:Class ;
+    owl:equivalentClass [
+        a owl:Restriction ;
+        owl:onProperty ex:hasPet ;
+        owl:maxQualifiedCardinality 1 ;
+        owl:onClass ex:Cat
+    ] ;
+    rdfs:subClassOf ex:Person .
+
+# ---------------------------------------------------------------------------
+# ABox individuals
+#
+# alice is typed ExactlyOneParent and has exactly one hasParent filler → consistent.
+# This lets materialize() propagate alice rdf:type Parent via subClassOf.
+# ---------------------------------------------------------------------------
+
+ex:alice a owl:NamedIndividual, ex:ExactlyOneParent .
+ex:bob   a owl:NamedIndividual .
+ex:alice ex:hasParent ex:bob .
+
+# dave is typed AtLeastOneHobby and has a hobby → consistent
+ex:dave   a owl:NamedIndividual, ex:AtLeastOneHobby .
+ex:chess  a owl:NamedIndividual, ex:Hobby .
+ex:dave   ex:hasHobby ex:chess .

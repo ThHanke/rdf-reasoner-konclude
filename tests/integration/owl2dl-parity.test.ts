@@ -173,6 +173,102 @@ describe.skipIf(!wasmExists)("Restriction constructs", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Cardinality constructs (R8): minCardinality, maxCardinality, exactCardinality,
+// minQualifiedCardinality, maxQualifiedCardinality
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!wasmExists)("Cardinality constructs", () => {
+  let reasoner: RdfReasoner;
+  let quads: Quad[];
+  let classified: Quad[];
+  let materialized: Quad[];
+
+  beforeAll(async () => {
+    reasoner = new RdfReasoner();
+    await reasoner.ready;
+    quads = loadTtl("cardinality.ttl");
+    classified = await reasoner.classify(quads);
+    materialized = await reasoner.materialize(quads);
+  }, 60_000);
+
+  afterAll(() => {
+    reasoner?.terminate();
+  });
+
+  // ── checkConsistency — happy path ──────────────────────────────────────────
+
+  it("checkConsistency: consistent cardinality fixture (exactCardinality 1 with one filler) → true", async () => {
+    expect(
+      await reasoner.checkConsistency(quads),
+      "ontology with cardinality restrictions and consistent ABox must be consistent",
+    ).toBe(true);
+  }, 30_000);
+
+  // ── checkConsistency — error path ──────────────────────────────────────────
+
+  it("checkConsistency: maxCardinality 1 with two differentFrom fillers → false", async () => {
+    // alice:AtMostOneSpouse has two hasSpouse fillers (bob + carol) declared
+    // differentFrom each other — sameAs merging is blocked so the cardinality
+    // violation cannot be avoided → inconsistent.
+    const inconsistentQuads = parseTurtle(`
+      @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+      @prefix owl:  <http://www.w3.org/2002/07/owl#> .
+      @prefix ex:   <http://example.org/> .
+      <http://example.org/maxcard-violation-test> a owl:Ontology .
+      ex:hasSpouse a owl:ObjectProperty .
+      ex:AtMostOneSpouse a owl:Class ;
+          owl:equivalentClass [
+              a owl:Restriction ;
+              owl:onProperty ex:hasSpouse ;
+              owl:maxCardinality 1
+          ] .
+      ex:alice a owl:NamedIndividual, ex:AtMostOneSpouse .
+      ex:bob   a owl:NamedIndividual .
+      ex:carol a owl:NamedIndividual .
+      ex:bob owl:differentFrom ex:carol .
+      ex:alice ex:hasSpouse ex:bob .
+      ex:alice ex:hasSpouse ex:carol .
+    `);
+    expect(
+      await reasoner.checkConsistency(inconsistentQuads),
+      "maxCardinality 1 with two differentFrom fillers must be detected as inconsistent",
+    ).toBe(false);
+  }, 30_000);
+
+  // ── classify ───────────────────────────────────────────────────────────────
+
+  it("classify: ExactlyOneParent rdfs:subClassOf Parent (explicit TBox edge present in Hasse diagram)", () => {
+    expect(
+      hasTriple(classified, EX("ExactlyOneParent"), RDFS_SUB_CLASS_OF, EX("Parent")),
+      "ExactlyOneParent ⊑ Parent must appear as a direct subClassOf edge in the Hasse diagram",
+    ).toBe(true);
+  });
+
+  it("classify: AtLeastOneHobby rdfs:subClassOf Person (explicit TBox edge present in Hasse diagram)", () => {
+    expect(
+      hasTriple(classified, EX("AtLeastOneHobby"), RDFS_SUB_CLASS_OF, EX("Person")),
+      "AtLeastOneHobby ⊑ Person must appear as a direct subClassOf edge in the Hasse diagram",
+    ).toBe(true);
+  });
+
+  // ── materialize ────────────────────────────────────────────────────────────
+
+  it("materialize: alice typed ExactlyOneParent → alice rdf:type Parent (subClassOf propagation)", () => {
+    expect(
+      hasTriple(materialized, EX("alice"), RDF_TYPE, EX("Parent")),
+      "alice must be inferred as rdf:type Parent via ExactlyOneParent ⊑ Parent",
+    ).toBe(true);
+  });
+
+  it("materialize: dave typed AtLeastOneHobby → dave rdf:type Person (subClassOf propagation)", () => {
+    expect(
+      hasTriple(materialized, EX("dave"), RDF_TYPE, EX("Person")),
+      "dave must be inferred as rdf:type Person via AtLeastOneHobby ⊑ Person",
+    ).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // TBox constructs (R6)
 // ---------------------------------------------------------------------------
 
