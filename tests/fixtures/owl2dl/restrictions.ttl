@@ -65,6 +65,23 @@ ex:Narcissist a owl:Class ;
 ex:carol a owl:NamedIndividual, ex:Narcissist .
 
 # ---------------------------------------------------------------------------
+# allValuesFrom: Picky ≡ ∀likes.GoodThing
+#
+# Declares the universal restriction so the fixture contains all four
+# restriction types: someValuesFrom, allValuesFrom, hasValue, hasSelf.
+# ---------------------------------------------------------------------------
+
+ex:GoodThing a owl:Class .
+ex:likes a owl:ObjectProperty .
+
+ex:Picky a owl:Class ;
+    owl:equivalentClass [
+        a owl:Restriction ;
+        owl:onProperty ex:likes ;
+        owl:allValuesFrom ex:GoodThing
+    ] .
+
+# ---------------------------------------------------------------------------
 # classify: PetOwner rdfs:subClassOf Animal
 #
 # Provides a known direct subClassOf edge for the classify() stage test.
