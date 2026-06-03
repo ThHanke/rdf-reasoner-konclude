@@ -690,7 +690,7 @@ describe.skipIf(!wasmExists)("Property disjointness (R11)", () => {
     expect(result, "property-disjointness.ttl with only p asserted must be consistent").toBe(true);
   }, 30_000);
 
-  it("AllDisjointProperties — checkConsistency: alice p bob AND alice r bob (disjoint) → document result", async () => {
+  it("AllDisjointProperties — checkConsistency: alice p bob AND alice r bob (disjoint) → inconsistent (false)", async () => {
     const clashQuads = parseTurtle(`
       @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
       @prefix owl:  <http://www.w3.org/2002/07/owl#> .
@@ -707,11 +707,8 @@ describe.skipIf(!wasmExists)("Property disjointness (R11)", () => {
     `);
     const result = await reasoner.checkConsistency(clashQuads);
     // OWL 2 DL correct answer: false (alice p bob AND alice r bob with p propertyDisjointWith r
-    // is inconsistent).  Konclude may return true if ABox-level property-disjointness
-    // is not checked in this pipeline (a known limitation, not necessarily a bug).
-    // Document: result is ${result ? 'true (not detected)' : 'false (correctly detected)'}.
-    // We assert the result is a boolean — the actual value is informational.
-    expect(typeof result, "checkConsistency must return a boolean").toBe("boolean");
+    // is inconsistent — AllDisjointProperties ABox clash detected in saturation).
+    expect(result, "alice p bob AND alice r bob with DisjointObjectProperties(p,r) must be detected as inconsistent").toBe(false);
   }, 30_000);
 });
 
