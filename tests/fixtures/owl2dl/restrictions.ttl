@@ -1,0 +1,74 @@
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix ex:   <http://example.org/> .
+
+<http://example.org/restrictions-test> a owl:Ontology .
+
+# ---------------------------------------------------------------------------
+# hasValue: C ≡ ∃hasFriend.{Alice}; Bob:C → Bob hasFriend Alice
+#
+# Pattern mirrors HAS_VALUE_NTRIPLES regression fixture in property-characteristics.test.ts.
+# ---------------------------------------------------------------------------
+
+ex:hasFriend a owl:ObjectProperty .
+
+ex:C a owl:Class ;
+    owl:equivalentClass [
+        a owl:Restriction ;
+        owl:onProperty ex:hasFriend ;
+        owl:hasValue ex:Alice
+    ] .
+
+ex:Alice a owl:NamedIndividual .
+ex:Bob   a owl:NamedIndividual, ex:C .
+
+# ---------------------------------------------------------------------------
+# someValuesFrom: PetOwner ≡ ∃hasAnimal.Dog
+#
+# alice:PetOwner, alice hasAnimal rex.
+# rex is given only as owl:NamedIndividual (NOT explicitly typed Dog).
+# Under OWL-DL: since alice is in PetOwner (≡ ∃hasAnimal.Dog) and rex is the
+# only hasAnimal filler, Konclude should infer rex:Dog.
+# ---------------------------------------------------------------------------
+
+ex:Dog a owl:Class .
+
+ex:hasAnimal a owl:ObjectProperty .
+
+ex:PetOwner a owl:Class ;
+    owl:equivalentClass [
+        a owl:Restriction ;
+        owl:onProperty ex:hasAnimal ;
+        owl:someValuesFrom ex:Dog
+    ] .
+
+ex:alice a owl:NamedIndividual, ex:PetOwner .
+ex:rex   a owl:NamedIndividual .
+ex:alice ex:hasAnimal ex:rex .
+
+# ---------------------------------------------------------------------------
+# hasSelf: Narcissist ≡ (∃loves.Self)
+#
+# carol:Narcissist → consistent; carol loves carol inferred (reflexive self-role).
+# ---------------------------------------------------------------------------
+
+ex:loves a owl:ObjectProperty .
+
+ex:Narcissist a owl:Class ;
+    owl:equivalentClass [
+        a owl:Restriction ;
+        owl:onProperty ex:loves ;
+        owl:hasSelf true
+    ] .
+
+ex:carol a owl:NamedIndividual, ex:Narcissist .
+
+# ---------------------------------------------------------------------------
+# classify: PetOwner rdfs:subClassOf Animal
+#
+# Provides a known direct subClassOf edge for the classify() stage test.
+# ---------------------------------------------------------------------------
+
+ex:Animal a owl:Class .
+ex:PetOwner rdfs:subClassOf ex:Animal .
