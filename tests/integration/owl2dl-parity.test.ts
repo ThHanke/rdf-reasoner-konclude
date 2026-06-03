@@ -395,6 +395,111 @@ describe.skipIf(!wasmExists)("TBox constructs", () => {
 });
 
 // ---------------------------------------------------------------------------
+// ABox constructs (R10): sameAs, differentFrom, AllDifferent,
+// NegativePropertyAssertion
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!wasmExists)("ABox constructs", () => {
+  let reasoner: RdfReasoner;
+  let quads: Quad[];
+
+  beforeAll(async () => {
+    reasoner = new RdfReasoner();
+    await reasoner.ready;
+    quads = loadTtl("abox.ttl");
+  }, 60_000);
+
+  afterAll(() => {
+    reasoner?.terminate();
+  });
+
+  // ── owl:sameAs — materialize: type propagation ─────────────────────────────
+
+  // AliceAlias is declared sameAs Alice (who is typed Person).
+  // materialize() must propagate Person to AliceAlias via sameAs closure.
+  it("sameAs — materialize: Alice:Person sameAs AliceAlias → AliceAlias rdf:type Person inferred", async () => {
+    const inferred = await reasoner.materialize(quads);
+    expect(
+      hasTriple(inferred, EX("AliceAlias"), RDF_TYPE, EX("Person")),
+      "AliceAlias rdf:type Person must be inferred via owl:sameAs type propagation from Alice",
+    ).toBe(true);
+  }, 30_000);
+
+  // ── owl:differentFrom — checkConsistency: reflexive self-reference ─────────
+
+  // UPSTREAM_LIMITATION: Konclude v0.7.0 does not detect `a owl:differentFrom a`
+  // as an inconsistency.  The reflexive differentFrom axiom should produce a clash
+  // (an individual cannot be different from itself) but the kernel silently accepts
+  // it.  The correct OWL 2 DL answer is false (inconsistent).
+  it.skip("UPSTREAM_LIMITATION — differentFrom/checkConsistency: a owl:differentFrom a → inconsistent (false) [not detected by Konclude v0.7.0]", async () => {
+    const inconsistentQuads = parseTurtle(`
+      @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+      @prefix owl:  <http://www.w3.org/2002/07/owl#> .
+      @prefix ex:   <http://example.org/> .
+      <http://example.org/differentin-self-test> a owl:Ontology .
+      ex:alice a owl:NamedIndividual .
+      ex:alice owl:differentFrom ex:alice .
+    `);
+    expect(
+      await reasoner.checkConsistency(inconsistentQuads),
+      "Individual declared differentFrom itself must be detected as inconsistent",
+    ).toBe(false);
+  }, 30_000);
+
+  // ── owl:AllDifferent — checkConsistency: three distinct individuals ─────────
+
+  it("AllDifferent — checkConsistency: three distinct individuals → consistent (true)", async () => {
+    expect(
+      await reasoner.checkConsistency(quads),
+      "owl:AllDifferent over three distinct named individuals must be consistent",
+    ).toBe(true);
+  }, 30_000);
+
+  // ── NPA — checkConsistency: NPA without positive assertion → consistent ─────
+
+  it("NPA — checkConsistency: NPA without matching positive assertion → consistent (true)", async () => {
+    expect(
+      await reasoner.checkConsistency(quads),
+      "owl:NegativePropertyAssertion without a matching positive assertion must be consistent",
+    ).toBe(true);
+  }, 30_000);
+
+  // ── NPA — checkConsistency: NPA + matching positive assertion → inconsistent ─
+
+  it("NPA — checkConsistency: NPA + matching positive assertion → inconsistent (false)", async () => {
+    const inconsistentQuads = parseTurtle(`
+      @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+      @prefix owl:  <http://www.w3.org/2002/07/owl#> .
+      @prefix ex:   <http://example.org/> .
+      <http://example.org/npa-violation-test> a owl:Ontology .
+      ex:knows a owl:ObjectProperty .
+      ex:alice a owl:NamedIndividual .
+      ex:bob   a owl:NamedIndividual .
+      ex:alice ex:knows ex:bob .
+      [] a owl:NegativePropertyAssertion ;
+         owl:sourceIndividual ex:alice ;
+         owl:assertionProperty ex:knows ;
+         owl:targetIndividual ex:bob .
+    `);
+    expect(
+      await reasoner.checkConsistency(inconsistentQuads),
+      "owl:NegativePropertyAssertion contradicted by a matching positive triple must be detected as inconsistent",
+    ).toBe(false);
+  }, 30_000);
+
+  // ── NPA — materialize: UPSTREAM_LIMITATION (blank-node hang) ──────────────
+
+  // UPSTREAM_LIMITATION: materialize() with owl:NegativePropertyAssertion causes
+  // the WASM kernel to hang indefinitely.  The NPA blank-node structure is
+  // processed correctly by checkConsistency() (Turtle format fixes the NTriples
+  // blank-node issue) but the realization/materialize code path triggers an
+  // unresolved hang in the upstream Konclude kernel.
+  it.skip("UPSTREAM_LIMITATION — NPA/materialize: blank-node hang (upstream Konclude limitation)", async () => {
+    // Not testable — materialize() with NPA blank nodes hangs indefinitely
+  }, 30_000);
+});
+
+// ---------------------------------------------------------------------------
 // Property characteristics (R9): SymmetricProperty, AsymmetricProperty,
 // IrreflexiveProperty, ReflexiveProperty, TransitiveProperty,
 // FunctionalProperty (all skipped — ALIF+ hang), InverseFunctionalProperty,
