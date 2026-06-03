@@ -60,6 +60,7 @@ const RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
 const RDFS_SUB_CLASS_OF = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
 const RDFS_SUB_PROPERTY_OF = "http://www.w3.org/2000/01/rdf-schema#subPropertyOf";
 const OWL_EQUIVALENT_CLASS = "http://www.w3.org/2002/07/owl#equivalentClass";
+const OWL_EQUIVALENT_PROPERTY = "http://www.w3.org/2002/07/owl#equivalentProperty";
 const OWL_CLASS = "http://www.w3.org/2002/07/owl#Class";
 const OWL_OBJECT_PROPERTY = "http://www.w3.org/2002/07/owl#ObjectProperty";
 const OWL_DATATYPE_PROPERTY = "http://www.w3.org/2002/07/owl#DatatypeProperty";
@@ -592,6 +593,23 @@ export class RdfReasoner {
         );
       }
 
+      // OWL 2 DL: p owl:equivalentProperty q ⇒ p rdfs:subPropertyOf q AND q rdfs:subPropertyOf p.
+      // The WASM kernel does not emit these edges; synthesize them from base quads.
+      const subPropNode = DataFactory.namedNode(RDFS_SUB_PROPERTY_OF);
+      for (const q of store.getQuads(null, DataFactory.namedNode(OWL_EQUIVALENT_PROPERTY), null, null)) {
+        // Skip quads from the inferred graph itself
+        if (q.graph.value === inferredGraphNode.value) continue;
+        if (q.subject.termType !== "NamedNode" || q.object.termType !== "NamedNode") continue;
+        const forward = DataFactory.quad(q.subject, subPropNode, q.object, inferredGraphNode);
+        const backward = DataFactory.quad(q.object as import("@rdfjs/types").NamedNode, subPropNode, q.subject as import("@rdfjs/types").NamedNode, inferredGraphNode);
+        if (store.countQuads(q.subject, subPropNode, q.object, inferredGraphNode) === 0) {
+          store.addQuad(forward);
+        }
+        if (store.countQuads(q.object, subPropNode, q.subject, inferredGraphNode) === 0) {
+          store.addQuad(backward);
+        }
+      }
+
       this._classifyPropertiesCache = { hash: fingerprint, result: undefined as void };
       this._classifyCache = null;
       this._materializeCache = null;
@@ -605,13 +623,39 @@ export class RdfReasoner {
 
   private _classifyPropertiesOnQuads(quads: Iterable<Quad>): Promise<Quad[]> {
     const result = this._queue.then(async () => {
-      const { tripleBuffer, strTableBuffer } = encodeToBuffers(quads);
+      // Materialize iterable so we can both encode it and post-process it.
+      const inputQuads = Array.isArray(quads) ? (quads as Quad[]) : [...quads];
+
+      const { tripleBuffer, strTableBuffer } = encodeToBuffers(inputQuads);
 
       await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
       await this._call("classification", []);
 
       const resultBuf = (await this._call("getPropertyTripleBuffer", [])) as ArrayBuffer;
-      return decodeBuffers(resultBuf);
+      const resultQuads = decodeBuffers(resultBuf);
+
+      // OWL 2 DL: p owl:equivalentProperty q ⇒ p rdfs:subPropertyOf q AND q rdfs:subPropertyOf p.
+      // The WASM kernel does not emit these edges; synthesize them from input quads.
+      const existingKeys = new Set(
+        resultQuads.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`),
+      );
+      const defaultGraph = DataFactory.defaultGraph();
+      const subPropNode = DataFactory.namedNode(RDFS_SUB_PROPERTY_OF);
+      for (const q of inputQuads) {
+        if (q.predicate.value !== OWL_EQUIVALENT_PROPERTY) continue;
+        if (q.subject.termType !== "NamedNode" || q.object.termType !== "NamedNode") continue;
+        const fwdKey = `${q.subject.value}\0${RDFS_SUB_PROPERTY_OF}\0${q.object.value}`;
+        const bwdKey = `${q.object.value}\0${RDFS_SUB_PROPERTY_OF}\0${q.subject.value}`;
+        if (!existingKeys.has(fwdKey)) {
+          existingKeys.add(fwdKey);
+          resultQuads.push(DataFactory.quad(q.subject, subPropNode, q.object, defaultGraph));
+        }
+        if (!existingKeys.has(bwdKey)) {
+          existingKeys.add(bwdKey);
+          resultQuads.push(DataFactory.quad(q.object as import("@rdfjs/types").NamedNode, subPropNode, q.subject as import("@rdfjs/types").NamedNode, defaultGraph));
+        }
+      }
+      return resultQuads;
     });
     this._queue = result.then(
       () => {},
@@ -679,6 +723,17 @@ export class RdfReasoner {
     const buf = (await this._call("getPropertyTripleBuffer", [])) as ArrayBuffer;
     for (const q of decodeBuffers(buf))
       store.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, ig));
+    // OWL 2 DL: p owl:equivalentProperty q ⇒ p rdfs:subPropertyOf q AND q rdfs:subPropertyOf p.
+    // The WASM kernel does not emit these edges; synthesize them from base quads.
+    const subPropNode = DataFactory.namedNode(RDFS_SUB_PROPERTY_OF);
+    for (const q of store.getQuads(null, DataFactory.namedNode(OWL_EQUIVALENT_PROPERTY), null, null)) {
+      if (q.graph.value === ig.value) continue;
+      if (q.subject.termType !== "NamedNode" || q.object.termType !== "NamedNode") continue;
+      if (store.countQuads(q.subject, subPropNode, q.object, ig) === 0)
+        store.addQuad(DataFactory.quad(q.subject, subPropNode, q.object, ig));
+      if (store.countQuads(q.object, subPropNode, q.subject, ig) === 0)
+        store.addQuad(DataFactory.quad(q.object as import("@rdfjs/types").NamedNode, subPropNode, q.subject as import("@rdfjs/types").NamedNode, ig));
+    }
     this._classifyPropertiesCache = { hash: fingerprint, result: undefined as void };
     this._classifyCache = null;              // cross-invalidate
     this._materializeCache = null;           // cross-invalidate

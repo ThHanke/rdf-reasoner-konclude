@@ -647,7 +647,7 @@ describe.skipIf(!wasmExists)("Property disjointness (R11)", () => {
   // p owl:equivalentProperty q implies both p rdfs:subPropertyOf q and
   // q rdfs:subPropertyOf p, but Konclude v0.7.0 does not materialise these
   // entailments in the property hierarchy classification result.
-  it.skip("UPSTREAM_LIMITATION — EquivalentObjectProperties/classifyProperties: p equivalentProperty q → p rdfs:subPropertyOf q not emitted by Konclude property hierarchy", async () => {
+  it("EquivalentObjectProperties/classifyProperties: p equivalentProperty q → p rdfs:subPropertyOf q not emitted by Konclude property hierarchy", async () => {
     const inferred = await reasoner.classifyProperties(quads);
     expect(
       hasTriple(inferred, EX("p"), RDFS_SUB_PROPERTY_OF, EX("q")),
@@ -655,7 +655,7 @@ describe.skipIf(!wasmExists)("Property disjointness (R11)", () => {
     ).toBe(true);
   }, 30_000);
 
-  it.skip("UPSTREAM_LIMITATION — EquivalentObjectProperties/classifyProperties: p equivalentProperty q → q rdfs:subPropertyOf p not emitted by Konclude property hierarchy", async () => {
+  it("EquivalentObjectProperties/classifyProperties: p equivalentProperty q → q rdfs:subPropertyOf p not emitted by Konclude property hierarchy", async () => {
     const inferred = await reasoner.classifyProperties(quads);
     expect(
       hasTriple(inferred, EX("q"), RDFS_SUB_PROPERTY_OF, EX("p")),
