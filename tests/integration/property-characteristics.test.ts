@@ -239,16 +239,11 @@ describe.skipIf(!wasmExists)("Property characteristics ABox inference", () => {
   // FunctionalProperty — UPSTREAM_LIMITATION
   // -------------------------------------------------------------------------
 
-  // UPSTREAM_LIMITATION: native Konclude v0.7.0 hangs indefinitely during
-  // precompute on ontologies with ALIF+ expressiveness (FunctionalProperty +
-  // ABox individuals). Verified by running:
-  //   docker run --rm konclude/konclude:latest realize -i functional.nt
-  // The native binary stalls at "Precomputing ontology … expressiveness 'ALIF+'"
-  // and never produces output.  Because this is a native bug, the WASM also hangs
-  // (it uses the same Konclude kernel).  The test is skipped until upstream fixes
-  // the ALIF+ precompute hang.
-  it.skip(
-    "UPSTREAM_LIMITATION — FunctionalProperty: two hasMother assertions → Eve owl:sameAs Carol (native Konclude hangs on ALIF+)",
+  // JS workaround for ALIF+ hang: FunctionalProperty declarations are stripped
+  // before WASM, and sameAs pairs are computed in JS.
+  // See ts/index.ts _materializeOnQuads for implementation details.
+  it(
+    "FunctionalProperty: two hasMother assertions → Eve owl:sameAs Carol",
     async () => {
       // A fresh RdfReasoner is required for FunctionalProperty sameAs tests.
       // The shared instance accumulates BackendAssCache state across calls; after
