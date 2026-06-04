@@ -401,22 +401,28 @@ describe.skipIf(!wasmExists)("Property characteristics ABox inference", () => {
   // NegativePropertyAssertion — no spurious positive assertion
   // -------------------------------------------------------------------------
 
-  // UPSTREAM_LIMITATION: Konclude v0.7.0 materialize() hangs indefinitely on
-  // consistent ontologies containing owl:NegativePropertyAssertion blank nodes
-  // in NTriples format.  checkConsistency() on an INCONSISTENT NPA ontology
-  // (case 12 in issue13-owl-violations.test.ts, Turtle format) now works after
-  // patches 025+026.  The hang is specific to the materialize() realization
-  // pipeline on CONSISTENT NPA ontologies.  Skipped until upstream fixes it.
-  it.skip(
-    "UPSTREAM_LIMITATION — NegativePropertyAssertion: consistent ontology must NOT produce negated triple as positive assertion (materialize hangs)",
+  // NegativePropertyAssertion in a consistent ontology must not cause materialize()
+  // to emit the negated triple as a positive assertion.  Previously hung in WASM
+  // (UPSTREAM_LIMITATION label); confirmed working after WASM regression was resolved.
+  // A fresh RdfReasoner is used to avoid BackendAssCache state accumulation from
+  // prior materialize() calls on the shared instance (same isolation pattern as
+  // the FunctionalProperty test above).
+  it(
+    "NegativePropertyAssertion: consistent ontology must NOT produce negated triple as positive assertion",
     async () => {
-      const quads = parseNTriples(NEGATIVE_PROPERTY_ASSERTION_CONSISTENT_NTRIPLES);
-      const inferred = await reasoner.materialize(quads);
+      const fresh = new RdfReasoner();
+      await fresh.ready;
+      try {
+        const quads = parseNTriples(NEGATIVE_PROPERTY_ASSERTION_CONSISTENT_NTRIPLES);
+        const inferred = await fresh.materialize(quads);
 
-      expect(
-        hasTriple(inferred, EX("alice"), EX("knows"), EX("bob")),
-        "alice knows bob must NOT be materialised — NegativePropertyAssertion carries no positive entailment",
-      ).toBe(false);
+        expect(
+          hasTriple(inferred, EX("alice"), EX("knows"), EX("bob")),
+          "alice knows bob must NOT be materialised — NegativePropertyAssertion carries no positive entailment",
+        ).toBe(false);
+      } finally {
+        fresh.terminate();
+      }
     },
     30_000,
   );

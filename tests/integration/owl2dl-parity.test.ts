@@ -502,15 +502,29 @@ describe.skipIf(!wasmExists)("ABox constructs", () => {
     ).toBe(false);
   }, 30_000);
 
-  // ── NPA — materialize: UPSTREAM_LIMITATION (blank-node hang) ──────────────
+  // ── NPA — materialize: consistent NPA must not produce positive assertion ─────
 
-  // UPSTREAM_LIMITATION: materialize() with owl:NegativePropertyAssertion causes
-  // the WASM kernel to hang indefinitely.  The NPA blank-node structure is
-  // processed correctly by checkConsistency() (Turtle format fixes the NTriples
-  // blank-node issue) but the realization/materialize code path triggers an
-  // unresolved hang in the upstream Konclude kernel.
-  it.skip("UPSTREAM_LIMITATION — NPA/materialize: blank-node hang (upstream Konclude limitation)", async () => {
-    // Not testable — materialize() with NPA blank nodes hangs indefinitely
+  // Previously hung in WASM (labelled UPSTREAM_LIMITATION); confirmed working
+  // after WASM regression was resolved.  The NPA says alice does NOT know bob;
+  // materialize() must NOT emit "alice knows bob" as a positive entailment.
+  it("NPA — materialize: consistent NPA must NOT produce negated triple as positive assertion", async () => {
+    const npaQuads = parseTurtle(`
+      @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+      @prefix owl:  <http://www.w3.org/2002/07/owl#> .
+      @prefix ex:   <http://example.org/> .
+      ex:knows a owl:ObjectProperty .
+      ex:alice a owl:NamedIndividual .
+      ex:bob   a owl:NamedIndividual .
+      [] a owl:NegativePropertyAssertion ;
+         owl:sourceIndividual ex:alice ;
+         owl:assertionProperty ex:knows ;
+         owl:targetIndividual ex:bob .
+    `);
+    const inferred = await reasoner.materialize(npaQuads);
+    expect(
+      hasTriple(inferred, EX("alice"), EX("knows"), EX("bob")),
+      "alice knows bob must NOT be materialised — NegativePropertyAssertion carries no positive entailment",
+    ).toBe(false);
   }, 30_000);
 });
 
