@@ -918,10 +918,8 @@ describe.skipIf(!wasmExists)("Property characteristics", () => {
 
         const eveCarol = hasTriple(inferred, EX("Eve"), OWL_SAME_AS, EX("Carol"));
         const carolEve = hasTriple(inferred, EX("Carol"), OWL_SAME_AS, EX("Eve"));
-        expect(
-          eveCarol || carolEve,
-          "Eve owl:sameAs Carol (or Carol owl:sameAs Eve) must be inferred via FunctionalProperty",
-        ).toBe(true);
+        expect(eveCarol, "Eve owl:sameAs Carol must be in result").toBe(true);
+        expect(carolEve, "Carol owl:sameAs Eve must be in result").toBe(true);
       } finally {
         fresh.terminate();
       }
@@ -956,10 +954,8 @@ describe.skipIf(!wasmExists)("Property characteristics", () => {
         const inferred = await fresh.materialize(ifpQuads);
         const aliceBob = hasTriple(inferred, EX("Alice"), OWL_SAME_AS, EX("Bob"));
         const bobAlice = hasTriple(inferred, EX("Bob"), OWL_SAME_AS, EX("Alice"));
-        expect(
-          aliceBob || bobAlice,
-          "Alice owl:sameAs Bob (or Bob owl:sameAs Alice) must be inferred via InverseFunctionalProperty",
-        ).toBe(true);
+        expect(aliceBob, "alice owl:sameAs bob must be in result").toBe(true);
+        expect(bobAlice, "bob owl:sameAs alice must be in result").toBe(true);
       } finally {
         fresh.terminate();
       }

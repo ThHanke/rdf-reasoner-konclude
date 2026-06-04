@@ -263,10 +263,8 @@ describe.skipIf(!wasmExists)("Property characteristics ABox inference", () => {
           (q) => q.subject.value === EX("Carol") && q.object.value === EX("Eve"),
         );
 
-        expect(
-          eveCarol || carolEve,
-          "Eve owl:sameAs Carol (or Carol owl:sameAs Eve) must be inferred via FunctionalProperty",
-        ).toBe(true);
+        expect(eveCarol, "Eve owl:sameAs Carol must be in result").toBe(true);
+        expect(carolEve, "Carol owl:sameAs Eve must be in result").toBe(true);
       } finally {
         fresh.terminate();
       }

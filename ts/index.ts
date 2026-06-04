@@ -782,12 +782,12 @@ export class RdfReasoner {
       // FP/IFP workaround: compute JS sameAs pairs + strip FP/IFP declarations
       // before sending to WASM to prevent the ALIF+ precompute hang.
       const storeFpSameAsQuads: Quad[] = [];
-      const storeInferredGraphNode = inferredGraphNode;
-      const storeSameAsNode = DataFactory.namedNode(OWL_SAME_AS);
+      const sameAsNode = DataFactory.namedNode(OWL_SAME_AS);
 
       const storeFpProps = new Set(baseQuads
         .filter(q => q.predicate.value === RDF_TYPE && q.object.value === OWL_FUNCTIONAL_PROPERTY)
         .map(q => q.subject.value));
+      const storeFpPropsToStrip = new Set<string>();
       if (storeFpProps.size > 0) {
         for (const prop of storeFpProps) {
           const bySubject = new Map<string, import("@rdfjs/types").NamedNode[]>();
@@ -798,12 +798,14 @@ export class RdfReasoner {
               else arr.push(q.object as import("@rdfjs/types").NamedNode);
             }
           }
+          const hasMultiFiller = [...bySubject.values()].some(arr => arr.length >= 2);
+          if (hasMultiFiller) storeFpPropsToStrip.add(prop);
           for (const objects of bySubject.values()) {
             if (objects.length >= 2) {
               for (let i = 0; i < objects.length; i++) {
                 for (let j = i + 1; j < objects.length; j++) {
-                  storeFpSameAsQuads.push(DataFactory.quad(objects[i], storeSameAsNode, objects[j], storeInferredGraphNode));
-                  storeFpSameAsQuads.push(DataFactory.quad(objects[j], storeSameAsNode, objects[i], storeInferredGraphNode));
+                  storeFpSameAsQuads.push(DataFactory.quad(objects[i], sameAsNode, objects[j], inferredGraphNode));
+                  storeFpSameAsQuads.push(DataFactory.quad(objects[j], sameAsNode, objects[i], inferredGraphNode));
                 }
               }
             }
@@ -813,6 +815,7 @@ export class RdfReasoner {
       const storeIfpProps = new Set(baseQuads
         .filter(q => q.predicate.value === RDF_TYPE && q.object.value === OWL_INVERSE_FUNCTIONAL_PROPERTY)
         .map(q => q.subject.value));
+      const storeIfpPropsToStrip = new Set<string>();
       if (storeIfpProps.size > 0) {
         for (const prop of storeIfpProps) {
           const byObject = new Map<string, import("@rdfjs/types").NamedNode[]>();
@@ -823,41 +826,18 @@ export class RdfReasoner {
               else arr.push(q.subject as import("@rdfjs/types").NamedNode);
             }
           }
+          const hasMultiFiller = [...byObject.values()].some(arr => arr.length >= 2);
+          if (hasMultiFiller) storeIfpPropsToStrip.add(prop);
           for (const subjects of byObject.values()) {
             if (subjects.length >= 2) {
               for (let i = 0; i < subjects.length; i++) {
                 for (let j = i + 1; j < subjects.length; j++) {
-                  storeFpSameAsQuads.push(DataFactory.quad(subjects[i], storeSameAsNode, subjects[j], storeInferredGraphNode));
-                  storeFpSameAsQuads.push(DataFactory.quad(subjects[j], storeSameAsNode, subjects[i], storeInferredGraphNode));
+                  storeFpSameAsQuads.push(DataFactory.quad(subjects[i], sameAsNode, subjects[j], inferredGraphNode));
+                  storeFpSameAsQuads.push(DataFactory.quad(subjects[j], sameAsNode, subjects[i], inferredGraphNode));
                 }
               }
             }
           }
-        }
-      }
-      // Only strip FP/IFP declarations for properties that have multi-filler patterns.
-      const storeFpPropsToStrip = new Set<string>();
-      for (const prop of storeFpProps) {
-        const bySubject = new Map<string, number>();
-        for (const q of baseQuads) {
-          if (q.predicate.value === prop && q.subject.termType === "NamedNode" && q.object.termType === "NamedNode") {
-            bySubject.set(q.subject.value, (bySubject.get(q.subject.value) ?? 0) + 1);
-          }
-        }
-        for (const count of bySubject.values()) {
-          if (count >= 2) { storeFpPropsToStrip.add(prop); break; }
-        }
-      }
-      const storeIfpPropsToStrip = new Set<string>();
-      for (const prop of storeIfpProps) {
-        const byObject = new Map<string, number>();
-        for (const q of baseQuads) {
-          if (q.predicate.value === prop && q.subject.termType === "NamedNode" && q.object.termType === "NamedNode") {
-            byObject.set(q.object.value, (byObject.get(q.object.value) ?? 0) + 1);
-          }
-        }
-        for (const count of byObject.values()) {
-          if (count >= 2) { storeIfpPropsToStrip.add(prop); break; }
         }
       }
       const storeHasPropsToStrip = storeFpPropsToStrip.size > 0 || storeIfpPropsToStrip.size > 0;
@@ -904,7 +884,7 @@ export class RdfReasoner {
           const key = `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`;
           if (!existingKeys.has(key)) {
             existingKeys.add(key);
-            // Push a graph-less version for the allQuads array (graph is added below)
+            // allQuads graph is set to inferredGraphNode in the loop below via addQuad
             allQuads.push(DataFactory.quad(q.subject, q.predicate, q.object));
           }
         }
@@ -980,6 +960,7 @@ export class RdfReasoner {
         .filter(q => q.predicate.value === RDF_TYPE && q.object.value === OWL_FUNCTIONAL_PROPERTY)
         .map(q => q.subject.value));
 
+      const fpPropsToStrip = new Set<string>();
       if (fpProps.size > 0) {
         for (const prop of fpProps) {
           // Group ABox assertions by subject: subject → [object, ...]
@@ -994,6 +975,9 @@ export class RdfReasoner {
               }
             }
           }
+          // Determine stripping from the same bySubject data; no second scan needed.
+          const hasMultiFiller = [...bySubject.values()].some(arr => arr.length >= 2);
+          if (hasMultiFiller) fpPropsToStrip.add(prop);
           // For each subject with 2+ objects, all objects are owl:sameAs each other
           for (const objects of bySubject.values()) {
             if (objects.length >= 2) {
@@ -1012,6 +996,12 @@ export class RdfReasoner {
         .filter(q => q.predicate.value === RDF_TYPE && q.object.value === OWL_INVERSE_FUNCTIONAL_PROPERTY)
         .map(q => q.subject.value));
 
+      // Strip FP/IFP declarations ONLY for properties that have multi-filler ABox
+      // assertions (i.e., patterns that would trigger the ALIF+ precompute hang in
+      // native Konclude v0.7.0).  Properties with 0 or 1 filler are passed through
+      // intact so WASM can handle them normally (e.g., for inverse-of inference,
+      // domain/range, or FP data-property inconsistency detection).
+      const ifpPropsToStrip = new Set<string>();
       if (ifpProps.size > 0) {
         for (const prop of ifpProps) {
           // Group ABox assertions by object: object → [subject, ...]
@@ -1026,6 +1016,9 @@ export class RdfReasoner {
               }
             }
           }
+          // Determine stripping from the same byObject data; no second scan needed.
+          const hasMultiFiller = [...byObject.values()].some(arr => arr.length >= 2);
+          if (hasMultiFiller) ifpPropsToStrip.add(prop);
           // For each object with 2+ subjects, all subjects are owl:sameAs each other
           for (const subjects of byObject.values()) {
             if (subjects.length >= 2) {
@@ -1037,39 +1030,6 @@ export class RdfReasoner {
               }
             }
           }
-        }
-      }
-
-      // Strip FP/IFP declarations ONLY for properties that have multi-filler ABox
-      // assertions (i.e., patterns that would trigger the ALIF+ precompute hang in
-      // native Konclude v0.7.0).  Properties with 0 or 1 filler are passed through
-      // intact so WASM can handle them normally (e.g., for inverse-of inference,
-      // domain/range, or FP data-property inconsistency detection).
-      //
-      // Collect FP property IRIs that have 2+ distinct fillers for some subject:
-      const fpPropsToStrip = new Set<string>();
-      for (const prop of fpProps) {
-        const bySubject = new Map<string, number>();
-        for (const q of inputQuads) {
-          if (q.predicate.value === prop && q.subject.termType === "NamedNode" && q.object.termType === "NamedNode") {
-            bySubject.set(q.subject.value, (bySubject.get(q.subject.value) ?? 0) + 1);
-          }
-        }
-        for (const count of bySubject.values()) {
-          if (count >= 2) { fpPropsToStrip.add(prop); break; }
-        }
-      }
-      // Collect IFP property IRIs that have 2+ distinct subjects for some object:
-      const ifpPropsToStrip = new Set<string>();
-      for (const prop of ifpProps) {
-        const byObject = new Map<string, number>();
-        for (const q of inputQuads) {
-          if (q.predicate.value === prop && q.subject.termType === "NamedNode" && q.object.termType === "NamedNode") {
-            byObject.set(q.object.value, (byObject.get(q.object.value) ?? 0) + 1);
-          }
-        }
-        for (const count of byObject.values()) {
-          if (count >= 2) { ifpPropsToStrip.add(prop); break; }
         }
       }
 
