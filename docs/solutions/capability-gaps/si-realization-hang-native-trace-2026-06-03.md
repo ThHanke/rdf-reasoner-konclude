@@ -124,7 +124,7 @@ Exit code: **0**
 |----------|-------|
 | Expressiveness | `SI` |
 | Exit code | `0` |
-| Total time | ~46 ms (incl. JVM/binary startup) |
+| Total time | ~46 ms (incl. binary startup) |
 | Realization time | 3 ms (lazy) |
 | ClassAssertion: `owl:Thing` for `alice` | YES |
 | ClassAssertion: `A` for `alice` | YES |
@@ -290,10 +290,13 @@ The expressiveness `SI` label appears in precomputing, class classification, pro
 classification, and realization log lines — confirming all four phases share the same
 expressiveness tag.
 
-The key distinction from simpler (AL-family) ontologies: `SI` triggers a full KPSet
-classification before realization, not just saturation-extraction. In native this
-completes without issue; the WASM hang implies the KPSet or post-classification realizer
-thread lifecycle does not drain cleanly in the ported threading model.
+The key distinction from simpler (AL-family) ontologies: the native logs show
+`(lazy) realization` for both fixtures, indicating the realizer found no additional
+satisfiability tests needed beyond saturation. This is consistent with the zero-work
+hang hypothesis (plan fix path 3b): if no tableau jobs are queued,
+`setDynamicRequirementProcessed()` never fires for those steps and the realizer
+semaphore is never signalled. In native this drains cleanly; the WASM hang implies
+the zero-work completion path does not drain correctly in the ported threading model.
 
 ---
 
@@ -302,16 +305,19 @@ thread lifecycle does not drain cleanly in the ported threading model.
 For the WASM `materialize()` call on SI-expressiveness ontologies to complete:
 
 1. **Lazy realization must exit** — Native `Finished (lazy) realization in 3–4 ms`. The
-   WASM realization call does not return; the thread pool or semaphore used by the
-   `SI`-path realizer is not being drained. Investigate `stopAndClearRealizers()` call
-   in the reset path and whether the SI-path allocates additional realizer threads not
-   cleaned up by the current `reset()` implementation.
+   WASM realization call does not return. Unit 2 instrumentation should target the
+   ranked candidates from plan-040: (a) BackendAssCache Update2 completion — confirm
+   the cache update fully signals before realization starts; (b) zero-work hang
+   (most probable, fix path 3b) — if no tableau jobs are queued,
+   `setDynamicRequirementProcessed()` never fires and the realizer semaphore is never
+   signalled; (c) STPU pool exhaustion — confirm the thread pool has available slots
+   when the realizer tries to schedule.
 
-2. **Output must include three ClassAssertion facts for R7a**:
+2. **Output must include two ClassAssertion facts for R7a**:
    - `ClassAssertion(owl:Thing, alice)` — all named individuals are a member of Thing
    - `ClassAssertion(A, alice)` — direct assertion, propagated through realization
 
-3. **Output must include four ClassAssertion facts for R7b**:
+3. **Output must include three ClassAssertion facts for R7b**:
    - `ClassAssertion(owl:Thing, alice)`
    - `ClassAssertion(C, alice)` — inferred: `A⊑C` via disjointUnionOf TBox axiom
    - `ClassAssertion(A, alice)` — direct assertion
