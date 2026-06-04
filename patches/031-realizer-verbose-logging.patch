@@ -1,10 +1,10 @@
-diff --git a/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp b/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp
---- a/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp
-+++ b/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp
-@@ -143,6 +143,14 @@
+--- a/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp	2026-06-04 08:35:23.793311122 +0200
++++ b/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp	2026-06-04 08:37:18.931725406 +0200
+@@ -143,6 +143,16 @@
  					cint64 initRoleTime = timer.elapsed() - initConTime;
  					initializeIndividualProcessingKPSetsFromConsistencyData(reqConfPreCompItem);
  					cint64 initIndiTime = timer.elapsed() - initRoleTime;
++					#ifdef WASM_REALIZATION_VERBOSE
 +					{
 +						cint64 possInstCount = 0;
 +						QList<COptimizedKPSetConceptInstancesItem*>* pil = reqConfPreCompItem->getProcessingPossibleConceptInstancesItemList();
@@ -13,43 +13,55 @@ diff --git a/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyReali
 +						}
 +						fprintf(stderr, "[WASM-REALIZER] initializeItems: possibleInstances items=%lld\n", (long long)possInstCount);
 +					}
++					#endif
  					reqConfPreCompItem->setItemsInitialized(true);
-
-
-@@ -1013,6 +1021,8 @@
+ 
+ 
+@@ -1013,6 +1023,10 @@
  						}
  					}
-
+ 
++					#ifdef WASM_REALIZATION_VERBOSE
 +					fprintf(stderr, "[WASM-REALIZER] initKPSets: indiProcVector=%s\n",
 +						indiProcVector ? "non-null (indiProcVector path)" : "null (BackendAssCache path)");
-
++					#endif
+ 
  					QList<COptimizedKPSetConceptInstancesItem*> equivClassList;
  					initializeEquivalentClassList(&equivClassList,reqConfPreCompItem);
-@@ -3278,6 +3288,7 @@
+@@ -3278,6 +3292,9 @@
  			}
-
+ 
  			bool COptimizedRepresentativeKPSetOntologyRealizingThread::createNextTest() {
++				#ifdef WASM_REALIZATION_VERBOSE
 +				fprintf(stderr, "[WASM-REALIZER] createNextTest: ontItemList.size()=%d\n", (int)mProcessingOntItemList.size());
-
-
++				#endif
+ 
+ 
  				COntologyRealizingItem* loopOntPreCompItem = 0;
-@@ -4514,6 +4525,8 @@
-
-
+@@ -4514,6 +4531,10 @@
+ 
+ 
  			COptimizedRepresentativeKPSetOntologyRealizingThread* COptimizedRepresentativeKPSetOntologyRealizingThread::setDynamicRequirementProcessed(COntologyRealizingItem* ontRealItem, CRealizingTestingStep* realizingStep, COntologyRealizingDynamicRequirmentProcessingData* procData) {
++				#ifdef WASM_REALIZATION_VERBOSE
 +				fprintf(stderr, "[WASM-REALIZER] setDynReqProcessed: step=%d\n",
 +					realizingStep ? (int)realizingStep->getRealizingTestingType() : -1);
++				#endif
  				procData->decProcessingItemCount(realizingStep);
  				if (!procData->hasAssociatedRelizationTestingStepProcessingItemCount(realizingStep)) {
  					CRealizingTestingStep* realStep = procData->getAssociatedRelizationTestingStep(realizingStep->getRealizingTestingType());
-@@ -4532,7 +4545,7 @@
+@@ -4532,8 +4553,13 @@
  						callbackData->decProcessingRequirmentCount();
  						if (!callbackData->hasCurrentProcessingRequirmentCount()) {
  							ontRealItem->logRequirementProcessingFinishStatistics(procData->getStatistics());
 -							CCallbackData* callback = callbackData->takeCallback();
 -							if (callback) callback->doCallback();
 +							CCallbackData* callback = callbackData->takeCallback();
-+							if (callback) { fprintf(stderr, "[WASM-REALIZER] doCallback() firing\n"); callback->doCallback(); }
++							if (callback) {
++								#ifdef WASM_REALIZATION_VERBOSE
++								fprintf(stderr, "[WASM-REALIZER] doCallback() firing\n");
++								#endif
++								callback->doCallback();
++							}
  							delete callbackData;
  						}
  					}

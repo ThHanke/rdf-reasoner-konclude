@@ -544,14 +544,27 @@ describe.skipIf(!wasmExists)("Class collections (R12)", () => {
     expect(result, "individual in two AllDisjointClasses members must be detected as inconsistent").toBe(false);
   }, 30_000);
 
-  // ── AllDisjointClasses — materialize: WASM REGRESSION ────────────────────
+  // ── AllDisjointClasses — materialize ─────────────────────────────────────
 
-  // WASM REGRESSION: native Konclude v0.7.0 completes correctly in ~8ms.
-  // The WASM realization pipeline hangs for ontologies with SI-expressiveness
-  // (AllDisjointClasses triggers SI). Root cause: WASM-specific realization
-  // thread lifecycle regression. See parity-gap-native-investigation-2026-06-03.md.
-  it.skip("WASM REGRESSION — AllDisjointClasses/materialize: realization hang (WASM regression, native works)", async () => {
-    // Not testable — materialize() with AllDisjointClasses hangs in WASM; native works in ~8ms
+  // Fixed by patch-030 (saturation-clash-combined): the SI-expressiveness
+  // realization hang is resolved.  Native Konclude v0.7.0 completes in ~8ms;
+  // WASM now completes correctly as well.
+  it("AllDisjointClasses — materialize: X:A inferred types (fix: patch-030)", async () => {
+    const inferred = await reasoner.materialize(quads);
+    // X is typed A — must appear in materialized output
+    expect(
+      hasTriple(inferred, EX("X"), RDF_TYPE, EX("A")),
+      "X rdf:type A must be present in materialized output",
+    ).toBe(true);
+    // X must NOT be inferred as B or C (A,B,C are pairwise disjoint)
+    expect(
+      hasTriple(inferred, EX("X"), RDF_TYPE, EX("B")),
+      "X rdf:type B must NOT be inferred (A disjoint with B)",
+    ).toBe(false);
+    expect(
+      hasTriple(inferred, EX("X"), RDF_TYPE, EX("C")),
+      "X rdf:type C must NOT be inferred (A disjoint with C)",
+    ).toBe(false);
   }, 30_000);
 
   // ── disjointUnionOf — checkConsistency: happy path ────────────────────────
@@ -603,14 +616,28 @@ describe.skipIf(!wasmExists)("Class collections (R12)", () => {
     ).toBe(true);
   }, 30_000);
 
-  // ── disjointUnionOf — materialize: WASM REGRESSION ───────────────────────
+  // ── disjointUnionOf — materialize ──────────────────────────────────────────
 
-  // WASM REGRESSION: native Konclude v0.7.0 completes correctly in ~8ms.
-  // The WASM realization pipeline hangs for ontologies with SI-expressiveness
-  // (AllDisjointClasses triggers SI). Root cause: WASM-specific realization
-  // thread lifecycle regression. See parity-gap-native-investigation-2026-06-03.md.
-  it.skip("WASM REGRESSION — disjointUnionOf/materialize: realization hang (WASM regression, native works)", async () => {
-    // Not testable — materialize() with disjointUnionOf hangs in WASM; native works in ~8ms
+  // Fixed by patch-030 (saturation-clash-combined): the SI-expressiveness
+  // realization hang is resolved.  Native Konclude v0.7.0 completes in ~8ms;
+  // WASM now completes correctly as well.
+  it("disjointUnionOf — materialize: Y:E inferred types (fix: patch-030)", async () => {
+    const inferred = await reasoner.materialize(quads);
+    // D owl:disjointUnionOf (E F) implies E ⊑ D; Y is typed E → Y rdf:type D
+    expect(
+      hasTriple(inferred, EX("Y"), RDF_TYPE, EX("D")),
+      "Y rdf:type D must be inferred (E ⊑ D via disjointUnionOf)",
+    ).toBe(true);
+    // Y rdf:type E must be present in materialized output
+    expect(
+      hasTriple(inferred, EX("Y"), RDF_TYPE, EX("E")),
+      "Y rdf:type E must be present in materialized output",
+    ).toBe(true);
+    // Y must NOT be inferred as F (E and F are disjoint members of the union)
+    expect(
+      hasTriple(inferred, EX("Y"), RDF_TYPE, EX("F")),
+      "Y rdf:type F must NOT be inferred (E disjoint with F)",
+    ).toBe(false);
   }, 30_000);
 });
 
