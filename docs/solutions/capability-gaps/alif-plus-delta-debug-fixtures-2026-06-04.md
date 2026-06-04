@@ -401,3 +401,98 @@ All fixtures are at `/tmp/konclude-test/` (ephemeral; recreate for each investig
 - `fixture-b-notyping.nt` — FP, 2 fillers, no NI typing (HANGS)
 - `fixture-c.nt` — IFP, 1 subject (COMPLETES)
 - `fixture-d.nt` — IFP, 2 subjects (HANGS)
+
+---
+
+## Unit 4 WASM Verbose Log Observations
+
+**Build:** `WASM_PRECOMP_VERBOSE=ON` via `docker-compose.override.yml`, applied via
+`patches/032-precomp-verbose-logging.patch`. Log points instrument
+`CTotallyPrecomputationThread::createNextTest()` and related phase-gate functions.
+
+**Test method:** Vitest run with a warmup `checkConsistency` call (no FP) before each fixture.
+Output captured from `[WASM-PRECOMP]` lines in stderr during the test run.
+
+**Key discovery: Fixture A is a WASM regression** — it also hangs in WASM, despite completing
+in ~19ms in native Konclude v0.7.0. The native ALIF+ hang was confirmed to affect only the
+2-filler (Fixture B) case natively; the WASM port has a worse hang that triggers even with
+1 filler (Fixture A).
+
+### Warmup (no FP) — COMPLETES
+
+The trivial warmup ontology (no `owl:FunctionalProperty`) processes through all phase gates:
+
+```text
+[WASM-PRECOMP] createNextTest: entry, processingList.size()=1
+[WASM-PRECOMP] before-while: isEmpty=N
+[WASM-PRECOMP] while-iter-start
+[WASM-PRECOMP] got-first, ptr=0x5c18000
+[WASM-PRECOMP] cast-done, ptr=0x5c18000
+[WASM-PRECOMP] loop: consistenceStepRequired=Y, finished=N, reqsSatisfied=Y, conceptSatCreated=N
+[WASM-PRECOMP] phaseGate: CONCEPT_SAT_JOB_CREATE, indiCount=3
+[WASM-PRECOMP] phaseGate: CONCEPT_SAT_JOB_SUBMITTED
+[WASM-PRECOMP] phaseGate: INDIVIDUALS_QUEUED, indiAdded=true, remaining=1
+[WASM-PRECOMP] ...
+[WASM-PRECOMP] phaseGate: INDI_SAT_JOB_SUBMIT, batchSize=1
+[WASM-PRECOMP] phaseGate: INDI_SAT_BATCH_DONE, saturationID=1
+[WASM-PRECOMP] phaseGate: ALL_INDI_SAT_DONE_SYNC_RETRIEVE_START
+[WASM-PRECOMP] phaseGate: BACKEND_CACHE_RETRIEVE_START, fullCG=true, limit=-1
+[WASM-PRECOMP] phaseGate: BACKEND_CACHE_RETRIEVE_DONE, resultSize=0
+[WASM-PRECOMP] phaseGate: ALL_INDI_SAT_DONE_SYNC_RETRIEVE_DONE
+[WASM-PRECOMP] phaseGate: CREATE_CONSISTENCE_CHECK_START
+[WASM-PRECOMP] isAllAssertionIndiSatSufficient: checked=true, result=true
+[WASM-PRECOMP] phaseGate: FINISH_ONTOLOGY_PRECOMPUTATION, allStepsFinished=false
+```
+
+### Fixture A — FP, 1 filler — HANGS IN WASM
+
+Last log line before hang (same thread, immediately after warmup completes):
+
+```text
+[WASM-PRECOMP] createNextTest: entry, processingList.size()=1
+```
+
+No further output. The `before-while` log never fires. The hang occurs after the very first
+`createNextTest()` call for the FP ontology — the function body never reaches the while-loop
+condition check. This is **a WASM regression** — native Konclude v0.7.0 completes Fixture A
+in ~19ms.
+
+### Fixture B — FP, 2 fillers — HANGS IN WASM
+
+Last log line before hang:
+
+```text
+[WASM-PRECOMP] createNextTest: entry, processingList.size()=1
+```
+
+**Identical to Fixture A.** No divergence between 1-filler and 2-filler cases in WASM.
+
+### Exact divergence point
+
+**There is no divergence between Fixture A and Fixture B in WASM.** Both hang at the same
+phase: `createNextTest: entry` → hang (no `before-while` log). The WASM hang point is
+**earlier** than the native hang point:
+
+| Build  | Fixture A (1 filler) | Fixture B (2 fillers) | Hang point                                                    |
+| ------ | -------------------- | --------------------- | ------------------------------------------------------------- |
+| Native | COMPLETES ~19ms      | HANGS in precomputing | After "Precomputing ontology … ALIF+" log                     |
+| WASM   | HANGS                | HANGS                 | After first `createNextTest: entry` — before `before-while`   |
+
+The WASM hang precedes even the first `while` loop iteration in `createNextTest()`. This
+suggests the hang is in the **initialization of the precomputing phase** for ALIF+ ontologies
+— specifically in the machinery that routes the precomputing event to the thread before
+`createNextTest()` is called again.
+
+### Working hypothesis
+
+The `createNextTest: entry` log fires from the main WASM thread context (event handler
+dispatch). After creating the concept saturation job (if it reaches `CONCEPT_SAT_JOB_SUBMITTED`)
+the job is submitted to the STPU. For FP-containing ontologies, the STPU or the saturation
+kernel hangs before the callback returns to the precomputing thread, so `createNextTest()` is
+never called a second time. Since even Fixture A (1 filler, no merge needed) hangs, the
+trigger is the *presence of `owl:FunctionalProperty`* in the ALIF+ expressiveness path, not
+the *number of fillers*.
+
+**Next investigation step:** Add logging to `createSaturationConstructionJob()` and the STPU
+dispatch to confirm whether the hang is in the concept saturation job itself (STPU-level
+deadlock for ALIF+ TBox) or in the precomputing thread's event delivery mechanism.
