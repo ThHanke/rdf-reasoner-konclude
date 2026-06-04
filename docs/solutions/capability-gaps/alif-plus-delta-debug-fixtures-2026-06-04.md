@@ -1,0 +1,403 @@
+---
+module: capability-gaps
+tags:
+  [
+    native-trace,
+    functional-property,
+    inverse-functional-property,
+    alif-plus,
+    precomputing-hang,
+    delta-debug,
+    wasm-regression,
+    upstream-bug,
+  ]
+problem_type: hang-investigation
+date: 2026-06-04
+---
+
+# ALIF+ Delta-Debug Fixtures — Native Hang Investigation 2026-06-04
+
+## Purpose
+
+Establish minimal deterministic NTriples fixture pairs for `owl:FunctionalProperty` (FP) and
+`owl:InverseFunctionalProperty` (IFP) where one fixture completes and the next (one triple
+added) hangs. These form the instrumentation baseline for Unit 4 C++ precomputing diagnostics.
+
+**Key finding: The hang occurs in native Konclude v0.7.0, not just WASM. Fixtures B and D both
+hang at the precomputing stage on the native Docker image. This confirms the ALIF+ hang is an
+upstream Konclude bug (or intended limitation) triggered by FP/IFP merge constraints, not a
+WASM-specific regression.**
+
+---
+
+## Test Method
+
+Docker image: `konclude/konclude:latest` (v0.7.0-1138 — 500e11d9, Jun 18 2021)
+
+Fixtures written to `/tmp/konclude-test/`. Command template:
+
+```
+timeout 15 docker run --rm -v /tmp/konclude-test:/data konclude/konclude:latest \
+  realization -i /data/<file>.nt -o /data/<file>-out.owl 2>&1
+```
+
+Timeout: 15 seconds. Exit code 124 = timeout (hang). Exit code 0 = completed.
+
+---
+
+## FunctionalProperty Pair (Fixtures A / B)
+
+### Fixture A — FP, one filler (COMPLETES)
+
+**File:** `/tmp/konclude-test/fixture-a.nt`
+
+**Expressiveness:** `ALIF+`
+
+**Semantic content:** `owl:FunctionalProperty hasMother`. Individual `alice` has exactly one
+filler `eve`. No merge constraint is triggered — one filler per subject satisfies functionality
+trivially.
+
+```ntriples
+<http://ex.org/hasMother> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<http://ex.org/hasMother> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#FunctionalProperty> .
+<http://ex.org/alice> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#NamedIndividual> .
+<http://ex.org/eve> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#NamedIndividual> .
+<http://ex.org/alice> <http://ex.org/hasMother> <http://ex.org/eve> .
+```
+
+**Docker stdout (full):**
+
+```
+{info} 14:21:30:458 >> Starting Konclude ...
+{info} 14:21:30:458 >> Konclude - Uni Ulm Parallel Reasoner
+{info} 14:21:30:458 >> Reasoner for the SROIQV(D) Description Logic, 64-bit, Version v0.7.0-1138 - 500e11d9 (Jun 18 2021)
+
+{info} 14:21:30:468 >> Starting realization processing for ontology '/data/fixture-a.nt'.
+{info} 14:21:30:472 >> Initializing reasoner. Creating calculation context.
+{info} 14:21:30:488 >> Reasoner initialized with 1 processing unit(s).
+{info} 14:21:30:489 >> Preprocessing ontology 'http://konclude.com/test/kb'.
+{info} 14:21:30:498 >> Finished preprocessing in 7 ms for ontology 'http://konclude.com/test/kb'.
+{info} 14:21:30:498 >> Precomputing ontology 'http://konclude.com/test/kb', expressiveness 'ALIF+'.
+{info} 14:21:30:503 >> Finished precomputing in 4 ms for ontology 'http://konclude.com/test/kb'.
+{info} 14:21:30:503 >> Classifying ontology 'http://konclude.com/test/kb', expressiveness 'ALIF+'.
+{info} 14:21:30:503 >> Ontology 'http://konclude.com/test/kb' has been sufficiently saturated, extracting data for classification.
+{info} 14:21:30:507 >> Finished class classification in 3 ms for ontology 'http://konclude.com/test/kb'.
+{info} 14:21:30:507 >> Classifying object properties for ontology 'http://konclude.com/test/kb', expressiveness 'ALIF+'.
+{info} 14:21:30:511 >> Finished object property classification in 3 ms for ontology 'http://konclude.com/test/kb'.
+{info} 14:21:30:512 >> Realizing ontology 'http://konclude.com/test/kb', expressiveness 'ALIF+'.
+{info} 14:21:30:517 >> Finished (lazy) realization in 4 ms for ontology 'http://konclude.com/test/kb'.
+{info} 14:21:30:517 >> Query 'UnnamedRealizeQuery' processed in '0' ms.
+{info} 14:21:30:519 >> Query 'UnnamedWriteIndividualTypesQuery' processed in '0' ms.
+EXIT:0
+```
+
+**Pipeline timing:**
+
+| Stage                          | Duration |
+| ------------------------------ | -------- |
+| Preprocessing                  | 7 ms     |
+| Precomputing (`ALIF+`)         | 4 ms     |
+| Class classification           | 3 ms     |
+| Object property classification | 3 ms     |
+| Realization (lazy)             | 4 ms     |
+
+**Output file:** `/tmp/konclude-test/fixture-a-out.owl` — contains `owl:Thing` assertions for
+`alice` and `eve`.
+
+---
+
+### Fixture B — FP, two fillers (HANGS — native)
+
+**File:** `/tmp/konclude-test/fixture-b.nt`
+
+**Expressiveness:** `ALIF+`
+
+**Delta from Fixture A:** +2 triples:
+
+```ntriples
+<http://ex.org/carol> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#NamedIndividual> .
+<http://ex.org/alice> <http://ex.org/hasMother> <http://ex.org/carol> .
+```
+
+**Semantic content:** `alice` now has two distinct named fillers (`eve`, `carol`) for the
+functional property `hasMother`. This forces Konclude to attempt a merge of the two fillers,
+which is the precomputing step that hangs.
+
+**Full fixture:**
+
+```ntriples
+<http://ex.org/hasMother> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<http://ex.org/hasMother> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#FunctionalProperty> .
+<http://ex.org/alice> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#NamedIndividual> .
+<http://ex.org/eve> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#NamedIndividual> .
+<http://ex.org/alice> <http://ex.org/hasMother> <http://ex.org/eve> .
+<http://ex.org/carol> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#NamedIndividual> .
+<http://ex.org/alice> <http://ex.org/hasMother> <http://ex.org/carol> .
+```
+
+**Docker stdout (full — timeout at 15s):**
+
+```
+{info} 14:21:39:052 >> Starting Konclude ...
+{info} 14:21:39:052 >> Konclude - Uni Ulm Parallel Reasoner
+{info} 14:21:39:052 >> Reasoner for the SROIQV(D) Description Logic, 64-bit, Version v0.7.0-1138 - 500e11d9 (Jun 18 2021)
+
+{info} 14:21:39:061 >> Starting realization processing for ontology '/data/fixture-b.nt'.
+{info} 14:21:39:065 >> Initializing reasoner. Creating calculation context.
+{info} 14:21:39:076 >> Reasoner initialized with 1 processing unit(s).
+{info} 14:21:39:080 >> Preprocessing ontology 'http://konclude.com/test/kb'.
+{info} 14:21:39:088 >> Finished preprocessing in 6 ms for ontology 'http://konclude.com/test/kb'.
+{info} 14:21:39:088 >> Precomputing ontology 'http://konclude.com/test/kb', expressiveness 'ALIF+'.
+[HANG — no further output before 15s timeout]
+EXIT:124
+```
+
+**Hang location:** Inside the precomputing stage, after the log line `Precomputing ontology ...
+expressiveness 'ALIF+'`. No "Finished precomputing" line ever appears.
+
+---
+
+### Fixture B-notyping — FP, two fillers, no owl:NamedIndividual typing (HANGS — native)
+
+**File:** `/tmp/konclude-test/fixture-b-notyping.nt`
+
+**Purpose:** Verify whether omitting `owl:NamedIndividual` type declarations changes behavior.
+
+```ntriples
+<http://ex.org/hasMother> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<http://ex.org/hasMother> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#FunctionalProperty> .
+<http://ex.org/alice> <http://ex.org/hasMother> <http://ex.org/eve> .
+<http://ex.org/alice> <http://ex.org/hasMother> <http://ex.org/carol> .
+```
+
+**Docker stdout (full — timeout at 15s):**
+
+```
+{info} 14:23:11:509 >> Starting Konclude ...
+{info} 14:23:11:510 >> Konclude - Uni Ulm Parallel Reasoner
+{info} 14:23:11:510 >> Reasoner for the SROIQV(D) Description Logic, 64-bit, Version v0.7.0-1138 - 500e11d9 (Jun 18 2021)
+
+{info} 14:23:11:521 >> Starting realization processing for ontology '/data/fixture-b-notyping.nt'.
+{info} 14:23:11:525 >> Initializing reasoner. Creating calculation context.
+{info} 14:23:11:537 >> Reasoner initialized with 1 processing unit(s).
+{info} 14:23:11:537 >> Preprocessing ontology 'http://konclude.com/test/kb'.
+{info} 14:23:11:550 >> Finished preprocessing in 12 ms for ontology 'http://konclude.com/test/kb'.
+{info} 14:23:11:550 >> Precomputing ontology 'http://konclude.com/test/kb', expressiveness 'ALIF+'.
+[HANG — no further output before 15s timeout]
+EXIT:124
+```
+
+**Result:** Still hangs. Omitting `owl:NamedIndividual` typing does not change behavior.
+Expressiveness is still elevated to `ALIF+` by the two-filler FP pattern alone.
+
+---
+
+## InverseFunctionalProperty Pair (Fixtures C / D)
+
+### Fixture C — IFP, one subject (COMPLETES)
+
+**File:** `/tmp/konclude-test/fixture-c.nt`
+
+**Expressiveness:** `ALIF+`
+
+**Semantic content:** `owl:InverseFunctionalProperty hasDNA`. Individual `alice` has one IFP
+assertion pointing to `seq1`. No merge constraint is triggered — one subject per filler
+satisfies inverse functionality trivially.
+
+```ntriples
+<http://ex.org/hasDNA> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<http://ex.org/hasDNA> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#InverseFunctionalProperty> .
+<http://ex.org/alice> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#NamedIndividual> .
+<http://ex.org/seq1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#NamedIndividual> .
+<http://ex.org/alice> <http://ex.org/hasDNA> <http://ex.org/seq1> .
+```
+
+**Docker stdout (full):**
+
+```
+{info} 14:21:32:979 >> Starting Konclude ...
+{info} 14:21:32:979 >> Konclude - Uni Ulm Parallel Reasoner
+{info} 14:21:32:979 >> Reasoner for the SROIQV(D) Description Logic, 64-bit, Version v0.7.0-1138 - 500e11d9 (Jun 18 2021)
+
+{info} 14:21:32:989 >> Starting realization processing for ontology '/data/fixture-c.nt'.
+{info} 14:21:32:993 >> Initializing reasoner. Creating calculation context.
+{info} 14:21:33:000 >> Reasoner initialized with 1 processing unit(s).
+{info} 14:21:33:003 >> Preprocessing ontology 'http://konclude.com/test/kb'.
+{info} 14:21:33:013 >> Finished preprocessing in 9 ms for ontology 'http://konclude.com/test/kb'.
+{info} 14:21:33:013 >> Precomputing ontology 'http://konclude.com/test/kb', expressiveness 'ALIF+'.
+{info} 14:21:33:018 >> Finished precomputing in 4 ms for ontology 'http://konclude.com/test/kb'.
+{info} 14:21:33:018 >> Classifying ontology 'http://konclude.com/test/kb', expressiveness 'ALIF+'.
+{info} 14:21:33:018 >> Ontology 'http://konclude.com/test/kb' has been sufficiently saturated, extracting data for classification.
+{info} 14:21:33:021 >> Finished class classification in 2 ms for ontology 'http://konclude.com/test/kb'.
+{info} 14:21:33:021 >> Classifying object properties for ontology 'http://konclude.com/test/kb', expressiveness 'ALIF+'.
+{info} 14:21:33:026 >> Finished object property classification in 4 ms for ontology 'http://konclude.com/test/kb'.
+{info} 14:21:33:026 >> Realizing ontology 'http://konclude.com/test/kb', expressiveness 'ALIF+'.
+{info} 14:21:33:031 >> Finished (lazy) realization in 4 ms for ontology 'http://konclude.com/test/kb'.
+{info} 14:21:33:031 >> Query 'UnnamedRealizeQuery' processed in '0' ms.
+{info} 14:21:33:034 >> Query 'UnnamedWriteIndividualTypesQuery' processed in '1' ms.
+EXIT:0
+```
+
+**Pipeline timing:**
+
+| Stage                          | Duration |
+| ------------------------------ | -------- |
+| Preprocessing                  | 9 ms     |
+| Precomputing (`ALIF+`)         | 4 ms     |
+| Class classification           | 2 ms     |
+| Object property classification | 4 ms     |
+| Realization (lazy)             | 4 ms     |
+
+**Output file:** `/tmp/konclude-test/fixture-c-out.owl` — contains `owl:Thing` assertions for
+`alice` and `seq1`.
+
+---
+
+### Fixture D — IFP, two subjects (HANGS — native)
+
+**File:** `/tmp/konclude-test/fixture-d.nt`
+
+**Expressiveness:** `ALIF+`
+
+**Delta from Fixture C:** +2 triples:
+
+```ntriples
+<http://ex.org/bob> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#NamedIndividual> .
+<http://ex.org/bob> <http://ex.org/hasDNA> <http://ex.org/seq1> .
+```
+
+**Semantic content:** Both `alice` and `bob` now point to the same filler `seq1` via the
+inverse-functional property `hasDNA`. IFP forces a merge of `alice` and `bob` (they must be the
+same individual). This merge attempt is the precomputing step that hangs.
+
+**Full fixture:**
+
+```ntriples
+<http://ex.org/hasDNA> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<http://ex.org/hasDNA> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#InverseFunctionalProperty> .
+<http://ex.org/alice> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#NamedIndividual> .
+<http://ex.org/seq1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#NamedIndividual> .
+<http://ex.org/alice> <http://ex.org/hasDNA> <http://ex.org/seq1> .
+<http://ex.org/bob> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#NamedIndividual> .
+<http://ex.org/bob> <http://ex.org/hasDNA> <http://ex.org/seq1> .
+```
+
+**Docker stdout (full — timeout at 15s):**
+
+```
+{info} 14:22:11:132 >> Starting Konclude ...
+{info} 14:22:11:132 >> Konclude - Uni Ulm Parallel Reasoner
+{info} 14:22:11:132 >> Reasoner for the SROIQV(D) Description Logic, 64-bit, Version v0.7.0-1138 - 500e11d9 (Jun 18 2021)
+
+{info} 14:22:11:140 >> Starting realization processing for ontology '/data/fixture-d.nt'.
+{info} 14:22:11:144 >> Initializing reasoner. Creating calculation context.
+{info} 14:22:11:158 >> Reasoner initialized with 1 processing unit(s).
+{info} 14:22:11:158 >> Preprocessing ontology 'http://konclude.com/test/kb'.
+{info} 14:22:11:166 >> Finished preprocessing in 6 ms for ontology 'http://konclude.com/test/kb'.
+{info} 14:22:11:167 >> Precomputing ontology 'http://konclude.com/test/kb', expressiveness 'ALIF+'.
+[HANG — no further output before 15s timeout]
+EXIT:124
+```
+
+**Hang location:** Same as Fixture B — inside the precomputing stage, after the log line
+`Precomputing ontology ... expressiveness 'ALIF+'`.
+
+---
+
+## Summary Table
+
+| Fixture | Property | ABox pattern             | Triples | Expressiveness | Native result |
+| ------- | -------- | ------------------------ | ------- | -------------- | ------------- |
+| A       | FP       | 1 filler for alice       | 5       | `ALIF+`        | COMPLETES ~19ms |
+| B       | FP       | 2 fillers for alice      | 7       | `ALIF+`        | HANG (>15s)   |
+| B-notyping | FP    | 2 fillers, no NI typing  | 4       | `ALIF+`        | HANG (>15s)   |
+| C       | IFP      | 1 subject for seq1       | 5       | `ALIF+`        | COMPLETES ~19ms |
+| D       | IFP      | 2 subjects for seq1      | 7       | `ALIF+`        | HANG (>15s)   |
+
+**Minimal delta (FP):** exactly 2 triples (`carol NI` + `alice hasMother carol`), or exactly 1
+triple if owl:NamedIndividual typing is dropped (`alice hasMother carol` alone). The anonymous
+`carol` individual is inferred from the property assertion even without explicit typing.
+
+**Minimal delta (IFP):** exactly 2 triples (`bob NI` + `bob hasDNA seq1`).
+
+---
+
+## Analysis
+
+### Hang stage: Precomputing
+
+The "Precomputing" stage in Konclude implements BackendAssociatedCache (BackendAssCache) build
+and ABox saturation. Per the native operation mechanism trace (see
+`si-realization-hang-native-trace-2026-06-03.md`), precomputing performs two update phases
+(`Update1 → Retrieval1 → saturation → Update2`) to establish the saturation context needed for
+classification and realization.
+
+For FP/IFP with two merge candidates, the saturation must apply a functionality merge rule:
+
+- **FP:** `hasMother(alice, eve) ∧ hasMother(alice, carol) ∧ Functional(hasMother)` → merge
+  `eve` and `carol` into a single anonymous node.
+- **IFP:** `hasDNA(alice, seq1) ∧ hasDNA(bob, seq1) ∧ InverseFunctional(hasDNA)` → merge
+  `alice` and `bob` into a single anonymous node.
+
+The hang occurs when Konclude's precomputing thread waits for a merge result that is never
+delivered. This is consistent with the known ALIF+ precomputing hang documented in
+`project_owl2dl_parity_gaps.md` (R8 entry).
+
+### Native hang, not WASM regression
+
+**Important:** This is confirmed to be a native Konclude hang. The Docker image
+`konclude/konclude:latest` (v0.7.0-1138) hangs on Fixtures B and D. The WASM build's hang on
+the same fixtures is therefore:
+
+1. Not a bug introduced by the WASM port — it reproduces natively.
+2. A correct indicator of a known Konclude upstream limitation in the `ALIF+` precomputing path
+   when named individuals must be merged.
+3. Consistent with the upstream bug inventory in `project_upstream_konclude_bugs.md` (the
+   `FunctionalProperty+ABox ALIF+ hang` entry).
+
+### Why Fixture A/C complete but B/D hang
+
+Fixtures A and C involve a functional/inverse-functional property with a single filler or
+subject per relevant pair — no merge is required. The precomputing stage succeeds immediately
+because no equality constraint needs to be discharged.
+
+Fixtures B and D require the reasoner to merge two distinct named individuals. In the OWA
+(open-world assumption) ALIQ/ALIF+ tableau, merging two named individuals (which are distinct
+under the UNA — unique name assumption — unless explicitly unified) is a non-trivial operation.
+Konclude's native precomputing code hangs waiting for this merge to complete, suggesting a
+deadlock in the merge propagation mechanism for ALIF+ ABox saturation.
+
+### Expressiveness notes
+
+All four fixtures are labeled `ALIF+` by Konclude, including the one-filler cases (A and C).
+The `F` in `ALIF+` is contributed by the presence of the `owl:FunctionalProperty` or
+`owl:InverseFunctionalProperty` axiom in the TBox. The `+` suffix indicates ABox individuals are
+present. The expressiveness label alone does not distinguish the passing from the hanging cases —
+the hang is triggered by the *number* of merge candidates, not merely the presence of FP/IFP.
+
+---
+
+## Implications for Unit 4
+
+The precomputing hang is in the **native** Konclude code path. Unit 4 instrumentation of the
+WASM build will need to instrument the precomputing/saturation C++ code to confirm whether:
+
+1. The hang is a deadlock (thread waiting for a condition that is never signalled).
+2. The hang is an infinite loop (saturation rule firing repeatedly without progress).
+3. The hang differs between native and WASM builds in *where* it stalls (e.g., different thread
+   synchronization in the WASM pthreads pool).
+
+The minimal fixtures established here (Fixture A/B for FP, C/D for IFP) provide the smallest
+possible ontologies to trigger each behavior, minimizing noise in the precomputing trace.
+
+---
+
+## Fixture Files
+
+All fixtures are at `/tmp/konclude-test/` (ephemeral; recreate for each investigation session):
+
+- `fixture-a.nt` — FP, 1 filler (COMPLETES)
+- `fixture-b.nt` — FP, 2 fillers (HANGS)
+- `fixture-b-notyping.nt` — FP, 2 fillers, no NI typing (HANGS)
+- `fixture-c.nt` — IFP, 1 subject (COMPLETES)
+- `fixture-d.nt` — IFP, 2 subjects (HANGS)
