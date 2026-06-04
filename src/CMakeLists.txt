@@ -267,6 +267,11 @@ if(WASM_REALIZATION_VERBOSE)
   target_compile_definitions(konclude_kernel PRIVATE WASM_REALIZATION_VERBOSE)
 endif()
 
+option(WASM_PRECOMP_VERBOSE "Enable precomputing verbose logging (slow)" OFF)
+if(WASM_PRECOMP_VERBOSE)
+  target_compile_definitions(konclude_kernel PRIVATE WASM_PRECOMP_VERBOSE)
+endif()
+
 target_include_directories(konclude_kernel
     PUBLIC
         # Qt-free compatibility shim (added in Unit 3)
