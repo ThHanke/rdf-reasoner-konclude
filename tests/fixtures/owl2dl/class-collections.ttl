@@ -10,7 +10,7 @@
 #
 # The blank-node owl:AllDisjointClasses form works for checkConsistency()
 # (confirmed: issue13 case 9).  materialize() with blank-node collections
-# causes a hang → UPSTREAM_LIMITATION (skipped).
+# Fixed by patch-030 (saturation-clash-combined); tests activated in plan-040.
 # ---------------------------------------------------------------------------
 
 ex:A a owl:Class .

@@ -262,6 +262,11 @@ target_compile_definitions(konclude_kernel
         WASM_LOG_LEVEL=1
 )
 
+option(WASM_REALIZATION_VERBOSE "Enable realizer verbose fprintf logging for debugging" OFF)
+if(WASM_REALIZATION_VERBOSE)
+  target_compile_definitions(konclude_kernel PRIVATE WASM_REALIZATION_VERBOSE)
+endif()
+
 target_include_directories(konclude_kernel
     PUBLIC
         # Qt-free compatibility shim (added in Unit 3)
