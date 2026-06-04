@@ -74,6 +74,7 @@ const RDFS_CLASS = "http://www.w3.org/2000/01/rdf-schema#Class";
 const OWL_THING = "http://www.w3.org/2002/07/owl#Thing";
 const OWL_NOTHING = "http://www.w3.org/2002/07/owl#Nothing";
 const OWL_DIFFERENT_FROM = "http://www.w3.org/2002/07/owl#differentFrom";
+const OWL_COMPLEMENT_OF = "http://www.w3.org/2002/07/owl#complementOf";
 const OWL_ON_PROPERTY = "http://www.w3.org/2002/07/owl#onProperty";
 const OWL_SOME_VALUES_FROM = "http://www.w3.org/2002/07/owl#someValuesFrom";
 const OWL_RESTRICTION = "http://www.w3.org/2002/07/owl#Restriction";
@@ -617,6 +618,54 @@ export class RdfReasoner {
             this._consistencyCache = { hash: fingerprint, result: false };
           }
           return false;
+        }
+      }
+
+      // complementOf ABox clash: if individual typed as both A and B where
+      // `A owl:complementOf B`, the ontology is trivially inconsistent.
+      // Konclude v0.7.0 does not detect the named-class path; we short-circuit here.
+      // Only named-class pairs (both subject and object are NamedNodes) are handled;
+      // anonymous complements (restrictions as object) are left to the WASM kernel.
+      {
+        const complementPairs: [string, string][] = [];
+        for (const q of quadsArray) {
+          if (
+            q.predicate.termType === "NamedNode" &&
+            q.predicate.value === OWL_COMPLEMENT_OF &&
+            q.subject.termType === "NamedNode" &&
+            q.object.termType === "NamedNode"
+          ) {
+            complementPairs.push([q.subject.value, q.object.value]);
+          }
+        }
+        if (complementPairs.length > 0) {
+          // Build a map: individual IRI → set of named-class IRIs it is typed as
+          const typeMap = new Map<string, Set<string>>();
+          for (const q of quadsArray) {
+            if (
+              q.predicate.termType === "NamedNode" &&
+              q.predicate.value === RDF_TYPE &&
+              q.subject.termType === "NamedNode" &&
+              q.object.termType === "NamedNode"
+            ) {
+              let types = typeMap.get(q.subject.value);
+              if (types === undefined) {
+                types = new Set<string>();
+                typeMap.set(q.subject.value, types);
+              }
+              types.add(q.object.value);
+            }
+          }
+          for (const [classA, classB] of complementPairs) {
+            for (const types of typeMap.values()) {
+              if (types.has(classA) && types.has(classB)) {
+                if (fingerprint !== null) {
+                  this._consistencyCache = { hash: fingerprint, result: false };
+                }
+                return false;
+              }
+            }
+          }
         }
       }
 
