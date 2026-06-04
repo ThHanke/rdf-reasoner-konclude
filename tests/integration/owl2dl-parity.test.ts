@@ -845,37 +845,83 @@ describe.skipIf(!wasmExists)("Property characteristics", () => {
     ).toBe(true);
   });
 
-  // ── FunctionalProperty — all stages skipped (UPSTREAM_LIMITATION ALIF+ hang) ──
+  // ── FunctionalProperty — JS workaround (strip FP/IFP before WASM, compute sameAs in JS) ──
 
-  // UPSTREAM_LIMITATION: native Konclude v0.7.0 hangs indefinitely during
-  // precompute on ontologies with ALIF+ expressiveness (FunctionalProperty +
-  // ABox individuals forcing owl:sameAs inference).  Confirmed by Docker run.
-  // The WASM uses the same kernel so would also hang.  All three stages skipped.
-  it.skip(
-    "UPSTREAM_LIMITATION — FunctionalProperty/checkConsistency: consistent ontology (native Konclude hangs on ALIF+)",
+  // JS workaround for ALIF+ hang: FunctionalProperty/InverseFunctionalProperty
+  // declarations are stripped before sending to WASM, and sameAs pairs are
+  // computed in JS.  See ts/index.ts _materializeOnQuads for details.
+  it(
+    "FunctionalProperty/checkConsistency: TBox-only FP ontology is consistent → true",
     async () => {
-      // Not testable — would hang
+      // TBox-only FP ontology: hasMother is functional, no ABox individuals.
+      // ALIF+ hang occurs only when ABox individuals are present.
+      // TBox-only classification + consistency check must complete without hanging.
+      const tboxOnlyFpQuads = parseTurtle(`
+        @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+        @prefix owl:  <http://www.w3.org/2002/07/owl#> .
+        @prefix ex:   <http://example.org/> .
+        <http://example.org/fp-consistent-tbox-test> a owl:Ontology .
+        ex:hasMother a owl:ObjectProperty, owl:FunctionalProperty .
+        ex:Person    a owl:Class .
+      `);
+      const result = await reasoner.checkConsistency(tboxOnlyFpQuads);
+      expect(
+        result,
+        "TBox-only FunctionalProperty ontology must be consistent",
+      ).toBe(true);
     },
     30_000,
   );
 
-  it.skip(
-    "UPSTREAM_LIMITATION — FunctionalProperty/classify: TBox axiom (native Konclude hangs on ALIF+)",
+  it(
+    "FunctionalProperty/classify: TBox-only FP declaration classifies without error",
     async () => {
-      // Not testable — would hang
+      // TBox-only FP declaration — no ABox individuals.  The ALIF+ hang only
+      // occurs when ABox individuals force sameAs inference.  With no individuals,
+      // classification runs normally.
+      const tboxFpQuads = parseTurtle(`
+        @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+        @prefix owl:  <http://www.w3.org/2002/07/owl#> .
+        @prefix ex:   <http://example.org/> .
+        <http://example.org/fp-classify-test> a owl:Ontology .
+        ex:hasMother a owl:ObjectProperty, owl:FunctionalProperty .
+      `);
+      // Classify should complete without throwing and return a result
+      const result = await reasoner.classify(tboxFpQuads);
+      expect(Array.isArray(result), "classify must return an array").toBe(true);
     },
     30_000,
   );
 
-  it.skip(
-    "UPSTREAM_LIMITATION — FunctionalProperty/materialize: two values → owl:sameAs (native Konclude hangs on ALIF+)",
+  it(
+    "FunctionalProperty/materialize: two hasMother values → Eve owl:sameAs Carol",
     async () => {
       // A fresh RdfReasoner is required for FunctionalProperty sameAs tests.
       // BackendAssCache n=3 isolation bug: after prior calls, sameAs can silently disappear.
       const fresh = new RdfReasoner();
       await fresh.ready;
       try {
-        // ... test body would go here ...
+        const fpQuads = parseTurtle(`
+          @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+          @prefix owl:  <http://www.w3.org/2002/07/owl#> .
+          @prefix ex:   <http://example.org/> .
+          <http://example.org/fp-materialize-test> a owl:Ontology .
+          ex:Person a owl:Class .
+          ex:hasMother a owl:ObjectProperty, owl:FunctionalProperty .
+          ex:Alice a owl:NamedIndividual, ex:Person .
+          ex:Eve   a owl:NamedIndividual, ex:Person .
+          ex:Carol a owl:NamedIndividual, ex:Person .
+          ex:Alice ex:hasMother ex:Eve .
+          ex:Alice ex:hasMother ex:Carol .
+        `);
+        const inferred = await fresh.materialize(fpQuads);
+
+        const eveCarol = hasTriple(inferred, EX("Eve"), OWL_SAME_AS, EX("Carol"));
+        const carolEve = hasTriple(inferred, EX("Carol"), OWL_SAME_AS, EX("Eve"));
+        expect(
+          eveCarol || carolEve,
+          "Eve owl:sameAs Carol (or Carol owl:sameAs Eve) must be inferred via FunctionalProperty",
+        ).toBe(true);
       } finally {
         fresh.terminate();
       }
@@ -885,13 +931,10 @@ describe.skipIf(!wasmExists)("Property characteristics", () => {
 
   // ── InverseFunctionalProperty ──────────────────────────────────────────────
 
-  // UPSTREAM_LIMITATION: InverseFunctionalProperty + ABox realization also triggers
-  // the ALIF+ precompute hang in native Konclude v0.7.0 (same root cause as
-  // FunctionalProperty).  Confirmed: materialize() call times out at 30 s.
-  // Note that checkConsistency() on an IFP + DifferentIndividuals ontology DOES
-  // work (issue13 case 8) — the hang is specific to the realization/materialize path.
-  it.skip(
-    "UPSTREAM_LIMITATION — InverseFunctionalProperty/materialize: two subjects with same object → owl:sameAs inferred (native Konclude hangs on ALIF+)",
+  // JS workaround for ALIF+ hang: IFP declarations are stripped before WASM,
+  // and sameAs pairs are computed in JS.  See ts/index.ts _materializeOnQuads.
+  it(
+    "InverseFunctionalProperty/materialize: two subjects with same object → owl:sameAs inferred",
     async () => {
       // A fresh RdfReasoner is required for InverseFunctionalProperty sameAs tests.
       // BackendAssCache n=3 isolation bug: after prior calls, sameAs can silently disappear.
