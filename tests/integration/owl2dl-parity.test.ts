@@ -354,7 +354,7 @@ describe.skipIf(!wasmExists)("TBox constructs", () => {
   // tableau clash rule in the current kernel.  Contrast with case 7 in
   // issue13-owl-violations.test.ts where complementOf wraps a hasSelf restriction —
   // that structural variant works because it is processed via a different code path.
-  it.skip("UPSTREAM_LIMITATION — checkConsistency: individual in class ∩ complementOf(class) → false [named-class complementOf ABox clash not detected]", async () => {
+  it("checkConsistency: individual in class ∩ complementOf(class) → false [named-class complementOf ABox clash, JS pre-process]", async () => {
     const inconsistentQuads = parseTurtle(`
       @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
       @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
