@@ -347,13 +347,10 @@ describe.skipIf(!wasmExists)("TBox constructs", () => {
     expect(result).toBe(false);
   });
 
-  // UPSTREAM_LIMITATION: owl:complementOf between two named classes is not detected
-  // as ABox-level inconsistency by Konclude when both class names appear as rdf:type
-  // assertions on the same individual.  The complementOf axiom is processed as a
-  // class-expression complement but the simple-named-class path does not trigger the
-  // tableau clash rule in the current kernel.  Contrast with case 7 in
-  // issue13-owl-violations.test.ts where complementOf wraps a hasSelf restriction —
-  // that structural variant works because it is processed via a different code path.
+  // Konclude v0.7.0 does not detect this natively (upstream bug); the JS pre-process
+  // in checkConsistency() short-circuits before the WASM call when both named classes
+  // appear as rdf:type on the same individual.
+  // See docs/solutions/capability-gaps/r4-complementof-diagnosis-2026-06-04.md
   it("checkConsistency: individual in class ∩ complementOf(class) → false [named-class complementOf ABox clash, JS pre-process]", async () => {
     const inconsistentQuads = parseTurtle(`
       @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
@@ -368,6 +365,24 @@ describe.skipIf(!wasmExists)("TBox constructs", () => {
     `);
     const result = await reasoner.checkConsistency(inconsistentQuads);
     expect(result).toBe(false);
+  }, 30_000);
+
+  // Happy-path: JS pre-process must NOT fire when individual is only typed as Pos
+  // (not both Pos and Neg) — consistent ontology must return true.
+  it("checkConsistency: individual typed as only one class in complementOf pair → true [JS pre-process non-clash case]", async () => {
+    const consistentQuads = parseTurtle(`
+      @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+      @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+      @prefix owl:  <http://www.w3.org/2002/07/owl#> .
+      @prefix ex:   <http://example.org/> .
+      <http://example.org/complement-noclash-test> a owl:Ontology .
+      ex:Pos a owl:Class .
+      ex:Neg a owl:Class .
+      ex:Pos owl:complementOf ex:Neg .
+      ex:posOnly a owl:NamedIndividual, ex:Pos .
+    `);
+    const result = await reasoner.checkConsistency(consistentQuads);
+    expect(result).toBe(true);
   }, 30_000);
 
   // ── materialize ────────────────────────────────────────────────────────────
