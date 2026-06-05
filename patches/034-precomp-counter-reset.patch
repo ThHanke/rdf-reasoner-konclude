@@ -1,6 +1,47 @@
 --- a/Source/Reasoner/Consistiser/CPrecomputationThread.cpp
 +++ b/Source/Reasoner/Consistiser/CPrecomputationThread.cpp
-@@ -203,6 +203,12 @@
+@@ -82,11 +82,23 @@
+ 
+ 
+ 			bool CPrecomputationThread::canProcessMoreTests() {
++				#ifdef WASM_PRECOMP_VERBOSE
++				fprintf(stderr, "[WASM-PRECOMP] canProcessMoreTests: curr=%lld max=%lld result=%s\n",
++					(long long)mCurrRunningTestParallelCount, (long long)mConfMaxTestParallelCount,
++					(mCurrRunningTestParallelCount < mConfMaxTestParallelCount) ? "Y" : "N");
++				fflush(stderr);
++				#endif
+ 				return mCurrRunningTestParallelCount < mConfMaxTestParallelCount;
+ 			}
+ 
+ 
+ 			bool CPrecomputationThread::doNextPendingTests() {
++				#ifdef WASM_PRECOMP_VERBOSE
++				fprintf(stderr, "[WASM-PRECOMP] doNextPendingTests: entry, curr=%lld max=%lld\n",
++					(long long)mCurrRunningTestParallelCount,
++					(long long)mConfMaxTestParallelCount);
++				fflush(stderr);
++				#endif
+ 				bool createdNewTests = false;
+ 				bool nextTestCreated = true;
+ 				cint64 jobCreationCount = 0;
+@@ -197,13 +209,38 @@
+ 						mOntIdHash.remove(ontology);
+ 						item = nullptr;
+ 					}
++					#ifdef WASM_PRECOMP_VERBOSE
++					fprintf(stderr, "[WASM-PRECOMP] pre-branch: item=%p\n", (void*)item);
++					// Note: NO fflush here to avoid potential proxy deadlock
++					#endif
+ 					if (!item) {
++						#ifdef WASM_PRECOMP_VERBOSE
++						fprintf(stderr, "[WASM-PRECOMP] calling-initOntItem\n");
++						#endif
+ 						item = initializeOntologyPrecomputionItem(ontology,configBase);
++						#ifdef WASM_PRECOMP_VERBOSE
++						fprintf(stderr, "[WASM-PRECOMP] initOntItem-done: item=%p\n", (void*)item);
++						fflush(stderr);
++						#endif
+ 						mOntItemHash.insert(ontology,item);
  						mOntIdHash.insert(ontology, ontology->getOntologyID());
  						mActiveOntItemSet.insert(item);
  						mProcessingOntItemList.append(item);
@@ -10,10 +51,43 @@
 +						// the previous call can leave count > 0.  Since this item is brand-new, any
 +						// existing count is stale — reset before entering doNextPendingTests().
 +						mCurrRunningTestParallelCount = 0;
++						#ifdef WASM_PRECOMP_VERBOSE
++						fprintf(stderr, "[WASM-PRECOMP] new-item-created: item=%p\n", (void*)item);
++						fflush(stderr);
++						#endif
  					} else {
++						#ifdef WASM_PRECOMP_VERBOSE
++						fprintf(stderr, "[WASM-PRECOMP] existing-item: item=%p active=%d\n", (void*)item, (int)mActiveOntItemSet.contains(item));
++						fflush(stderr);
++						#endif
  						if (!mActiveOntItemSet.contains(item)) {
  							mInactiveOntItemSet.remove(item);
-@@ -258,7 +264,7 @@
+ 							mActiveOntItemSet.insert(item);
+@@ -220,10 +257,22 @@
+ 						addOntologyPrecomputionCallback(item,callbackData);
+ 					}
+ 					#ifdef WASM_PRECOMP_VERBOSE
+-					fprintf(stderr, "[WASM-PRECOMP] precompute-event: ontId=%lld\n", (long long)ontology->getOntologyID());
++					fprintf(stderr, "[WASM-PRECOMP] precompute-event: ontId=%lld curr=%lld max=%lld item=%p\n",
++						(long long)ontology->getOntologyID(),
++						(long long)mCurrRunningTestParallelCount,
++						(long long)mConfMaxTestParallelCount,
++						(void*)item);
++					fflush(stderr);
++					#endif
++					#ifdef WASM_PRECOMP_VERBOSE
++					fprintf(stderr, "[WASM-PRECOMP] about-to-call-doNextPendingTests\n");
+ 					fflush(stderr);
+ 					#endif
+ 					doNextPendingTests();
++					#ifdef WASM_PRECOMP_VERBOSE
++					fprintf(stderr, "[WASM-PRECOMP] precompute-event-done\n");
++					fflush(stderr);
++					#endif
+ 					return true;
+ 
+ 				} else if (type == CCallbackPrecomputedOntologyEvent::EVENTTYPE) {
+@@ -258,7 +307,7 @@
  				} else if (type == CPrecomputationCalculatedCallbackEvent::EVENTTYPE) {
  					CPrecomputationCalculatedCallbackEvent* pcce = (CPrecomputationCalculatedCallbackEvent*)event;
  
@@ -22,7 +96,7 @@
  
  					CPrecomputationTestingItem* testingItem = pcce->getTestingItem();
  					COntologyPrecomputationItem* ontPreCompItem = testingItem->getOntologyPrecomputationItem();
-@@ -278,7 +284,7 @@
+@@ -278,7 +327,7 @@
  				} else if (type == CSaturationPrecomputationCalculatedCallbackEvent::EVENTTYPE) {
  					CSaturationPrecomputationCalculatedCallbackEvent* spcce = (CSaturationPrecomputationCalculatedCallbackEvent*)event;
  

@@ -1,0 +1,44 @@
+--- a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.cpp
++++ b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.cpp
+@@ -148,6 +148,31 @@ namespace Konclude {
+ 
+ 
+ 
++				// WASM: Reset per-ontology state between sequential calls to prevent
++				// stale data from the previous call causing hangs for ALIF+ ontologies.
++				// This clears mOntologyIdentifierDataHash, mFixedOntologyIdentifierDataHash,
++				// mSlotLinker, and resets accumulated counters.
++				void CBackendRepresentativeMemoryCache::resetOntologyData() {
++					// Clear all ontology data entries from the main hash.
++					if (mOntologyIdentifierDataHash) {
++						mOntologyIdentifierDataHash->clear();
++					}
++					// Reset the fixed (completed) ontology data hash.
++					mFixedOntologyIdentifierDataHashLock.lockForWrite();
++					mFixedOntologyIdentifierDataHash.clear();
++					mFixedOntologyIdentifierDataHashLock.unlock();
++					// Clear the slot chain to avoid stale slot references.
++					mSlotLinker = nullptr;
++					mLastUpdatedSlotLinker = nullptr;
++					// Reset accumulated update ID and write counters.
++					mNextIndiUpdateId = 1;
++					mNextNomConnUpdateId = 1;
++					mWriteDataCount = 0;
++					mOntologyDataUpdateCount = 0;
++					// Reset slot update waiting count.
++					mSlotUpdateWaitingIncreaseCount = 1;
++				}
++
+ 				CCacheStatistics* CBackendRepresentativeMemoryCache::getCacheStatistics() {
+ 					return &mCacheStat;
+ 				}
+--- a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.h
++++ b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.h
+@@ -119,6 +119,7 @@ namespace Konclude {
+ 						CBackendRepresentativeMemoryCache* writeCachedData(CBackendRepresentativeMemoryCacheWriteData* writeData, CMemoryPool* memoryPools);
+ 
+ 						CCacheStatistics* getCacheStatistics();
++						void resetOntologyData();
+ 
+ 						bool getIncompletlyAssociationCachedIndividuals(cint64 ontologyIdentifier, CBackendIndividualRetrievalComputationUpdateCoordinationHash* prevCoordHash, CBackendIndividualRetrievalComputationUpdateCoordinationHash* newCoordHash, bool allIndividualsAdded, bool refillRetrievalCoordHash, cint64 limit = -1, CCallbackData* callbackData = nullptr);
+ 						bool initializeIndividualsAssociationCaching(cint64 ontologyIdentifier, cint64 individualCount);

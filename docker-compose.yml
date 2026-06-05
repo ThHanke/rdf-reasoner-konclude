@@ -10,7 +10,7 @@ services:
         exec > >(tee build.log) 2>&1 &&
         mkdir -p dist &&
         scripts/build-raptor-wasm.sh &&
-        emcmake cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache -DWASM_PRECOMP_VERBOSE=ON . &&
+        emcmake cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache -DWASM_PRECOMP_VERBOSE=OFF . &&
         emmake make -C build -j4 &&
         chown -R $(stat -c '%u:%g' /src) dist/
       "
