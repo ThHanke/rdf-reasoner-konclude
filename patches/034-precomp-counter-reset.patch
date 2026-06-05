@@ -1,0 +1,33 @@
+--- a/Source/Reasoner/Consistiser/CPrecomputationThread.cpp
++++ b/Source/Reasoner/Consistiser/CPrecomputationThread.cpp
+@@ -203,6 +203,12 @@
+ 						mOntIdHash.insert(ontology, ontology->getOntologyID());
+ 						mActiveOntItemSet.insert(item);
+ 						mProcessingOntItemList.append(item);
++						// WASM singleton: reset stale parallel test counter from previous call.
++						// In native Konclude each precomputation call gets a fresh thread (counter
++						// starts at 0).  In WASM the thread is reused; a late-arriving callback from
++						// the previous call can leave count > 0.  Since this item is brand-new, any
++						// existing count is stale — reset before entering doNextPendingTests().
++						mCurrRunningTestParallelCount = 0;
+ 					} else {
+ 						if (!mActiveOntItemSet.contains(item)) {
+ 							mInactiveOntItemSet.remove(item);
+@@ -258,7 +264,7 @@
+ 				} else if (type == CPrecomputationCalculatedCallbackEvent::EVENTTYPE) {
+ 					CPrecomputationCalculatedCallbackEvent* pcce = (CPrecomputationCalculatedCallbackEvent*)event;
+ 
+-					--mCurrRunningTestParallelCount;
++					if (mCurrRunningTestParallelCount > 0) { --mCurrRunningTestParallelCount; }
+ 
+ 					CPrecomputationTestingItem* testingItem = pcce->getTestingItem();
+ 					COntologyPrecomputationItem* ontPreCompItem = testingItem->getOntologyPrecomputationItem();
+@@ -278,7 +284,7 @@
+ 				} else if (type == CSaturationPrecomputationCalculatedCallbackEvent::EVENTTYPE) {
+ 					CSaturationPrecomputationCalculatedCallbackEvent* spcce = (CSaturationPrecomputationCalculatedCallbackEvent*)event;
+ 
+-					--mCurrRunningTestParallelCount;
++					if (mCurrRunningTestParallelCount > 0) { --mCurrRunningTestParallelCount; }
+ 
+ 					CPrecomputationTestingItem* testingItem = spcce->getPrecomputationTestingItem();
+ 					COntologyPrecomputationItem* ontPreCompItem = testingItem->getOntologyPrecomputationItem();
