@@ -507,24 +507,33 @@ describe.skipIf(!wasmExists)("ABox constructs", () => {
   // Previously hung in WASM (labelled UPSTREAM_LIMITATION); confirmed working
   // after WASM regression was resolved.  The NPA says alice does NOT know bob;
   // materialize() must NOT emit "alice knows bob" as a positive entailment.
+  // Fresh RdfReasoner used to avoid BackendAssCache state accumulation from
+  // prior materialize() calls on the shared instance (same isolation pattern
+  // as the FunctionalProperty tests in property-characteristics.test.ts).
   it("NPA — materialize: consistent NPA must NOT produce negated triple as positive assertion", async () => {
-    const npaQuads = parseTurtle(`
-      @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
-      @prefix owl:  <http://www.w3.org/2002/07/owl#> .
-      @prefix ex:   <http://example.org/> .
-      ex:knows a owl:ObjectProperty .
-      ex:alice a owl:NamedIndividual .
-      ex:bob   a owl:NamedIndividual .
-      [] a owl:NegativePropertyAssertion ;
-         owl:sourceIndividual ex:alice ;
-         owl:assertionProperty ex:knows ;
-         owl:targetIndividual ex:bob .
-    `);
-    const inferred = await reasoner.materialize(npaQuads);
-    expect(
-      hasTriple(inferred, EX("alice"), EX("knows"), EX("bob")),
-      "alice knows bob must NOT be materialised — NegativePropertyAssertion carries no positive entailment",
-    ).toBe(false);
+    const fresh = new RdfReasoner();
+    await fresh.ready;
+    try {
+      const npaQuads = parseTurtle(`
+        @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+        @prefix owl:  <http://www.w3.org/2002/07/owl#> .
+        @prefix ex:   <http://example.org/> .
+        ex:knows a owl:ObjectProperty .
+        ex:alice a owl:NamedIndividual .
+        ex:bob   a owl:NamedIndividual .
+        [] a owl:NegativePropertyAssertion ;
+           owl:sourceIndividual ex:alice ;
+           owl:assertionProperty ex:knows ;
+           owl:targetIndividual ex:bob .
+      `);
+      const inferred = await fresh.materialize(npaQuads);
+      expect(
+        hasTriple(inferred, EX("alice"), EX("knows"), EX("bob")),
+        "alice knows bob must NOT be materialised — NegativePropertyAssertion carries no positive entailment",
+      ).toBe(false);
+    } finally {
+      fresh.terminate();
+    }
   }, 30_000);
 });
 
