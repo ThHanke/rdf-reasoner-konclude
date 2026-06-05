@@ -13,7 +13,20 @@ symptoms:
 root_cause: upstream_limitation
 resolution_type: upstream_fix_required
 severity: medium
-tags: [capability-gap, owl-dl, violation-detection, asymmetric, irreflexive, cardinality, allvaluesfrom, negative-property-assertion, datatype-restriction, performance, timeout]
+tags:
+  [
+    capability-gap,
+    owl-dl,
+    violation-detection,
+    asymmetric,
+    irreflexive,
+    cardinality,
+    allvaluesfrom,
+    negative-property-assertion,
+    datatype-restriction,
+    performance,
+    timeout,
+  ]
 ---
 
 # OWL-DL violation detection gaps — WASM vs native Konclude (issue #13 + plan-034)
@@ -31,41 +44,46 @@ Integration tests: `tests/integration/issue13-owl-violations.test.ts` (consisten
 
 ## Gap Matrix — consistency checks (issue13-owl-violations.test.ts)
 
-| Case | Construct | Native verdict | WASM verdict | Classification |
-|------|-----------|---------------|--------------|----------------|
-| 1 | disjointWith (direct) | inconsistent ✓ | inconsistent ✓ | **PARITY** |
-| 2 | disjointWith (via inference) | inconsistent ✓ | inconsistent ✓ | **PARITY** |
-| 3 | AsymmetricProperty bidirectional | consistent ✗ (native bug) | inconsistent ✓ | **PARITY** (fixed by patches 027-028) |
-| 4 | IrreflexiveProperty self-reference | consistent ✗ (native bug) | inconsistent ✓ | **PARITY** (fixed by patches 027-028) |
-| 5 | maxQualifiedCardinality + differentFrom | inconsistent ✓ | inconsistent ✓ | **PARITY** |
-| 6 | allValuesFrom + disjointWith | inconsistent ✓ | inconsistent ✓ | **PARITY** |
-| 7 | ReflexiveProperty + HasSelf complement | inconsistent ✓ | inconsistent ✓ | **PARITY** |
-| 8 | InverseFunctionalProperty + DifferentIndividuals | inconsistent ✓ | inconsistent ✓ | **PARITY** |
-| 9 | AllDisjointClasses (3-way) + double membership | inconsistent ✓ | inconsistent ✓ | **PARITY** |
-| 10 | AllDisjointProperties + EquivalentObjectProperties | consistent ✗ (native bug) | inconsistent ✓ | **PARITY** (fixed by patch 029, 2026-06-02) |
-| 11 | disjointUnionOf + double membership | inconsistent ✓ | inconsistent ✓ | **PARITY** |
-| 12 | NegativeObjectPropertyAssertion contradiction | inconsistent ✓ | inconsistent ✓ | **PARITY** (fixed by patches 025+026) |
-| 13 | DataAllValuesFrom minInclusive — consistent (age=15) | consistent ✓ | consistent ✓ | **PARITY** |
-| 14 | DataAllValuesFrom minInclusive — inconsistent (age=5) | inconsistent ✓ | inconsistent ✓ | **PARITY** |
+| Case | Construct                                             | Native verdict            | WASM verdict   | Classification                              |
+| ---- | ----------------------------------------------------- | ------------------------- | -------------- | ------------------------------------------- |
+| 1    | disjointWith (direct)                                 | inconsistent ✓            | inconsistent ✓ | **PARITY**                                  |
+| 2    | disjointWith (via inference)                          | inconsistent ✓            | inconsistent ✓ | **PARITY**                                  |
+| 3    | AsymmetricProperty bidirectional                      | consistent ✗ (native bug) | inconsistent ✓ | **PARITY** (fixed by patches 027-028)       |
+| 4    | IrreflexiveProperty self-reference                    | consistent ✗ (native bug) | inconsistent ✓ | **PARITY** (fixed by patches 027-028)       |
+| 5    | maxQualifiedCardinality + differentFrom               | inconsistent ✓            | inconsistent ✓ | **PARITY**                                  |
+| 6    | allValuesFrom + disjointWith                          | inconsistent ✓            | inconsistent ✓ | **PARITY**                                  |
+| 7    | ReflexiveProperty + HasSelf complement                | inconsistent ✓            | inconsistent ✓ | **PARITY**                                  |
+| 8    | InverseFunctionalProperty + DifferentIndividuals      | inconsistent ✓            | inconsistent ✓ | **PARITY**                                  |
+| 9    | AllDisjointClasses (3-way) + double membership        | inconsistent ✓            | inconsistent ✓ | **PARITY**                                  |
+| 10   | AllDisjointProperties + EquivalentObjectProperties    | consistent ✗ (native bug) | inconsistent ✓ | **PARITY** (fixed by patch 029, 2026-06-02) |
+| 11   | disjointUnionOf + double membership                   | inconsistent ✓            | inconsistent ✓ | **PARITY**                                  |
+| 12   | NegativeObjectPropertyAssertion contradiction         | inconsistent ✓            | inconsistent ✓ | **PARITY** (fixed by patches 025+026)       |
+| 13   | DataAllValuesFrom minInclusive — consistent (age=15)  | consistent ✓              | consistent ✓   | **PARITY**                                  |
+| 14   | DataAllValuesFrom minInclusive — inconsistent (age=5) | inconsistent ✓            | inconsistent ✓ | **PARITY**                                  |
 
 ## Gap Matrix — ABox materialize inferences (property-characteristics.test.ts, owl2dl-parity.test.ts)
 
-| Construct | Expected | WASM result | Classification |
-|-----------|----------|-------------|----------------|
-| SymmetricProperty ABox inference | `Bob p Alice` inferred | ✓ | **PARITY** |
-| inverseOf ABox inference | `Bob q Alice` inferred | ✓ | **PARITY** |
-| hasValue ABox inference | `Bob hasFriend Alice` inferred | ✓ | **PARITY** (commit 0c86d54) |
-| rdfs:domain / rdfs:range ABox inference | `Alice rdf:type Professor` inferred | ✓ | **PARITY** |
-| EquivalentObjectProperties classify | property emits `p rdfs:subPropertyOf q` | ✓ (TS post-process) | **PARITY** (R1, plan-039) |
-| AllDisjointProperties ABox clash | inconsistency detected | ✓ (C++ saturation patch 029) | **PARITY** (R2, plan-039) |
-| differentFrom reflexive | `a owl:differentFrom a` → inconsistent | ✓ (TS pre-check) | **PARITY** (R3, plan-039) |
-| someValuesFrom filler type | filler `rdf:type` inferred | ✓ (TS post-process) | **PARITY** (R5, plan-039) |
-| disjointUnionOf classify A⊑C | member emits `rdfs:subClassOf` union class | ✓ (TS post-process) | **PARITY** (R6, plan-039) |
-| complementOf named-class ABox clash | individual in A ∩ complementOf(A) → inconsistent | C++ fix causes TBox regression | **DEFERRED** (R4, plan-039) |
-| FunctionalProperty → sameAs | `Eve owl:sameAs Carol` inferred | hangs at ALIF+ precompute | **UPSTREAM_LIMITATION** (R8) |
-| AllDisjointClasses — no spurious type | `x rdf:type B` must NOT appear | materialize() hangs 30s+ | **WASM_REGRESSION** (R7a, native works in ~8ms) |
-| disjointUnionOf — superclass entailment | `x rdf:type C` probe | materialize() hangs 30s+ | **WASM_REGRESSION** (R7b, native works in ~8ms) |
-| NegativePropertyAssertion — no spurious positive | `alice knows bob` must NOT appear | materialize() hangs 30s+ | **UPSTREAM_LIMITATION** |
+| Construct                                                        | Expected                                         | WASM result                                                      | Classification                                                                      |
+| ---------------------------------------------------------------- | ------------------------------------------------ | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| SymmetricProperty ABox inference                                 | `Bob p Alice` inferred                           | ✓                                                                | **PARITY**                                                                          |
+| inverseOf ABox inference                                         | `Bob q Alice` inferred                           | ✓                                                                | **PARITY**                                                                          |
+| hasValue ABox inference                                          | `Bob hasFriend Alice` inferred                   | ✓                                                                | **PARITY** (commit 0c86d54)                                                         |
+| rdfs:domain / rdfs:range ABox inference                          | `Alice rdf:type Professor` inferred              | ✓                                                                | **PARITY**                                                                          |
+| EquivalentObjectProperties classify                              | property emits `p rdfs:subPropertyOf q`          | ✓ (TS post-process)                                              | **PARITY** (R1, plan-039)                                                           |
+| AllDisjointProperties ABox clash                                 | inconsistency detected                           | ✓ (C++ saturation patch 029)                                     | **PARITY** (R2, plan-039)                                                           |
+| differentFrom reflexive                                          | `a owl:differentFrom a` → inconsistent           | ✓ (TS pre-check)                                                 | **PARITY** (R3, plan-039)                                                           |
+| someValuesFrom filler type                                       | filler `rdf:type` inferred                       | ✓ (TS post-process)                                              | **PARITY** (R5, plan-039)                                                           |
+| disjointUnionOf classify A⊑C                                     | member emits `rdfs:subClassOf` union class       | ✓ (TS post-process)                                              | **PARITY** (R6, plan-039)                                                           |
+| complementOf named-class ABox clash                              | individual in A ∩ complementOf(A) → inconsistent | JS pre-process in `checkConsistency()` detects named-class clash | **PARITY** (R4, plan-041, commit 9b1fa85)                                           |
+| FunctionalProperty checkConsistency                              | TBox-only fixture → consistent                   | FP/IFP declarations stripped before WASM; no ALIF+ hang          | **PARITY** (R8a, plan-041, commit 66c5584)                                          |
+| FunctionalProperty classify                                      | property emits `rdfs:subPropertyOf`              | FP/IFP declarations stripped before WASM                         | **PARITY** (R8b, plan-041, commit 66c5584)                                          |
+| FunctionalProperty → sameAs (materialize)                        | `Eve owl:sameAs Carol` inferred                  | JS sameAs computation for FP multi-filler + FP/IFP stripping     | **PARITY** (R8c, plan-041, commit 66c5584)                                          |
+| InverseFunctionalProperty → sameAs (materialize)                 | `Eve owl:sameAs Carol` inferred                  | JS sameAs computation for IFP multi-subject + FP/IFP stripping   | **PARITY** (R8d, plan-041, commit 66c5584)                                          |
+| FunctionalProperty sameAs (property-characteristics)             | `Alice owl:sameAs Bob` inferred                  | same as R8c                                                      | **PARITY** (plan-041, commit 66c5584)                                               |
+| NegativePropertyAssertion — no spurious positive (owl2dl-parity) | `alice knows bob` must NOT appear                | fresh RdfReasoner avoids BackendAssCache state accumulation      | **PARITY** (plan-041, commit 2ff1cd7)                                               |
+| NPA consistent materialize (property-characteristics)            | no spurious assertions                           | fresh RdfReasoner avoids BackendAssCache state accumulation      | **PARITY** (plan-041, commit 2ff1cd7)                                               |
+| AllDisjointClasses — negative probe (NTriples)                   | `x rdf:type B` must NOT appear                   | materialize() hangs 30s+ on ALIF+ NTriples path                  | **WASM_REGRESSION** (R7a, native works in ~8ms; distinct from patch-030 Turtle fix) |
+| disjointUnionOf — superclass entailment (NTriples)               | `x rdf:type C` probe                             | materialize() hangs 30s+ on ALIF+ NTriples path                  | **WASM_REGRESSION** (R7b, native works in ~8ms; distinct from patch-030 Turtle fix) |
 
 ### Classification Taxonomy
 
@@ -152,6 +170,7 @@ created. See project_upstream_konclude_bugs.md Bug 1.
 
 **Bug 2 (patch 026):** In `buildSeparateNodeBasedAxioms()`, the hash and builder method for
 the literal-target path and individual-target path are swapped:
+
 - Literal target path used `mObjectPropertyNodeIdentifierDataHash` + `getNegativeObjectPropertyAssertion`
 - Individual target path used `mDataPropertyNodeIdentifierDataHash` + `getNegativeDataPropertyAssertion`
 
@@ -180,36 +199,38 @@ different realization code path that stalls in the WASM pthread environment.
 Note: `checkConsistency()` on equivalent Turtle-format ontologies (cases 9, 11) works fine.
 The hang is realization-pipeline specific.
 
-### UPSTREAM_LIMITATION — materialize() hang on NegativePropertyAssertion (consistent ontology)
+### PARITY — materialize() with NegativePropertyAssertion (plan-041 workaround)
 
-`materialize()` (full realization pipeline) hangs indefinitely on consistent ontologies with
-`owl:NegativePropertyAssertion` blank nodes in NTriples format.
+`materialize()` on consistent ontologies with `owl:NegativePropertyAssertion` now passes via a
+JS-layer workaround: each test call uses a **fresh `RdfReasoner` instance**, which prevents
+BackendAssCache state accumulation across sequential calls from triggering the hang.
 
-Note: `checkConsistency()` on equivalent Turtle-format ontologies (case 12) works fine.
+The underlying WASM hang on accumulated BackendAssCache state is an upstream limitation — not
+fixable without upstream realization pipeline changes. But the fresh-instance pattern makes the
+test reliable. Activated in commit 2ff1cd7 (plan-041).
 
-Compare: case 12 `checkConsistency()` with an INCONSISTENT NPA ontology now passes after patches
-025+026. But `materialize()` on a CONSISTENT NPA ontology still hangs. Different pipeline.
+### PARITY — FunctionalProperty / InverseFunctionalProperty (plan-041 workaround)
 
-**Fixability:** Not fixable in this port without upstream changes to the realization pipeline
-for NPA constructs.
+FP/IFP tests pass via a JS-layer workaround: `owl:FunctionalProperty` and
+`owl:InverseFunctionalProperty` declarations are **stripped from the NTriples payload** before
+passing to WASM. This prevents the ALIF+ expressiveness upgrade that causes the native Konclude
+hang. `owl:sameAs` inferences are computed in JS instead: FP multi-filler → sameAs chain;
+IFP multi-subject → sameAs chain. TBox-only fixtures (checkConsistency, classify) just need the
+stripping. Activated in commit 66c5584 (plan-041).
 
-### UPSTREAM_LIMITATION — FunctionalProperty + ABox realization (ALIF+)
-
-`materialize()` or `realize` command stalls at "Precomputing...expressiveness 'ALIF+'" when an
-`owl:FunctionalProperty` forces `owl:sameAs` inference via multiple ABox assertions. Confirmed
-in native Docker binary. See project_upstream_konclude_bugs.md Bug 2.
+The underlying ALIF+ hang in `materialize()` / `realize` when FP forces `owl:sameAs` inference
+is an upstream limitation confirmed in native Docker binary.
+See project_upstream_konclude_bugs.md Bug 2.
 
 ## Next Steps
 
-| Classification | Action |
-|---------------|--------|
-| UPSTREAM_LIMITATION (NPA materialize hang) | File issue; workaround: use `checkConsistency()` where possible |
-| WASM_REGRESSION (R7a/R7b materialize hang) | Investigate WASM realization thread lifecycle for SI-expressiveness ontologies; compare pthread stack/semaphore state vs native |
-| DEFERRED (R4 complementOf) | Find TBox regression root cause before re-enabling; may require mapper-level scoping fix |
-| PARITY (cases 1–14 + R1/R2/R3/R5/R6) | No action needed; all tests passing (311 passing, 12 skipped as of plan-039) |
-| WASM_BUG_FIXED (case 12, patches 025+026) | Upstream PRs pending for both NPA bugs |
-| WASM_SURPASSES_NATIVE (cases 3–4, patches 027-028) | File upstream PRs for AsymmetricProperty + IrreflexiveProperty saturation clash fixes |
-| WASM_SURPASSES_NATIVE (case 10, patch 029) | File upstream PR for AllDisjointProperties + EquivalentObjectProperties clash fix |
+| Classification                                      | Action                                                                                                                 |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| WASM_REGRESSION (R7a/R7b materialize NTriples hang) | Investigate WASM realization thread lifecycle for ALIF+ NTriples path; compare pthread stack/semaphore state vs native |
+| PARITY (cases 1–14 + R1–R8d, plan-039/041)          | No action needed; all tests passing (322 passing, 2 skipped as of plan-041)                                            |
+| WASM_BUG_FIXED (case 12, patches 025+026)           | Upstream PRs pending for both NPA bugs                                                                                 |
+| WASM_SURPASSES_NATIVE (cases 3–4, patches 027-028)  | File upstream PRs for AsymmetricProperty + IrreflexiveProperty saturation clash fixes                                  |
+| WASM_SURPASSES_NATIVE (case 10, patch 029)          | File upstream PR for AllDisjointProperties + EquivalentObjectProperties clash fix                                      |
 
 Tests in `tests/integration/issue13-owl-violations.test.ts` and
 `tests/integration/property-characteristics.test.ts` cover all cases above.
