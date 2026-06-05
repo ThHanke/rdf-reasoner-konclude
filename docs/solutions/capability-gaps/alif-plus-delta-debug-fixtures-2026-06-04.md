@@ -493,6 +493,77 @@ never called a second time. Since even Fixture A (1 filler, no merge needed) han
 trigger is the *presence of `owl:FunctionalProperty`* in the ALIF+ expressiveness path, not
 the *number of fillers*.
 
-**Next investigation step:** Add logging to `createSaturationConstructionJob()` and the STPU
+**Next investigation step (superseded by Unit 1 — see below):** Add logging to `createSaturationConstructionJob()` and the STPU
 dispatch to confirm whether the hang is in the concept saturation job itself (STPU-level
 deadlock for ALIF+ TBox) or in the precomputing thread's event delivery mechanism.
+
+---
+
+## Hypothesis Testing Results (Unit 1)
+
+**Date:** 2026-06-05
+
+**Build:** `WASM_PRECOMP_VERBOSE=ON` compiled into `dist/konclude.wasm` via
+`patches/032-precomp-verbose-logging.patch` + `patches/033-precomp-diagnostic-verbose.patch`.
+Diagnostic test: `tests/integration/alif-debug.test.ts`.
+
+### Log lines observed (FP call — Fixture A)
+
+The full precompute sequence for the warmup (`checkConsistency`, non-FP) completes normally,
+then classification runs. After classification, the second precompute event fires:
+
+```text
+[WASM-PRECOMP] precompute-event: ontId=4680967221865528148
+```
+
+Then the test times out (6s). **No further log lines appear.** Specifically:
+- `createNextTest: entry` — does NOT fire
+- `after-entry-A`, `after-entry-B`, `after-entry-C` — do NOT fire
+- `before-while` — does NOT fire
+
+### Which hypothesis is confirmed
+
+**H3 confirmed (variant): `canProcessMoreTests()` returns false — `mCurrRunningTestParallelCount` is not zero.**
+
+The hang is between `precompute-event` log and the first instruction of `createNextTest()`. The
+`doNextPendingTests()` function body checks `canProcessMoreTests()` before calling
+`createNextTest()`. `mConfMaxTestParallelCount` is 1. If `mCurrRunningTestParallelCount >= 1`
+at the moment of the second `precompute-event`, `doNextPendingTests()` exits the while loop
+immediately without calling `createNextTest()` at all — and the thread then waits for a
+calculation callback to decrement `mCurrRunningTestParallelCount`.
+
+The precomputing thread is stalled in `waitForCallback()` (or equivalent idle event-loop wait)
+waiting for a `CPrecomputationCalculatedCallbackEvent` that never arrives. This means:
+
+1. A calculation job was submitted during the FIRST precomputation sequence (classification).
+2. The callback for that job was never delivered (or delivered to a different ontology item).
+3. `mCurrRunningTestParallelCount` was not decremented, so it remains 1 when the realization
+   precompute event arrives.
+4. `doNextPendingTests()` exits without calling `createNextTest()`, and the thread idles
+   forever.
+
+### Exact hang point
+
+```
+CPrecomputationThread::processCustomsEvents()
+  → doNextPendingTests()
+    → canProcessMoreTests() returns false (mCurrRunningTestParallelCount=1)
+    → createNextTest() never called
+  → thread returns to event loop and waits for callback that never arrives
+```
+
+### New hypothesis for Unit 2
+
+The stale `mCurrRunningTestParallelCount=1` after the FIRST precompute cycle (classification)
+suggests a job was submitted in phase-gate `CONCEPT_SAT_JOB_SUBMITTED` but its callback was
+either:
+
+- Delivered to the first ontology item (classification) but then the item was cleaned up or
+  reset, causing `mCurrRunningTestParallelCount` to remain incremented.
+- OR: the callback IS delivered to a different ontology context (second precompute cycle =
+  realization), and the counter is decremented, but only AFTER a timeout waiting for it.
+
+**Next investigation step:** Add `mCurrRunningTestParallelCount` logging to
+`doNextPendingTests()` before the while-loop condition check. This will confirm whether
+`canProcessMoreTests()` is the gate that prevents `createNextTest()` from being called in
+the second precompute sequence.
