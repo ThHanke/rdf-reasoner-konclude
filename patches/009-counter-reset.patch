@@ -1,6 +1,6 @@
 --- a/Source/Reasoner/Consistiser/CPrecomputationThread.cpp
-+++ b/Source/Reasoner/Consistiser/CPrecomputationThread.cpp
-@@ -203,6 +203,8 @@ namespace Konclude {
++++ b/Source/Reasoner/Consistiser/CPrecomputationThread.cpp	2026-06-09 18:36:28.699914716 +0200
+@@ -203,6 +203,8 @@
  						mOntIdHash.insert(ontology, ontology->getOntologyID());
  						mActiveOntItemSet.insert(item);
  						mProcessingOntItemList.append(item);
@@ -9,7 +9,7 @@
  					} else {
  						if (!mActiveOntItemSet.contains(item)) {
  							mInactiveOntItemSet.remove(item);
-@@ -254,7 +256,7 @@ namespace Konclude {
+@@ -254,7 +256,7 @@
  				} else if (type == CPrecomputationCalculatedCallbackEvent::EVENTTYPE) {
  					CPrecomputationCalculatedCallbackEvent* pcce = (CPrecomputationCalculatedCallbackEvent*)event;
  
@@ -18,7 +18,7 @@
  
  					CPrecomputationTestingItem* testingItem = pcce->getTestingItem();
  					COntologyPrecomputationItem* ontPreCompItem = testingItem->getOntologyPrecomputationItem();
-@@ -274,7 +276,7 @@ namespace Konclude {
+@@ -274,7 +276,7 @@
  				} else if (type == CSaturationPrecomputationCalculatedCallbackEvent::EVENTTYPE) {
  					CSaturationPrecomputationCalculatedCallbackEvent* spcce = (CSaturationPrecomputationCalculatedCallbackEvent*)event;
  
@@ -27,3 +27,23 @@
  
  					CPrecomputationTestingItem* testingItem = spcce->getPrecomputationTestingItem();
  					COntologyPrecomputationItem* ontPreCompItem = testingItem->getOntologyPrecomputationItem();
+--- a/Source/Reasoner/Preprocess/CPreprocessingThread.cpp
++++ b/Source/Reasoner/Preprocess/CPreprocessingThread.cpp	2026-06-09 18:36:54.812465912 +0200
+@@ -162,6 +162,8 @@
+ 						item = initializeOntologyPreprocessingItem(ontology,configBase);
+ 						mOntItemHash.insert(ontology,item);
+ 						mOntIdHash.insert(ontology, ontology->getOntologyID());
++						// WASM singleton: reset stale parallel test counter from previous call.
++						mCurrRunningTestParallelCount = 0;
+ 						mActiveOntItemSet.insert(item);
+ 						mProcessingOntItemList.append(item);
+ 					} else {
+@@ -209,7 +211,7 @@
+ 				} else if (type == CPreprocessingCalculatedCallbackEvent::EVENTTYPE) {
+ 					CPreprocessingCalculatedCallbackEvent* pcce = (CPreprocessingCalculatedCallbackEvent*)event;
+ 
+-					--mCurrRunningTestParallelCount;
++					if (mCurrRunningTestParallelCount > 0) { --mCurrRunningTestParallelCount; }
+ 
+ 					CPreprocessingTestingItem* testingItem = pcce->getTestingItem();
+ 					COntologyPreprocessingItem* ontPreproItem = testingItem->getOntologyPreprocessingItem();
