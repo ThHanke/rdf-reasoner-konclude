@@ -1,5 +1,5 @@
 diff --git a/Source/Reasoner/Classifier/CSubsumptionClassifierThread.cpp b/Source/Reasoner/Classifier/CSubsumptionClassifierThread.cpp
-index ac12cb8f..4bc76c6c 100644
+index 7a665d9e..4bc76c6c 100644
 --- a/Source/Reasoner/Classifier/CSubsumptionClassifierThread.cpp
 +++ b/Source/Reasoner/Classifier/CSubsumptionClassifierThread.cpp
 @@ -110,6 +110,7 @@ namespace Konclude {
@@ -10,26 +10,19 @@ index ac12cb8f..4bc76c6c 100644
  				return this;
  			}
  
-@@ -196,14 +197,11 @@ namespace Konclude {
+@@ -196,6 +197,12 @@ namespace Konclude {
  					CCallbackData *callback = coe->getCallbackData();
  					CConfigurationBase* config = coe->getConfiguration();
  					QList<COntologyProcessingRequirement*>* reqList = coe->getClassificationRequirementList();
--					// WASM: Guard against recycled pointer collision.  When a prior ontology
--					// object is freed and a new one is allocated at the same address, the hash
--					// may report the new call as "already scheduled".  Evict the stale entry.
--					if (ontItemHash.contains(onto)) {
--						COntologyClassificationItem* staleItem = ontItemHash.value(onto);
--						if (staleItem && staleItem->getOntology() != onto) {
--							ontItemHash.remove(onto);
--						}
 +					// WASM: Guard against recycled pointer collision.  Use mOntIdHash (ID at
 +					// insertion time) — never compare pointers since freed memory may be reused.
 +					if (ontItemHash.contains(onto) && mOntIdHash.value(onto, -1) != onto->getOntologyID()) {
 +						ontItemHash.remove(onto);
 +						mOntIdHash.remove(onto);
- 					}
++					}
  					if (!isOntologyClassificationScheduled(onto)) {
  						scheduleOntologyClassification(onto,nullptr,config);
+ 						addOntologyClassifyRequirements(onto,*reqList);
 diff --git a/Source/Reasoner/Classifier/CSubsumptionClassifierThread.h b/Source/Reasoner/Classifier/CSubsumptionClassifierThread.h
 index e914800b..13b25421 100644
 --- a/Source/Reasoner/Classifier/CSubsumptionClassifierThread.h
@@ -42,24 +35,66 @@ index e914800b..13b25421 100644
  					cint64 mClassificationCount;
  
  					CReasonerManager* reasoner;
+diff --git a/Source/Reasoner/Consistiser/CPrecomputationThread.cpp b/Source/Reasoner/Consistiser/CPrecomputationThread.cpp
+index 05ecef5e..b12dfe24 100644
+--- a/Source/Reasoner/Consistiser/CPrecomputationThread.cpp
++++ b/Source/Reasoner/Consistiser/CPrecomputationThread.cpp
+@@ -186,11 +186,21 @@ namespace Konclude {
+ 					CConcreteOntology* ontology = poe->getOntology();
+ 					QList<COntologyProcessingRequirement*>* requirementList = poe->getProcessingRequirementList();
+ 
+-
+ 					COntologyPrecomputationItem* item = mOntItemHash.value(ontology);
++					// WASM: Guard against recycled pointer collision.  When a prior ontology
++					// object is freed and a new one is allocated at the same address, the hash
++					// returns the stale item from the prior call.  Use mOntIdHash (which stores
++					// the ID at insertion time) to detect the mismatch safely — never
++					// dereference item->getOntology() here since the pointer may be stale.
++					if (item && mOntIdHash.value(ontology, -1) != ontology->getOntologyID()) {
++						mOntItemHash.remove(ontology);
++						mOntIdHash.remove(ontology);
++						item = nullptr;
++					}
+ 					if (!item) {
+ 						item = initializeOntologyPrecomputionItem(ontology,configBase);
+ 						mOntItemHash.insert(ontology,item);
++						mOntIdHash.insert(ontology, ontology->getOntologyID());
+ 						mActiveOntItemSet.insert(item);
+ 						mProcessingOntItemList.append(item);
+ 					} else {
+diff --git a/Source/Reasoner/Consistiser/CPrecomputationThread.h b/Source/Reasoner/Consistiser/CPrecomputationThread.h
+index 4c4a1166..76a127ce 100644
+--- a/Source/Reasoner/Consistiser/CPrecomputationThread.h
++++ b/Source/Reasoner/Consistiser/CPrecomputationThread.h
+@@ -127,6 +127,11 @@ namespace Konclude {
+ 					QSet<COntologyPrecomputationItem*> mInactiveOntItemSet;
+ 					QList<COntologyPrecomputationItem*> mProcessingOntItemList;
+ 					QHash<CConcreteOntology*,COntologyPrecomputationItem*> mOntItemHash;
++					// WASM: companion hash storing the ontology ID at insertion time.
++					// The mOntItemHash key (a pointer) can be recycled after the ontology
++					// is freed, so item->getOntology()->getOntologyID() is UB when the
++					// pointer is stale.  mOntIdHash stores the ID when the entry is created.
++					QHash<CConcreteOntology*, cint64> mOntIdHash;
+ 					cint64 mPrecomputationCount;
+ 
+ 					CReasonerManager* mReasoner;
 diff --git a/Source/Reasoner/Preprocess/CPreprocessingThread.cpp b/Source/Reasoner/Preprocess/CPreprocessingThread.cpp
-index 7f01ec81..e51c8ee4 100644
+index 1cbcfbca..e51c8ee4 100644
 --- a/Source/Reasoner/Preprocess/CPreprocessingThread.cpp
 +++ b/Source/Reasoner/Preprocess/CPreprocessingThread.cpp
-@@ -151,14 +151,17 @@ namespace Konclude {
+@@ -151,9 +151,17 @@ namespace Konclude {
  
  
  					COntologyPreprocessingItem* item = mOntItemHash.value(ontology);
--					// WASM: Guard against recycled pointer collision.
--					if (item && item->getOntology()->getOntologyID() != ontology->getOntologyID()) {
+-					if (!item) {						
 +					// WASM: Guard against recycled pointer collision.  Use mOntIdHash (ID at
 +					// insertion time) — never dereference item->getOntology() since stale.
 +					if (item && mOntIdHash.value(ontology, -1) != ontology->getOntologyID()) {
- 						mOntItemHash.remove(ontology);
++						mOntItemHash.remove(ontology);
 +						mOntIdHash.remove(ontology);
- 						item = nullptr;
- 					}
- 					if (!item) {
++						item = nullptr;
++					}
++					if (!item) {
  						item = initializeOntologyPreprocessingItem(ontology,configBase);
  						mOntItemHash.insert(ontology,item);
 +						mOntIdHash.insert(ontology, ontology->getOntologyID());

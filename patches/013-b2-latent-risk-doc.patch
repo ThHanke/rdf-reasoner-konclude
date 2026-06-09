@@ -1,0 +1,62 @@
+diff --git a/Source/Reasoner/Classifier/Events/CTestCalculatedCallbackEvent.h b/Source/Reasoner/Classifier/Events/CTestCalculatedCallbackEvent.h
+index 459b4f5e..e5625557 100644
+--- a/Source/Reasoner/Classifier/Events/CTestCalculatedCallbackEvent.h
++++ b/Source/Reasoner/Classifier/Events/CTestCalculatedCallbackEvent.h
+@@ -99,7 +99,11 @@ namespace Konclude {
+ 
+ 					// protected variables
+ 					protected:
+-						CThread *recThread;
++						// WASM B2 latent-risk: plain CThread* with no generation stamp. A stale
++					// callback from call N can arrive during call N+1 and dereference a freed
++					// CClassificationComputationItem*. Fix: add generation stamp (same pattern as
++					// CRequirementPreparingData::mGeneration). Deferred until after ALIF+ fix.
++					CThread *recThread;
+ 						CSatisfiableCalculationJob* mSatCalcJob;
+ 						CClassificationComputationItem *workItem;
+ 						CClassificationCalculationStatisticsCollection* mUsedStatisticsCollection;
+diff --git a/Source/Reasoner/Consistiser/Events/CPrecomputationCalculatedCallbackEvent.h b/Source/Reasoner/Consistiser/Events/CPrecomputationCalculatedCallbackEvent.h
+index 6cdae874..91252d9f 100644
+--- a/Source/Reasoner/Consistiser/Events/CPrecomputationCalculatedCallbackEvent.h
++++ b/Source/Reasoner/Consistiser/Events/CPrecomputationCalculatedCallbackEvent.h
+@@ -90,6 +90,10 @@ namespace Konclude {
+ 
+ 					// protected variables
+ 					protected:
++						// WASM B2 latent-risk: plain CThread* with no generation stamp. A stale
++						// callback from call N can arrive during call N+1 and dereference a freed
++						// CPrecomputationTestingItem*. Fix: add generation stamp (same pattern as
++						// CRequirementPreparingData::mGeneration). Deferred until after ALIF+ fix.
+ 						CThread* mRecThread;
+ 						CSatisfiableCalculationJob* mSatCalcJob;
+ 						CPrecomputationTestingItem* mTestingItem;
+diff --git a/Source/Reasoner/Consistiser/Events/CSaturationPrecomputationCalculatedCallbackEvent.h b/Source/Reasoner/Consistiser/Events/CSaturationPrecomputationCalculatedCallbackEvent.h
+index a1814e3f..299bb2b1 100644
+--- a/Source/Reasoner/Consistiser/Events/CSaturationPrecomputationCalculatedCallbackEvent.h
++++ b/Source/Reasoner/Consistiser/Events/CSaturationPrecomputationCalculatedCallbackEvent.h
+@@ -90,6 +90,10 @@ namespace Konclude {
+ 
+ 					// protected variables
+ 					protected:
++						// WASM B2 latent-risk: plain CThread* with no generation stamp. A stale
++						// callback from call N can arrive during call N+1 and dereference a freed
++						// CPrecomputationTestingItem*. Fix: add generation stamp (same pattern as
++						// CRequirementPreparingData::mGeneration). Deferred until after ALIF+ fix.
+ 						CThread *recThread;
+ 						CApproximatedSaturationCalculationJob* mSatCalcJob;
+ 						CPrecomputationTestingItem* mPreTestItem;
+diff --git a/Source/Reasoner/Realizer/Events/CRealizingCalculatedCallbackEvent.h b/Source/Reasoner/Realizer/Events/CRealizingCalculatedCallbackEvent.h
+index 00496978..d77c3042 100644
+--- a/Source/Reasoner/Realizer/Events/CRealizingCalculatedCallbackEvent.h
++++ b/Source/Reasoner/Realizer/Events/CRealizingCalculatedCallbackEvent.h
+@@ -90,6 +90,10 @@ namespace Konclude {
+ 
+ 					// protected variables
+ 					protected:
++						// WASM B2 latent-risk: plain CThread* with no generation stamp. A stale
++						// callback from call N can arrive during call N+1 and dereference a freed
++						// CRealizingTestingItem*. Fix: add generation stamp (same pattern as
++						// CRequirementPreparingData::mGeneration). Deferred until after ALIF+ fix.
+ 						CThread* mRecThread;
+ 						CSatisfiableCalculationJob* mSatCalcJob;
+ 						CRealizingTestingItem* mTestingItem;
