@@ -84,7 +84,7 @@ describe.skipIf(!wasmExists)("ALIF+ precomputing deadlock — regression test", 
 
   it(
     "Fixture A: FP 1-filler → materialize() completes after warmup (regression for patch 034)",
-    { timeout: 8000 },
+    { timeout: 3000 },
     async () => {
       const quads = parseNTriples(FIXTURE_A_NT);
       const result = await reasoner.materialize(quads);
