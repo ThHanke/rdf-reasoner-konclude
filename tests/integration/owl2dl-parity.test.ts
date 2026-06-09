@@ -102,13 +102,7 @@ describe.skipIf(!wasmExists)("Restriction constructs", () => {
 
   // ── someValuesFrom ─────────────────────────────────────────────────────────
 
-  // UPSTREAM_LIMITATION: Konclude's ABox realization does not materialise filler
-  // types for someValuesFrom when a concrete named individual is already assigned as
-  // the filler.  Under strict OWL-DL semantics the tableau should propagate rex:Dog
-  // (since alice:PetOwner ≡ ∃hasAnimal.Dog and rex is the only hasAnimal filler), but
-  // Konclude v0.7.0 does not emit rex:Dog in this configuration.  The test documents
-  // the actual behaviour rather than asserting the OWL-DL-correct result.
-  it("someValuesFrom — materialize: alice:PetOwner, alice hasAnimal rex → rex rdf:type Dog (filler type not propagated by Konclude)", async () => {
+  it("someValuesFrom — materialize: alice:PetOwner, alice hasAnimal rex → rex rdf:type Dog", async () => {
     const inferred = await reasoner.materialize(quads);
     expect(
       hasTriple(inferred, EX("rex"), RDF_TYPE, EX("Dog")),
@@ -442,10 +436,6 @@ describe.skipIf(!wasmExists)("ABox constructs", () => {
 
   // ── owl:differentFrom — checkConsistency: reflexive self-reference ─────────
 
-  // UPSTREAM_LIMITATION: Konclude v0.7.0 does not detect `a owl:differentFrom a`
-  // as an inconsistency.  The reflexive differentFrom axiom should produce a clash
-  // (an individual cannot be different from itself) but the kernel silently accepts
-  // it.  The correct OWL 2 DL answer is false (inconsistent).
   it("differentFrom/checkConsistency: a owl:differentFrom a → inconsistent (false)", async () => {
     const inconsistentQuads = parseTurtle(`
       @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
@@ -504,12 +494,7 @@ describe.skipIf(!wasmExists)("ABox constructs", () => {
 
   // ── NPA — materialize: consistent NPA must not produce positive assertion ─────
 
-  // Previously hung in WASM (labelled UPSTREAM_LIMITATION); confirmed working
-  // after WASM regression was resolved.  The NPA says alice does NOT know bob;
-  // materialize() must NOT emit "alice knows bob" as a positive entailment.
-  // Fresh RdfReasoner used to avoid BackendAssCache state accumulation from
-  // prior materialize() calls on the shared instance (same isolation pattern
-  // as the FunctionalProperty tests in property-characteristics.test.ts).
+  // Fresh RdfReasoner: BackendAssCache isolation (same pattern as FunctionalProperty tests).
   it("NPA — materialize: consistent NPA must NOT produce negated triple as positive assertion", async () => {
     const fresh = new RdfReasoner();
     await fresh.ready;
@@ -699,14 +684,7 @@ describe.skipIf(!wasmExists)("Property disjointness (R11)", () => {
 
   // ── EquivalentObjectProperties — classifyProperties ────────────────────────
 
-  // UPSTREAM_LIMITATION: Konclude's property classification pipeline
-  // (getPropertyTripleBuffer) does not emit rdfs:subPropertyOf edges derived
-  // from owl:equivalentProperty.  Only explicitly declared rdfs:subPropertyOf
-  // axioms appear in the property hierarchy output.  Under OWL 2 DL semantics,
-  // p owl:equivalentProperty q implies both p rdfs:subPropertyOf q and
-  // q rdfs:subPropertyOf p, but Konclude v0.7.0 does not materialise these
-  // entailments in the property hierarchy classification result.
-  it("EquivalentObjectProperties/classifyProperties: p equivalentProperty q → p rdfs:subPropertyOf q not emitted by Konclude property hierarchy", async () => {
+  it("EquivalentObjectProperties/classifyProperties: p equivalentProperty q → p rdfs:subPropertyOf q", async () => {
     const inferred = await reasoner.classifyProperties(quads);
     expect(
       hasTriple(inferred, EX("p"), RDFS_SUB_PROPERTY_OF, EX("q")),

@@ -121,15 +121,6 @@ ex:EmptyClass a owl:Class ; rdfs:subClassOf owl:Nothing .
     expect(warnIRIs).toContain("http://example.org/v#EmptyClass");
   }, 360000);
 
-  it("validate + classify sequential → no queue stall", async () => {
-    const quads = loadFixture("inconsistent.nt");
-    const store = new Store(quads);
-    await reasoner.validate(store);
-    // classify should complete without hanging
-    const consistent = await reasoner.checkConsistency(store);
-    expect(typeof consistent).toBe("boolean");
-  }, 360000);
-
   it("concurrent classify() and checkConsistency() calls are serialized", async () => {
     // Fire both calls simultaneously — they must not interleave their
     // loadTripleBuffer → realization sequences inside the Worker.

@@ -493,11 +493,13 @@ Violation detection verified against native Konclude v0.7.0 ground truth:
 | 14  | `DataAllValuesFrom xsd:minInclusive` (inconsistent case)  | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
 
 **PARITY (WASM surpasses native v0.7.0)** means native Konclude v0.7.0 has a kernel bug for this
-construct; this package fixes it via patches 027–029. **UPSTREAM_LIMITATION** (not in the
-consistency table above — applies to `materialize()` only) means the realization pipeline hangs on
-these constructs: `owl:AllDisjointClasses`/`owl:disjointUnionOf`/`NegativePropertyAssertion`
-blank-node NTriples, and `owl:FunctionalProperty` → `owl:sameAs` (ALIF+ precompute). Use
-`checkConsistency()` for these where possible.
+construct; this package fixes it via patches 011–012 (role axiom correctness, NPA builder fix).
+
+`owl:AllDisjointClasses`, `owl:disjointUnionOf`, and `owl:NegativePropertyAssertion` all work in
+`materialize()` — the JS layer expands list axioms to pairwise form before handing off to WASM.
+The only known remaining gap is `owl:FunctionalProperty` + `owl:InverseFunctionalProperty` on the
+same role with a single filler (ALIF+ precompute hang). This case is tracked in
+`tests/integration/known-limitations.test.ts`.
 
 ### Classification (`classify`)
 

@@ -47,6 +47,16 @@ function parseNTriples(ntriplesStr: string): Quad[] {
   return quads;
 }
 
+async function withFreshReasoner<T>(fn: (r: RdfReasoner) => Promise<T>): Promise<T> {
+  const fresh = new RdfReasoner();
+  await fresh.ready;
+  try {
+    return await fn(fresh);
+  } finally {
+    fresh.terminate();
+  }
+}
+
 function hasTriple(quads: Quad[], s: string, p: string, o: string): boolean {
   return quads.some(
     (q) =>
@@ -236,7 +246,7 @@ describe.skipIf(!wasmExists)("Property characteristics ABox inference", () => {
   );
 
   // -------------------------------------------------------------------------
-  // FunctionalProperty — UPSTREAM_LIMITATION
+  // FunctionalProperty
   // -------------------------------------------------------------------------
 
   // JS workaround for ALIF+ hang: FunctionalProperty declarations are stripped
@@ -244,31 +254,23 @@ describe.skipIf(!wasmExists)("Property characteristics ABox inference", () => {
   // See ts/index.ts _materializeOnQuads for implementation details.
   it(
     "FunctionalProperty: two hasMother assertions → Eve owl:sameAs Carol",
-    async () => {
-      // A fresh RdfReasoner is required for FunctionalProperty sameAs tests.
-      // The shared instance accumulates BackendAssCache state across calls; after
-      // n=3 prior calls the sameAs result can silently disappear (BackendAssCache
-      // n=3 isolation bug, plan-030).
-      const fresh = new RdfReasoner();
-      await fresh.ready;
-      try {
-        const quads = parseNTriples(FUNCTIONAL_NTRIPLES);
-        const inferred = await fresh.materialize(quads);
+    // Fresh reasoner required: BackendAssCache accumulates state across calls;
+    // after n≥3 prior calls the sameAs result can silently disappear.
+    () => withFreshReasoner(async (fresh) => {
+      const quads = parseNTriples(FUNCTIONAL_NTRIPLES);
+      const inferred = await fresh.materialize(quads);
 
-        const sameAsTriples = inferred.filter((q) => q.predicate.value === OWL_SAME_AS);
-        const eveCarol = sameAsTriples.some(
-          (q) => q.subject.value === EX("Eve") && q.object.value === EX("Carol"),
-        );
-        const carolEve = sameAsTriples.some(
-          (q) => q.subject.value === EX("Carol") && q.object.value === EX("Eve"),
-        );
+      const sameAsTriples = inferred.filter((q) => q.predicate.value === OWL_SAME_AS);
+      const eveCarol = sameAsTriples.some(
+        (q) => q.subject.value === EX("Eve") && q.object.value === EX("Carol"),
+      );
+      const carolEve = sameAsTriples.some(
+        (q) => q.subject.value === EX("Carol") && q.object.value === EX("Eve"),
+      );
 
-        expect(eveCarol, "Eve owl:sameAs Carol must be in result").toBe(true);
-        expect(carolEve, "Carol owl:sameAs Eve must be in result").toBe(true);
-      } finally {
-        fresh.terminate();
-      }
-    },
+      expect(eveCarol, "Eve owl:sameAs Carol must be in result").toBe(true);
+      expect(carolEve, "Carol owl:sameAs Eve must be in result").toBe(true);
+    }),
     30_000,
   );
 
@@ -344,23 +346,20 @@ describe.skipIf(!wasmExists)("Property characteristics ABox inference", () => {
   // AllDisjointClasses — negative assertion (no spurious type propagation)
   // -------------------------------------------------------------------------
 
-  // UPSTREAM_LIMITATION: Konclude v0.7.0 materialize() hangs indefinitely on
-  // ontologies with owl:AllDisjointClasses + owl:members blank-node RDF lists
-  // in NTriples format.  checkConsistency() on equivalent Turtle (case 9 in
-  // issue13-owl-violations.test.ts) works fine — the hang is realization-path
-  // specific.  Skipped until upstream fixes the materialize pipeline for this
-  // construct.
-  it.skip(
-    "UPSTREAM_LIMITATION — AllDisjointClasses: x rdf:type A, AllDisjointClasses(A,B) → x rdf:type B must NOT appear (materialize hangs on blank-node members list)",
-    async () => {
+  // JS layer expands AllDisjointClasses to pairwise owl:disjointWith before WASM
+  // (NTriples path hangs on owl:members list axioms).
+  it(
+    "AllDisjointClasses: x rdf:type A, AllDisjointClasses(A,B) → x rdf:type B must NOT appear",
+    // Fresh reasoner required: BackendAssCache stale state causes realizer hang.
+    () => withFreshReasoner(async (fresh) => {
       const quads = parseNTriples(ALL_DISJOINT_CLASSES_NEGATIVE_NTRIPLES);
-      const inferred = await reasoner.materialize(quads);
+      const inferred = await fresh.materialize(quads);
 
       expect(
         hasTriple(inferred, EX("x"), RDF_TYPE, EX("B")),
         "x rdf:type B must NOT be spuriously inferred when AllDisjointClasses(A,B) + x rdf:type A",
       ).toBe(false);
-    },
+    }),
     30_000,
   );
 
@@ -368,32 +367,20 @@ describe.skipIf(!wasmExists)("Property characteristics ABox inference", () => {
   // disjointUnionOf — superclass entailment probe
   // -------------------------------------------------------------------------
 
-  // UPSTREAM_LIMITATION: Konclude v0.7.0 materialize() hangs indefinitely on
-  // ontologies with owl:disjointUnionOf + blank-node RDF list in NTriples format.
-  // checkConsistency() on equivalent Turtle (case 11 in issue13-owl-violations.test.ts)
-  // works fine.  Skipped until upstream fixes the materialize pipeline for this
-  // construct.
-  it.skip(
-    "UPSTREAM_LIMITATION — disjointUnionOf: x rdf:type A, C disjointUnionOf(A,B) — document whether x rdf:type C is emitted (materialize hangs on blank-node list)",
-    async () => {
+  // JS layer expands disjointUnionOf(C,A,B) to A,B rdfs:subClassOf C + pairwise disjointWith.
+  it(
+    "disjointUnionOf: x rdf:type A, C disjointUnionOf(A,B) — document whether x rdf:type C is emitted",
+    // Fresh reasoner required: same BackendAssCache isolation as AllDisjointClasses.
+    () => withFreshReasoner(async (fresh) => {
       const quads = parseNTriples(DISJOINT_UNION_OF_ENTAILMENT_NTRIPLES);
-      const inferred = await reasoner.materialize(quads);
+      const inferred = await fresh.materialize(quads);
 
       const emitsSuper = hasTriple(inferred, EX("x"), RDF_TYPE, EX("C"));
 
       // disjointUnionOf(C, A, B) implies C ≡ A ⊔ B, so x rdf:type A entails x rdf:type C.
-      // If Konclude does not emit the triple, record as a known non-entailment gap
-      // rather than a test failure (UPSTREAM_LIMITATION: ABox superclass inference
-      // via disjointUnionOf not implemented in Konclude v0.7.0 realize pipeline).
-      if (!emitsSuper) {
-        // Non-entailment confirmed: WASM does not emit x rdf:type C.
-        // This is expected behaviour for this Konclude version.
-        expect(emitsSuper).toBe(false);
-      } else {
-        // Entailment present: WASM correctly infers x rdf:type C.
-        expect(emitsSuper).toBe(true);
-      }
-    },
+      // JS expansion emits A rdfs:subClassOf C so Konclude infers x rdf:type C.
+      expect(emitsSuper, "x rdf:type C must be inferred via disjointUnionOf(C,A,B) + x:A").toBe(true);
+    }),
     30_000,
   );
 
@@ -401,29 +388,19 @@ describe.skipIf(!wasmExists)("Property characteristics ABox inference", () => {
   // NegativePropertyAssertion — no spurious positive assertion
   // -------------------------------------------------------------------------
 
-  // NegativePropertyAssertion in a consistent ontology must not cause materialize()
-  // to emit the negated triple as a positive assertion.  Previously hung in WASM
-  // (UPSTREAM_LIMITATION label); confirmed working after WASM regression was resolved.
-  // A fresh RdfReasoner is used to avoid BackendAssCache state accumulation from
-  // prior materialize() calls on the shared instance (same isolation pattern as
-  // the FunctionalProperty test above).
+  // NegativePropertyAssertion in consistent ontology must not emit negated triple as positive.
   it(
     "NegativePropertyAssertion: consistent ontology must NOT produce negated triple as positive assertion",
-    async () => {
-      const fresh = new RdfReasoner();
-      await fresh.ready;
-      try {
-        const quads = parseNTriples(NEGATIVE_PROPERTY_ASSERTION_CONSISTENT_NTRIPLES);
-        const inferred = await fresh.materialize(quads);
+    // Fresh reasoner required: BackendAssCache isolation (same pattern as FunctionalProperty).
+    () => withFreshReasoner(async (fresh) => {
+      const quads = parseNTriples(NEGATIVE_PROPERTY_ASSERTION_CONSISTENT_NTRIPLES);
+      const inferred = await fresh.materialize(quads);
 
-        expect(
-          hasTriple(inferred, EX("alice"), EX("knows"), EX("bob")),
-          "alice knows bob must NOT be materialised — NegativePropertyAssertion carries no positive entailment",
-        ).toBe(false);
-      } finally {
-        fresh.terminate();
-      }
-    },
+      expect(
+        hasTriple(inferred, EX("alice"), EX("knows"), EX("bob")),
+        "alice knows bob must NOT be materialised — NegativePropertyAssertion carries no positive entailment",
+      ).toBe(false);
+    }),
     30_000,
   );
 });

@@ -3,6 +3,11 @@
 # Idempotent: skips patches that are already applied (sentinel file guards re-runs).
 # Called automatically at CMake configure time via execute_process in CMakeLists.txt.
 # Can also be run manually: bash scripts/apply-patches.sh
+#
+# Options:
+#   --force   Reset vendor/konclude to clean state first (git checkout -- .),
+#             remove the sentinel, then apply all patches from scratch.
+#             Use this after adding or modifying patch files.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -10,6 +15,20 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 VENDOR_DIR="${REPO_ROOT}/vendor/konclude"
 PATCHES_DIR="${REPO_ROOT}/patches"
 SENTINEL="${VENDOR_DIR}/.patches-applied"
+
+FORCE=0
+for arg in "$@"; do
+    if [ "$arg" = "--force" ]; then
+        FORCE=1
+    fi
+done
+
+if [ "${FORCE}" -eq 1 ]; then
+    echo "Forcing reset: restoring vendor/konclude to clean state..."
+    git -C "${VENDOR_DIR}" checkout -- .
+    rm -f "${SENTINEL}"
+    echo "Sentinel removed."
+fi
 
 # Fast path: patches already applied (sentinel present).
 if [ -f "${SENTINEL}" ]; then

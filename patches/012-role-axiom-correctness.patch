@@ -1,3 +1,30 @@
+diff --git a/Source/Reasoner/Generator/CConcreteOntologyUpdateBuilder.cpp b/Source/Reasoner/Generator/CConcreteOntologyUpdateBuilder.cpp
+index fd93c079..4916ca62 100644
+--- a/Source/Reasoner/Generator/CConcreteOntologyUpdateBuilder.cpp
++++ b/Source/Reasoner/Generator/CConcreteOntologyUpdateBuilder.cpp
+@@ -1785,6 +1785,22 @@ namespace Konclude {
+ 								roleLinker->init(role,false);
+ 								invRole->addDisjointRoleLinker(roleLinker);
+ 							}
++							if (!role->hasInverseRole(invRole)) {
++								CSortedNegLinker<CRole*>* invRoleLinker = CObjectAllocator< CSortedNegLinker<CRole*> >::allocateAndConstruct(mMemManager);
++								invRoleLinker->init(invRole,true);
++								role->addInverseRoleLinker(invRoleLinker);
++								if (!role->getInverseRole()) {
++									role->setInverseRole(invRole);
++								}
++							}
++							if (!invRole->hasInverseRole(role)) {
++								CSortedNegLinker<CRole*>* invRoleLinker2 = CObjectAllocator< CSortedNegLinker<CRole*> >::allocateAndConstruct(mMemManager);
++								invRoleLinker2->init(role,true);
++								invRole->addInverseRoleLinker(invRoleLinker2);
++								if (!invRole->getInverseRole()) {
++									invRole->setInverseRole(role);
++								}
++							}
+ 							role->setAsymmetric(true);
+ 						} else if (expType == CBuildExpression::BETTRANSITIVEOBJECTPROPERTY) {
+ 							// TODO: build RR [= R ??
 diff --git a/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp b/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp
 index 96e51beb..fef1a54c 100644
 --- a/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp
