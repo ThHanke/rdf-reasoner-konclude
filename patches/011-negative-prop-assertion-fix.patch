@@ -1,8 +1,8 @@
 diff --git a/Source/Reasoner/Generator/CConcreteOntologyRedlandTriplesDataExpressionMapper.cpp b/Source/Reasoner/Generator/CConcreteOntologyRedlandTriplesDataExpressionMapper.cpp
-index 072eac6f..20f942da 100644
+index d85b2000..20f942da 100644
 --- a/Source/Reasoner/Generator/CConcreteOntologyRedlandTriplesDataExpressionMapper.cpp
 +++ b/Source/Reasoner/Generator/CConcreteOntologyRedlandTriplesDataExpressionMapper.cpp
-@@ -447,13 +447,13 @@
+@@ -447,13 +447,13 @@ namespace Konclude {
  								QList<CRedlandNodeProcessingData*>* targetValueLiteralProcessingDataList = getNodeProcessingDataListFromNodeStreamWithNewHandling(createRedlandNodeStreamWrapper()->init(getPartialStatementFilteredTripleStream(getAdaptedPartialFilteringStatement(node, nullptr, nullptr, mPartialFilteringStatementForOWLTargetValueSuccessors)), 2), mDataLiteralNodeIdentifierDataHash, [&](librdf_node* node)->CRedlandNodeProcessingData* { return createLiteralValueProcessingData(node); });
  								if (targetValueLiteralProcessingDataList) {
  
@@ -18,7 +18,7 @@ index 072eac6f..20f942da 100644
  										if (axiomExpression) {
  											processed = true;
  											axiomExpressionList.append(axiomExpression);
-@@ -469,13 +469,13 @@
+@@ -469,13 +469,13 @@ namespace Konclude {
  							if (!processed) {
  								QList<CRedlandNodeProcessingData*>* targetIndividualProcessingDataList = getNodeProcessingDataListFromNodeStreamWithNewHandling(createRedlandNodeStreamWrapper()->init(getPartialStatementFilteredTripleStream(getAdaptedPartialFilteringStatement(node, nullptr, nullptr, mPartialFilteringStatementForOWLTargetIndividualSuccessors)), 2), mNamedIndividualNodeIdentifierDataHash, [&](librdf_node* node)->CRedlandNodeProcessingData* { return createNamedIndividualProcessingData(node); });
  								if (targetIndividualProcessingDataList) {
@@ -34,3 +34,16 @@ index 072eac6f..20f942da 100644
  										if (axiomExpression) {
  											processed = true;
  											axiomExpressionList.append(axiomExpression);
+@@ -2439,9 +2439,9 @@ namespace Konclude {
+ 				initPartialFilteringStatement(nullptr, PREFIX_OWL_DISTINCT_MEMBERS, nullptr, mPartialFilteringStatementForOWLDistinctMembers);
+ 
+ 				initPartialFilteringStatement(nullptr, PREFIX_OWL_SOURCE_INDIVIDUAL, nullptr, mPartialFilteringStatementForOWLSourceIndividualSuccessors);
+-				initPartialFilteringStatement(nullptr, PREFIX_OWL_ASSERTION_PROPERTY, nullptr, mPartialFilteringStatementForOWLTargetIndividualSuccessors);
+-				initPartialFilteringStatement(nullptr, PREFIX_OWL_TARGET_INDIVIDUAL, nullptr, mPartialFilteringStatementForOWLTargetValueSuccessors);
+-				initPartialFilteringStatement(nullptr, PREFIX_OWL_TARGET_VALUE, nullptr, mPartialFilteringStatementForOWLAssertionPropertySuccessors);
++				initPartialFilteringStatement(nullptr, PREFIX_OWL_TARGET_INDIVIDUAL, nullptr, mPartialFilteringStatementForOWLTargetIndividualSuccessors);
++				initPartialFilteringStatement(nullptr, PREFIX_OWL_TARGET_VALUE, nullptr, mPartialFilteringStatementForOWLTargetValueSuccessors);
++				initPartialFilteringStatement(nullptr, PREFIX_OWL_ASSERTION_PROPERTY, nullptr, mPartialFilteringStatementForOWLAssertionPropertySuccessors);
+ 
+ 
+ 				initPartialFilteringStatement(nullptr, PREFIX_RDF_TYPE, nullptr, mPartialFilteringStatementForOWLAllRDFTypePredecessors);
