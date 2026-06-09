@@ -173,23 +173,6 @@ public:
         }
     }
 
-    // Reset the BackendAssCache ontology data between calls to avoid stale state
-    // from prior calls interfering with subsequent ALIF+ (FP+ABox) processing.
-    // The BackendAssCache accumulates state (mOntologyIdentifierDataHash,
-    // mNextIndiUpdateId, etc.) across calls. For ALIF+ ontologies, this stale
-    // state can cause the BackendAssCache thread to hang after processing
-    // write events for individual-saturation data.
-    void resetBackendAssocCache(CConfigurationProvider*) {
-        if (mBackendAssCache) {
-            // Post a synchronization event to the BackendAssCache thread to ensure
-            // all pending events are processed before clearing ontology data.
-            mBackendAssCache->waitSynchronization();
-            // Reset per-ontology state to prevent stale data from causing
-            // BackendAssCache thread hangs on subsequent ALIF+ calls.
-            mBackendAssCache->resetOntologyData();
-        }
-    }
-
     // Replace stock CRealizationManager with WasmRealizationManager so that
     // realizer threads are joined when the reasoner shuts down.
     CReasonerManager* initializeManager(CConfigurationProvider* configProvider) override {
@@ -303,24 +286,6 @@ public:
         if (ulc) {
             CConvertBooleanConfigType* bt = dynamic_cast<CConvertBooleanConfigType*>(ulc->getConfigType());
             if (bt) bt->readFromBoolean(true);
-        }
-        // Disable BackendAssCache concurrent label indexing wait. In WASM, the
-        // indexing uses a blockingMap (synchronous) so no waiting is needed.
-        // Setting WaitIndividualLabelAssociationIndexed=false prevents any
-        // spurious blocking on the indexing semaphore.
-        CConfigData* wiai = mConfig->createAndSetConfig(
-            "Konclude.Cache.RepresentativeBackendCache.WaitIndividualLabelAssociationIndexed");
-        if (wiai) {
-            CConvertBooleanConfigType* bt = dynamic_cast<CConvertBooleanConfigType*>(wiai->getConfigType());
-            if (bt) bt->readFromBoolean(false);
-        }
-        // Also disable late indexing so that mIndividualLabelAssociationIndexed starts true,
-        // preventing any wait on the indexing semaphore even if blockingMap doesn't set it.
-        CConfigData* liai = mConfig->createAndSetConfig(
-            "Konclude.Cache.RepresentativeBackendCache.LateIndividualLabelAssociationIndexing");
-        if (liai) {
-            CConvertBooleanConfigType* bt = dynamic_cast<CConvertBooleanConfigType*>(liai->getConfigType());
-            if (bt) bt->readFromBoolean(false);
         }
     }
     ~WasmConfigProvider() {
@@ -450,14 +415,6 @@ struct KoncludeReasoner::Impl {
         mPreviousOntology = mOntology;
         mOntology = nullptr;
         buildFreshOntology();
-        // Reset the BackendAssCache to clear stale state from the prior call.
-        // For ALIF+ (FP+ABox) ontologies, accumulated state in mOntologyIdentifierDataHash
-        // and mNextIndiUpdateId causes the BackendAssCache thread to hang after
-        // processing individual-saturation write events on the second call.
-        // Recreating the BackendAssCache ensures a clean slate for each call.
-        if (mReasonerManager) {
-            mReasonerManager->resetBackendAssocCache(nullptr);
-        }
         mClassified         = false;
         mLoadError          = false;
         mRealized           = false;
