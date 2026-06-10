@@ -8,18 +8,19 @@ Port the Konclude OWL-DL tableau reasoning kernel to WebAssembly and publish as 
 
 ## Common Commands
 
-| Target            | Command                              | What it does                                               |
-| ----------------- | ------------------------------------ | ---------------------------------------------------------- |
-| `make build`      | `npm run build`                      | TypeScript compilation only (fast)                         |
-| `make build-wasm` | `docker compose run --rm build`      | Full WASM rebuild — ~20–30 min; use ccache for incremental |
-| —                 | `npm run patch-wasm`                 | **Must run after every `make build-wasm`** — patches `dist/konclude.mjs` for browser compat (strips `createRequire`, fixes pthread onerror) |
-| `make test`       | `npm test`                           | Vitest unit + integration suite                            |
-| `make smoke`      | `docker compose run --rm smoke-test` | Quick WASM sanity check                                    |
-| `make reason`     | `node dist/cli.js $(ARGS)`           | Run CLI locally: `make reason ARGS="--input ont.ttl"`      |
-| `make shell`      | `docker compose run --rm shell`      | Interactive Emscripten shell for debugging                 |
-| `make patches`    | `npm run apply-patches`              | Re-apply Qt-removal patches to `vendor/konclude/`          |
-| `make fmt`        | `trunk fmt`                          | Format all changed files                                   |
-| `make lint`       | `trunk check`                        | Lint all changed files                                     |
+| Target | Command | What it does |
+| --- | --- | --- |
+| `make build` | `npm run build` | TypeScript compilation only (fast) |
+| `make build-wasm` | `docker compose run --rm build` | Full WASM rebuild — ~20–30 min; use ccache for incremental |
+| — | `npm run patch-wasm` | **Must run after every `make build-wasm`** — patches `dist/konclude.mjs` for browser compat |
+| `make test` | `npm test` | Vitest unit + integration suite |
+| `make smoke` | `docker compose run --rm smoke-test` | Quick WASM sanity check |
+| `make reason` | `node dist/cli.js $(ARGS)` | Run CLI locally: `make reason ARGS="--input ont.ttl"` |
+| `make shell` | `docker compose run --rm shell` | Interactive Emscripten shell for debugging |
+| `make patches` | `npm run apply-patches` | Re-apply Qt-removal patches to `vendor/konclude/` |
+| `make reset-patches` | `bash scripts/apply-patches.sh --force` | Reset vendor to clean state and re-apply all patches (use after adding/modifying patches) |
+| `make fmt` | `trunk fmt` | Format all changed files |
+| `make lint` | `trunk check` | Lint all changed files |
 
 **Docker ownership:** `dist/` becomes root-owned after `docker compose run build`. Fix before `npm run build`:
 
@@ -27,7 +28,9 @@ Port the Konclude OWL-DL tableau reasoning kernel to WebAssembly and publish as 
 sudo chown -R $USER dist/
 ```
 
-**Patch workflow:** Edit `vendor/konclude/` → `scripts/generate-patches.sh` → `make patches` → verify → commit `patches/`.
+**Patch workflow (patch 001):** `scripts/generate-patches.sh` → `make patches` → verify → commit.
+
+**Patch workflow (vendor C++ patches 002+):** Use `scripts/new-vendor-patch.sh <number> <vendor-path> [python-script]` — it extracts the clean file, applies changes, generates the diff, and validates it. After adding a new patch: `make reset-patches` (resets vendor + re-applies all patches from scratch) before `make build-wasm`.
 
 ## Linting
 

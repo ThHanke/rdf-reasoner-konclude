@@ -1,4 +1,4 @@
-.PHONY: build build-wasm test test-browser smoke reason shell patches fmt lint
+.PHONY: build build-wasm test test-browser smoke reason shell patches reset-patches fmt lint
 
 build:
 	npm run build
@@ -24,6 +24,11 @@ shell:
 
 patches:
 	npm run apply-patches
+
+# Reset vendor to clean state and re-apply all patches from scratch.
+# Run this after adding or modifying patch files before a WASM rebuild.
+reset-patches:
+	bash scripts/apply-patches.sh --force
 
 fmt:
 	trunk fmt
