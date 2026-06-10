@@ -6,7 +6,7 @@
   "types": "./dist/index.d.ts",
   "type": "module",
   "bin": {
-    "owl-reason": "./dist/cli.js"
+    "owl-reason": "dist/cli.js"
   },
   "sideEffects": [
     "./dist/worker.js"
@@ -72,7 +72,7 @@
   "homepage": "https://github.com/ThHanke/rdf-reasoner-konclude#readme",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ThHanke/rdf-reasoner-konclude"
+    "url": "git+https://github.com/ThHanke/rdf-reasoner-konclude.git"
   },
   "publishConfig": {
     "access": "public"
