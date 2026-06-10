@@ -32,7 +32,7 @@ const EX = (local: string) => `http://example.org/${local}`;
 // and checkConsistency() work; materialize() does not fire.
 // Workaround: use owl:intersectionOf of two owl:someValuesFrom restrictions.
 describe.skipIf(!wasmExists)("known-limitations: minCardinality ABox realization gap", () => {
-  it.skip("minCardinality 2: individual satisfying restriction not typed as restricted class", async () => {
+  it("minCardinality 2: individual satisfying restriction not typed as restricted class", async () => {
     const reasoner = new RdfReasoner();
     await reasoner.ready;
     try {
@@ -75,7 +75,7 @@ describe.skipIf(!wasmExists)("known-limitations: minCardinality ABox realization
 // assertions for enumerated members.
 // Workaround: use owl:equivalentClass [ a owl:Class ; owl:unionOf (...) ].
 describe.skipIf(!wasmExists)("known-limitations: owl:oneOf ABox realization gap", () => {
-  it.skip("oneOf: enumerated individuals not typed as nominal class", async () => {
+  it("oneOf: enumerated individuals not typed as nominal class", async () => {
     const reasoner = new RdfReasoner();
     await reasoner.ready;
     try {
