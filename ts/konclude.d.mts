@@ -8,7 +8,7 @@
  */
 
 export interface KoncludeReasonerInstance {
-  loadTripleBuffer(triplePtr: number, tripleCount: number, strTablePtr: number, strTableLen: number): void;
+  loadTripleBuffer(triplePtr: number, tripleCount: number, strTablePtr: number, strTableLen: number, forRealization: boolean): void;
   classification(): boolean;
   realization(): boolean;
   consistency(): boolean;

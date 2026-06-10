@@ -19,7 +19,7 @@ public:
     //       1 = BlankNode  → librdf_new_node_from_blank_identifier
     //       2 = Literal    → string-data entry is "value\0datatype\0language"
     //     lower 30 bits (id & 0x3FFFFFFF) = index into the offset array.
-    void loadTripleBuffer(int triplePtr, int tripleCount, int strTablePtr, int strTableLen);
+    void loadTripleBuffer(int triplePtr, int tripleCount, int strTablePtr, int strTableLen, bool forRealization);
 
     // classification — TBox only (class + property hierarchy).
     bool classification();
