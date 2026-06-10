@@ -335,6 +335,22 @@ struct KoncludeReasoner::Impl {
     std::vector<uint8_t> mResultBuffer;
     int mResultBufferPtr = 0;
 
+    // Per-call workaround state — populated by loadTripleBuffer, consumed by build* and consistency
+    std::vector<std::pair<std::string,std::string>> mEquivPropPairs;
+    bool mTriviallyInconsistent = false;
+
+    // Unit 1: FP/IFP multi-filler sameAs pairs
+    std::vector<std::pair<std::string,std::string>> mFpIfpSameAsPairs;
+
+    // Unit 2: someValuesFrom post-processing data
+    struct SvfEntry { std::string property; std::string fillerClass; };
+    std::unordered_map<std::string, std::vector<SvfEntry>> mSvfIndex;     // classIri → entries
+    std::unordered_map<std::string, std::vector<std::string>> mSvfRoleAssertions; // "subj\0prop" → [objs]
+    std::vector<std::pair<std::string,std::string>> mSvfABoxTypes;       // (indiIri, classIri)
+
+    // Unit 3: disjointUnionOf memberships
+    std::vector<std::pair<std::string,std::string>> mDisjointUnionOf;    // (classIri, memberIri)
+
     Impl() {
         mConfigProvider = new WasmConfigProvider();
 
@@ -420,6 +436,13 @@ struct KoncludeReasoner::Impl {
         mRealized           = false;
         mResultBuffer.clear();
         mResultBufferPtr = 0;
+        mEquivPropPairs.clear();
+        mTriviallyInconsistent = false;
+        mFpIfpSameAsPairs.clear();
+        mSvfIndex.clear();
+        mSvfRoleAssertions.clear();
+        mSvfABoxTypes.clear();
+        mDisjointUnionOf.clear();
     }
 };
 
@@ -437,7 +460,7 @@ KoncludeReasoner::~KoncludeReasoner() {
 //
 // See KoncludeReasoner.h for the wire format comment.
 //
-void KoncludeReasoner::loadTripleBuffer(int triplePtr, int tripleCount, int strTablePtr, int strTableLen) {
+void KoncludeReasoner::loadTripleBuffer(int triplePtr, int tripleCount, int strTablePtr, int strTableLen, bool forRealization) {
 #ifdef WASM_VERBOSE_LOGGING
     auto t0 = std::chrono::steady_clock::now();
 #endif
@@ -566,8 +589,71 @@ void KoncludeReasoner::loadTripleBuffer(int triplePtr, int tripleCount, int strT
         }
     };
 
-    // ── Insert triples into model + CXLinker ─────────────────────────────────
+    // ── Unit 1 pre-scan: FP/IFP multi-filler detection (before insertion) ───────
+    // Only active when forRealization=true (materialize/whatIf paths).
+    // Mirrors TS computeFpIfpPreprocessing: skip FP/IFP declarations during
+    // insertion to prevent ALIF+ hang in WASM saturation.
+    // Skipped for consistency/classify paths to preserve native IFP semantics.
     const uint32_t* triples = reinterpret_cast<const uint32_t*>(triplePtr);
+
+    uint32_t fpPreRdfTypeIdx = UINT32_MAX, fpPreFpIdx = UINT32_MAX, fpPreIfpIdx = UINT32_MAX;
+    std::unordered_set<uint64_t> fpIfpDeclSkipSet;  // encoded as (propTermIdx << 32) | typeTermIdx
+    {
+        auto fpFindTerm = [&](const char* iri, size_t len) -> uint32_t {
+            for (uint32_t i = 0; i < count; ++i)
+                if (terms[i].len == len && memcmp(terms[i].ptr, iri, len) == 0) return i;
+            return UINT32_MAX;
+        };
+        static const char sfpRdfType[] = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+        static const char sfpFp[]      = "http://www.w3.org/2002/07/owl#FunctionalProperty";
+        static const char sfpIfp[]     = "http://www.w3.org/2002/07/owl#InverseFunctionalProperty";
+        fpPreRdfTypeIdx = fpFindTerm(sfpRdfType, sizeof(sfpRdfType) - 1);
+        fpPreFpIdx      = fpFindTerm(sfpFp,      sizeof(sfpFp)      - 1);
+        fpPreIfpIdx     = fpFindTerm(sfpIfp,     sizeof(sfpIfp)     - 1);
+
+        if (forRealization && fpPreRdfTypeIdx != UINT32_MAX && (fpPreFpIdx != UINT32_MAX || fpPreIfpIdx != UINT32_MAX)) {
+            std::unordered_set<uint32_t> fpPropIdxsPre, ifpPropIdxsPre;
+            for (int i = 0; i < tripleCount; ++i) {
+                uint32_t sId = triples[i*3+0], pId = triples[i*3+1], oId = triples[i*3+2];
+                if (pId != fpPreRdfTypeIdx || (sId >> 30) != 0 || (oId >> 30) != 0) continue;
+                uint32_t oi = oId & 0x3FFFFFFFu;
+                if (fpPreFpIdx  != UINT32_MAX && oi == fpPreFpIdx)  fpPropIdxsPre.insert(sId & 0x3FFFFFFFu);
+                if (fpPreIfpIdx != UINT32_MAX && oi == fpPreIfpIdx) ifpPropIdxsPre.insert(sId & 0x3FFFFFFFu);
+            }
+            auto scanPropPairs = [&](uint32_t propIdx, bool bySubj, uint32_t typeTermIdx) {
+                std::unordered_map<uint32_t, std::vector<uint32_t>> byGroup;
+                for (int i = 0; i < tripleCount; ++i) {
+                    uint32_t sId = triples[i*3+0], pId = triples[i*3+1], oId = triples[i*3+2];
+                    if (pId != propIdx || (sId >> 30) != 0 || (oId >> 30) != 0) continue;
+                    uint32_t si = sId & 0x3FFFFFFFu, oi = oId & 0x3FFFFFFFu;
+                    if (si >= count || oi >= count) continue;
+                    uint32_t key = bySubj ? si : oi;
+                    uint32_t val = bySubj ? oi : si;
+                    byGroup[key].push_back(val);
+                }
+                bool hasMulti = false;
+                for (const auto& [k, vals] : byGroup) {
+                    if (vals.size() < 2) continue;
+                    hasMulti = true;
+                    for (size_t ii = 0; ii < vals.size(); ++ii)
+                        for (size_t jj = ii+1; jj < vals.size(); ++jj) {
+                            if (vals[ii] >= count || vals[jj] >= count) continue;
+                            std::string a(terms[vals[ii]].ptr, terms[vals[ii]].len);
+                            std::string b(terms[vals[jj]].ptr, terms[vals[jj]].len);
+                            mImpl->mFpIfpSameAsPairs.push_back({a, b});
+                            mImpl->mFpIfpSameAsPairs.push_back({b, a});
+                        }
+                }
+                if (hasMulti)
+                    fpIfpDeclSkipSet.insert(
+                        (static_cast<uint64_t>(propIdx) << 32) | typeTermIdx);
+            };
+            for (uint32_t p : fpPropIdxsPre)  scanPropPairs(p, true,  fpPreFpIdx);
+            for (uint32_t p : ifpPropIdxsPre) scanPropPairs(p, false, fpPreIfpIdx);
+        }
+    }
+
+    // ── Insert triples into model + CXLinker ─────────────────────────────────
     CXLinker<librdf_statement*>* statementLinker = tripleData->getRedlandStatementLinker();
     CXLinker<librdf_statement*>* lastStatementLinker = nullptr;
     if (statementLinker) {
@@ -578,6 +664,14 @@ void KoncludeReasoner::loadTripleBuffer(int triplePtr, int tripleCount, int strT
         uint32_t sId = triples[i * 3 + 0];
         uint32_t pId = triples[i * 3 + 1];
         uint32_t oId = triples[i * 3 + 2];
+
+        // Unit 1: skip FP/IFP declarations for multi-filler properties (ALIF+ hang prevention)
+        if (!fpIfpDeclSkipSet.empty() && pId == fpPreRdfTypeIdx &&
+                (sId >> 30) == 0 && (oId >> 30) == 0) {
+            uint64_t key = (static_cast<uint64_t>(sId & 0x3FFFFFFFu) << 32) |
+                           (oId & 0x3FFFFFFFu);
+            if (fpIfpDeclSkipSet.count(key)) continue;
+        }
 
         librdf_node* sNode = makeNode(sId);
         librdf_node* pNode = makeNode(pId);
@@ -611,6 +705,227 @@ void KoncludeReasoner::loadTripleBuffer(int triplePtr, int tripleCount, int strT
         librdf_free_statement(stmt);
     }
     tripleData->setRedlandStatementLinker(statementLinker);
+
+    // ── Scan for per-call workaround state ───────────────────────────────────
+    // Predicates are always NamedNodes (typeTag=0), so encoded ID == term index.
+    {
+        auto findTermIdx = [&](const char* iri, size_t len) -> uint32_t {
+            for (uint32_t i = 0; i < count; ++i)
+                if (terms[i].len == len && memcmp(terms[i].ptr, iri, len) == 0) return i;
+            return UINT32_MAX;
+        };
+        static const char S_EQUIV_PROP[] = "http://www.w3.org/2002/07/owl#equivalentProperty";
+        static const char S_DIFF_FROM[]  = "http://www.w3.org/2002/07/owl#differentFrom";
+        static const char S_COMPL_OF[]   = "http://www.w3.org/2002/07/owl#complementOf";
+        static const char S_RDF_TYPE[]   = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+        uint32_t equivPropId = findTermIdx(S_EQUIV_PROP, sizeof(S_EQUIV_PROP) - 1);
+        uint32_t diffFromId  = findTermIdx(S_DIFF_FROM,  sizeof(S_DIFF_FROM)  - 1);
+        uint32_t complOfId   = findTermIdx(S_COMPL_OF,   sizeof(S_COMPL_OF)   - 1);
+        uint32_t rdfTypeId   = findTermIdx(S_RDF_TYPE,   sizeof(S_RDF_TYPE)   - 1);
+
+        // For complementOf ABox clash: collect (A,B) pairs and individual type sets
+        std::vector<std::pair<uint32_t,uint32_t>> complOfPairs;
+        std::unordered_map<uint32_t, std::unordered_set<uint32_t>> indiTypes;
+
+        for (int i = 0; i < tripleCount; ++i) {
+            uint32_t sId = triples[i * 3 + 0];
+            uint32_t pId = triples[i * 3 + 1];
+            uint32_t oId = triples[i * 3 + 2];
+            if (pId == equivPropId && equivPropId != UINT32_MAX) {
+                if ((sId >> 30) == 0 && (oId >> 30) == 0) {
+                    uint32_t si = sId & 0x3FFFFFFFu, oi = oId & 0x3FFFFFFFu;
+                    if (si < count && oi < count)
+                        mImpl->mEquivPropPairs.push_back({
+                            std::string(terms[si].ptr, terms[si].len),
+                            std::string(terms[oi].ptr, terms[oi].len)
+                        });
+                }
+            } else if (pId == diffFromId && diffFromId != UINT32_MAX) {
+                if (sId == oId && (sId >> 30) == 0)
+                    mImpl->mTriviallyInconsistent = true;
+            } else if (pId == complOfId && complOfId != UINT32_MAX) {
+                if ((sId >> 30) == 0 && (oId >> 30) == 0) {
+                    uint32_t si = sId & 0x3FFFFFFFu, oi = oId & 0x3FFFFFFFu;
+                    if (si == oi)
+                        mImpl->mTriviallyInconsistent = true;
+                    else if (si < count && oi < count)
+                        complOfPairs.push_back({si, oi});
+                }
+            } else if (pId == rdfTypeId && rdfTypeId != UINT32_MAX) {
+                if ((sId >> 30) == 0 && (oId >> 30) == 0) {
+                    uint32_t si = sId & 0x3FFFFFFFu, oi = oId & 0x3FFFFFFFu;
+                    if (si < count && oi < count)
+                        indiTypes[si].insert(oi);
+                }
+            }
+        }
+        // Check: individual typed as both A and B where A owl:complementOf B
+        if (!mImpl->mTriviallyInconsistent && !complOfPairs.empty() && !indiTypes.empty()) {
+            for (const auto& [aIdx, bIdx] : complOfPairs) {
+                for (const auto& entry : indiTypes) {
+                    const auto& types = entry.second;
+                    if (types.count(aIdx) && types.count(bIdx)) {
+                        mImpl->mTriviallyInconsistent = true;
+                        break;
+                    }
+                }
+                if (mImpl->mTriviallyInconsistent) break;
+            }
+        }
+    }
+
+    // ── Batch B workaround scan (Units 2=someValuesFrom, 3=disjointUnionOf) ──
+    {
+        auto findTerm = [&](const char* iri, size_t len) -> uint32_t {
+            for (uint32_t i = 0; i < count; ++i)
+                if (terms[i].len == len && memcmp(terms[i].ptr, iri, len) == 0) return i;
+            return UINT32_MAX;
+        };
+        static const char sRdfType[]   = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+        static const char sRestrict[]  = "http://www.w3.org/2002/07/owl#Restriction";
+        static const char sOnProp[]    = "http://www.w3.org/2002/07/owl#onProperty";
+        static const char sSvf[]       = "http://www.w3.org/2002/07/owl#someValuesFrom";
+        static const char sEquivCls[]  = "http://www.w3.org/2002/07/owl#equivalentClass";
+        static const char sSubCls[]    = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
+        static const char sDisjUn[]    = "http://www.w3.org/2002/07/owl#disjointUnionOf";
+        static const char sRdfFirst[]  = "http://www.w3.org/1999/02/22-rdf-syntax-ns#first";
+        static const char sRdfRest[]   = "http://www.w3.org/1999/02/22-rdf-syntax-ns#rest";
+
+        uint32_t rdfTypeIdx = findTerm(sRdfType,  sizeof(sRdfType)  - 1);
+        uint32_t restrictIdx= findTerm(sRestrict,  sizeof(sRestrict)  - 1);
+        uint32_t onPropIdx  = findTerm(sOnProp,    sizeof(sOnProp)    - 1);
+        uint32_t svfIdx     = findTerm(sSvf,       sizeof(sSvf)       - 1);
+        uint32_t equivClsIdx= findTerm(sEquivCls,  sizeof(sEquivCls)  - 1);
+        uint32_t subClsIdx  = findTerm(sSubCls,    sizeof(sSubCls)    - 1);
+        uint32_t disjUnIdx  = findTerm(sDisjUn,    sizeof(sDisjUn)    - 1);
+        uint32_t rdfFirstIdx= findTerm(sRdfFirst,  sizeof(sRdfFirst)  - 1);
+        uint32_t rdfRestIdx = findTerm(sRdfRest,   sizeof(sRdfRest)   - 1);
+
+        // Unit 2: someValuesFrom blank-node structures
+        std::unordered_set<uint32_t> svfRestBnodes;          // encoded blank node IDs (typeTag=1)
+        std::unordered_map<uint32_t, uint32_t> svfOnPropMap; // bnodeEncId → propTermIdx
+        std::unordered_map<uint32_t, uint32_t> svfSvfMap;    // bnodeEncId → fillerTermIdx
+        // Unit 3: RDF list traversal maps
+        std::unordered_map<uint32_t, uint32_t> rdfFirstMap;  // bnodeEncId → memberTermIdx
+        std::unordered_map<uint32_t, uint32_t> rdfRestMap;   // bnodeEncId → nextEncId
+
+        for (int i = 0; i < tripleCount; ++i) {
+            uint32_t sId = triples[i*3+0], pId = triples[i*3+1], oId = triples[i*3+2];
+            if (rdfTypeIdx != UINT32_MAX && pId == rdfTypeIdx &&
+                    (sId >> 30) == 1 && (oId >> 30) == 0) {
+                uint32_t oi = oId & 0x3FFFFFFFu;
+                if (restrictIdx != UINT32_MAX && oi == restrictIdx) svfRestBnodes.insert(sId);
+            } else if (onPropIdx != UINT32_MAX && pId == onPropIdx && (sId >> 30) == 1 && (oId >> 30) == 0) {
+                svfOnPropMap[sId] = oId & 0x3FFFFFFFu;
+            } else if (svfIdx != UINT32_MAX && pId == svfIdx && (sId >> 30) == 1 && (oId >> 30) == 0) {
+                svfSvfMap[sId] = oId & 0x3FFFFFFFu;
+            } else if (rdfFirstIdx != UINT32_MAX && pId == rdfFirstIdx && (sId >> 30) == 1 && (oId >> 30) == 0) {
+                rdfFirstMap[sId] = oId & 0x3FFFFFFFu;
+            } else if (rdfRestIdx != UINT32_MAX && pId == rdfRestIdx && (sId >> 30) == 1) {
+                rdfRestMap[sId] = oId;
+            }
+        }
+
+        // Unit 2: build mSvfIndex (classIri → [{property, fillerClass}])
+        {
+            std::unordered_map<uint32_t, std::pair<uint32_t,uint32_t>> confirmedRestrictions;
+            for (uint32_t bn : svfRestBnodes) {
+                auto pit = svfOnPropMap.find(bn);
+                auto fit = svfSvfMap.find(bn);
+                if (pit != svfOnPropMap.end() && fit != svfSvfMap.end())
+                    confirmedRestrictions[bn] = {pit->second, fit->second};
+            }
+            if (!confirmedRestrictions.empty()) {
+                for (int i = 0; i < tripleCount; ++i) {
+                    uint32_t sId = triples[i*3+0], pId = triples[i*3+1], oId = triples[i*3+2];
+                    bool isEquiv = (equivClsIdx != UINT32_MAX && pId == equivClsIdx);
+                    bool isSub   = (subClsIdx   != UINT32_MAX && pId == subClsIdx);
+                    if (!isEquiv && !isSub) continue;
+                    auto addEntry = [&](uint32_t classEncId, uint32_t bnodeEncId) {
+                        auto rit = confirmedRestrictions.find(bnodeEncId);
+                        if (rit == confirmedRestrictions.end()) return;
+                        uint32_t classIdx = classEncId & 0x3FFFFFFFu;
+                        uint32_t propIdx  = rit->second.first;
+                        uint32_t fillIdx  = rit->second.second;
+                        if (classIdx >= count || propIdx >= count || fillIdx >= count) return;
+                        std::string cls(terms[classIdx].ptr,  terms[classIdx].len);
+                        std::string prop(terms[propIdx].ptr,  terms[propIdx].len);
+                        std::string fill(terms[fillIdx].ptr,  terms[fillIdx].len);
+                        auto& vec = mImpl->mSvfIndex[cls];
+                        if (!std::any_of(vec.begin(), vec.end(),
+                                [&](const Impl::SvfEntry& e){ return e.property == prop && e.fillerClass == fill; }))
+                            vec.push_back({prop, fill});
+                    };
+                    if ((sId >> 30) == 0 && (oId >> 30) == 1) addEntry(sId, oId);  // C subClassOf/equivClass _:r
+                    if (isEquiv && (sId >> 30) == 1 && (oId >> 30) == 0) addEntry(oId, sId);  // _:r equivClass C
+                }
+            }
+        }
+
+        // Unit 2: role assertions for SvF properties
+        if (!mImpl->mSvfIndex.empty()) {
+            std::unordered_set<uint32_t> svfPropTermIdxs;
+            for (const auto& [cls, entries] : mImpl->mSvfIndex)
+                for (const auto& e : entries)
+                    for (uint32_t i = 0; i < count; ++i)
+                        if (terms[i].len == e.property.size() &&
+                                memcmp(terms[i].ptr, e.property.c_str(), e.property.size()) == 0) {
+                            svfPropTermIdxs.insert(i); break;
+                        }
+            if (!svfPropTermIdxs.empty()) {
+                for (int i = 0; i < tripleCount; ++i) {
+                    uint32_t sId = triples[i*3+0], pId = triples[i*3+1], oId = triples[i*3+2];
+                    if ((sId >> 30) != 0 || (oId >> 30) != 0 || !svfPropTermIdxs.count(pId)) continue;
+                    uint32_t si = sId & 0x3FFFFFFFu, oi = oId & 0x3FFFFFFFu;
+                    if (si >= count || oi >= count) continue;
+                    std::string sIri(terms[si].ptr, terms[si].len);
+                    std::string pIri(terms[pId].ptr, terms[pId].len);
+                    std::string oIri(terms[oi].ptr, terms[oi].len);
+                    mImpl->mSvfRoleAssertions[sIri + '\0' + pIri].push_back(oIri);
+                }
+            }
+        }
+
+        // Unit 2: ABox type assertions (needed for fixpoint at build time)
+        if (!mImpl->mSvfIndex.empty() && rdfTypeIdx != UINT32_MAX) {
+            for (int i = 0; i < tripleCount; ++i) {
+                uint32_t sId = triples[i*3+0], pId = triples[i*3+1], oId = triples[i*3+2];
+                if (pId != rdfTypeIdx || (sId >> 30) != 0 || (oId >> 30) != 0) continue;
+                uint32_t si = sId & 0x3FFFFFFFu, oi = oId & 0x3FFFFFFFu;
+                if (si >= count || oi >= count) continue;
+                mImpl->mSvfABoxTypes.push_back({
+                    std::string(terms[si].ptr, terms[si].len),
+                    std::string(terms[oi].ptr, terms[oi].len)});
+            }
+        }
+
+        // Unit 3: walk disjointUnionOf RDF lists → mDisjointUnionOf
+        if (disjUnIdx != UINT32_MAX) {
+            for (int i = 0; i < tripleCount; ++i) {
+                uint32_t sId = triples[i*3+0], pId = triples[i*3+1], oId = triples[i*3+2];
+                if (pId != disjUnIdx || (sId >> 30) != 0) continue;
+                uint32_t classIdx = sId & 0x3FFFFFFFu;
+                if (classIdx >= count) continue;
+                std::string classIri(terms[classIdx].ptr, terms[classIdx].len);
+                uint32_t curr = oId;
+                std::unordered_set<uint32_t> seen;
+                while (true) {
+                    if (seen.count(curr)) break;
+                    seen.insert(curr);
+                    if ((curr >> 30) == 0) break;  // rdf:nil or other NamedNode → end
+                    auto fit = rdfFirstMap.find(curr);
+                    if (fit == rdfFirstMap.end()) break;
+                    uint32_t memberIdx = fit->second;
+                    if (memberIdx < count)
+                        mImpl->mDisjointUnionOf.push_back({classIri,
+                            std::string(terms[memberIdx].ptr, terms[memberIdx].len)});
+                    auto rit = rdfRestMap.find(curr);
+                    if (rit == rdfRestMap.end()) break;
+                    curr = rit->second;
+                }
+            }
+        }
+    }
 
     // ── Register data with the builder, then map triples → OWL axioms ────────
     // addTriplesData MUST be called before mapTriples so getLatestTriplesData(true)
@@ -763,6 +1078,7 @@ bool KoncludeReasoner::realization() {
 // consistency ──────────────────────────────────────────────────────────────────
 
 bool KoncludeReasoner::consistency() {
+    if (mImpl->mTriviallyInconsistent) return false;
     CConsistence* cons = mImpl->mOntology->getConsistence();
     if (!cons) {
         return true;
@@ -1192,6 +1508,71 @@ int KoncludeReasoner::buildInferredTripleBuffer() {
         }
     }
 
+    // ── OWL 2 DL post-processing (Batch B workarounds) ────────────────────────
+
+    // Unit 3: disjointUnionOf → member rdfs:subClassOf class
+    if (!mImpl->mDisjointUnionOf.empty()) {
+        static const std::string rdfsSubCls = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
+        uint32_t pSub = intern.intern(rdfsSubCls);
+        for (const auto& [classIri, memberIri] : mImpl->mDisjointUnionOf)
+            emitTriple(intern.intern(memberIri), pSub, intern.intern(classIri));
+    }
+
+    // Unit 1: FP/IFP sameAs pairs
+    if (!mImpl->mFpIfpSameAsPairs.empty()) {
+        static const std::string owlSameAs = "http://www.w3.org/2002/07/owl#sameAs";
+        uint32_t pSameAs = intern.intern(owlSameAs);
+        for (const auto& [s, o] : mImpl->mFpIfpSameAsPairs)
+            emitTriple(intern.intern(s), pSameAs, intern.intern(o));
+    }
+
+    // Unit 2: someValuesFrom fixpoint — propagate rdf:type to restriction fillers
+    if (!mImpl->mSvfIndex.empty()) {
+        static const std::string rdfType = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+        uint32_t pType = intern.intern(rdfType);
+
+        // Collect all type assertions: ABox input + WASM-inferred output
+        std::unordered_map<std::string, std::unordered_set<std::string>> allTypes;
+        for (const auto& [indi, cls] : mImpl->mSvfABoxTypes)
+            allTypes[indi].insert(cls);
+        // Scan output buffer for rdf:type triples
+        for (size_t i = 0; i + 2 < tripleIds.size(); i += 3) {
+            if (tripleIds[i+1] != pType) continue;
+            uint32_t si = tripleIds[i]   & 0x3FFFFFFFu;
+            uint32_t oi = tripleIds[i+2] & 0x3FFFFFFFu;
+            if (si < intern.strings.size() && oi < intern.strings.size())
+                allTypes[intern.strings[si]].insert(intern.strings[oi]);
+        }
+
+        // Fixpoint: emit new rdf:type triples until stable
+        bool changed = true;
+        while (changed) {
+            changed = false;
+            // Snapshot current types to avoid modifying while iterating
+            std::vector<std::pair<std::string,std::string>> snapshot;
+            for (const auto& [indi, types] : allTypes)
+                for (const auto& cls : types)
+                    snapshot.push_back({indi, cls});
+            for (const auto& [indiIri, classIri] : snapshot) {
+                auto sit = mImpl->mSvfIndex.find(classIri);
+                if (sit == mImpl->mSvfIndex.end()) continue;
+                for (const auto& entry : sit->second) {
+                    const std::string& prop = entry.property;
+                    const std::string& filler = entry.fillerClass;
+                    std::string roleKey = indiIri + '\0' + prop;
+                    auto rit = mImpl->mSvfRoleAssertions.find(roleKey);
+                    if (rit == mImpl->mSvfRoleAssertions.end()) continue;
+                    for (const std::string& fillerIri : rit->second) {
+                        if (allTypes[fillerIri].insert(filler).second) {
+                            emitTriple(intern.intern(fillerIri), pType, intern.intern(filler));
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // ── Assemble combined buffer [strTableLen:u32][strTable][tripleBuffer] ────
 
     std::vector<uint8_t> strTable = intern.build();
@@ -1330,6 +1711,12 @@ int KoncludeReasoner::buildPropertyTripleBuffer() {
 
         walkHierarchy(classif->getObjectPropertyRoleClassification());
         walkHierarchy(classif->getDataPropertyRoleClassification());
+    }
+
+    // ── OWL 2 DL: p owl:equivalentProperty q ⇒ bidirectional rdfs:subPropertyOf
+    for (const auto& [p, q] : mImpl->mEquivPropPairs) {
+        emitTriple(intern.intern(p), pSubProp, intern.intern(q));
+        emitTriple(intern.intern(q), pSubProp, intern.intern(p));
     }
 
     // ── Assemble combined buffer [strTableLen:u32][strTable][tripleBuffer] ────

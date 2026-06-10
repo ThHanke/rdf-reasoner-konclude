@@ -33,7 +33,7 @@ const mocks = vi.hoisted(() => {
   (globalThis as Record<string, unknown>).self = globalThis;
 
   // --- WASM module mock state ---
-  const loadTripleBuffer = vi.fn<[number, number, number, number], void>();
+  const loadTripleBuffer = vi.fn<[number, number, number, number, boolean], void>();
   const classification = vi.fn<[], boolean>().mockReturnValue(true);
   const realization = vi.fn<[], boolean>().mockReturnValue(true);
   const consistency = vi.fn<[], boolean>().mockReturnValue(true);
@@ -147,6 +147,7 @@ describe("worker handleMessage", () => {
       3,                  // tripleCount = 36 / 12
       expect.any(Number), // strTablePtr
       8,                  // strTableLen
+      false,              // forRealization
     );
     expect(mocks.malloc).toHaveBeenCalledTimes(2);
     expect(mocks.free).toHaveBeenCalledTimes(2);
