@@ -260,6 +260,35 @@ describe.skipIf(!wasmExists)("Cardinality constructs", () => {
       "dave must be inferred as rdf:type Person via AtLeastOneHobby ⊑ Person",
     ).toBe(true);
   });
+
+  // ── maxCardinality — OWA parity ────────────────────────────────────────────
+
+  it("materialize: individual with 1 hasSpouse filler but NOT typed AtMostOneSpouse → no rdf:type emitted (OWA)", async () => {
+    // Under OWA, an individual satisfying maxCardinality through visible role
+    // assertions alone cannot be classified as belonging to the restricted class
+    // — there may be unknown additional fillers.  Emitting rdf:type here would
+    // be unsound.  This matches native Konclude v0.7.0 behaviour.
+    const quads = parseTurtle(`
+      @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+      @prefix owl:  <http://www.w3.org/2002/07/owl#> .
+      @prefix ex:   <http://example.org/> .
+      ex:hasSpouse a owl:ObjectProperty .
+      ex:AtMostOneSpouse a owl:Class ;
+          owl:equivalentClass [
+              a owl:Restriction ;
+              owl:onProperty ex:hasSpouse ;
+              owl:maxCardinality 1
+          ] .
+      ex:carol a owl:NamedIndividual .
+      ex:bob   a owl:NamedIndividual .
+      ex:carol ex:hasSpouse ex:bob .
+    `);
+    const inferred = await reasoner.materialize(quads);
+    expect(
+      hasTriple(inferred, EX("carol"), RDF_TYPE, EX("AtMostOneSpouse")),
+      "carol must NOT be inferred as AtMostOneSpouse — OWA cannot bound filler count",
+    ).toBe(false);
+  }, 30_000);
 });
 
 // ---------------------------------------------------------------------------
