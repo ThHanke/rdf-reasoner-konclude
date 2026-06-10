@@ -5,7 +5,7 @@
  * suite.  Each skip has a label that matches a plan/issue for tracking.
  */
 
-import { describe, it } from "vitest";
+import { describe, it, expect } from "vitest";
 import { existsSync } from "node:fs";
 import { Parser } from "n3";
 import type { Quad } from "@rdfjs/types";
@@ -21,7 +21,84 @@ function parseTurtle(content: string): Quad[] {
 }
 
 const OWL_SAME_AS = "http://www.w3.org/2002/07/owl#sameAs";
+const RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
 const EX = (local: string) => `http://example.org/${local}`;
+
+// ---------------------------------------------------------------------------
+// ABox realization gap: owl:minCardinality / owl:minQualifiedCardinality
+// ---------------------------------------------------------------------------
+// Discovered 2026-06-10 during ontosphere integration. Konclude's realizer
+// does not produce rdf:type assertions from cardinality restrictions. classify()
+// and checkConsistency() work; materialize() does not fire.
+// Workaround: use owl:intersectionOf of two owl:someValuesFrom restrictions.
+describe.skipIf(!wasmExists)("known-limitations: minCardinality ABox realization gap", () => {
+  it.skip("minCardinality 2: individual satisfying restriction not typed as restricted class", async () => {
+    const reasoner = new RdfReasoner();
+    await reasoner.ready;
+    try {
+      const quads = parseTurtle(`
+        @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+        @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+        @prefix owl:  <http://www.w3.org/2002/07/owl#> .
+        @prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+        @prefix ex:   <http://example.org/> .
+
+        ex:manages a owl:ObjectProperty .
+        ex:TeamLead a owl:Class ;
+            owl:equivalentClass [
+                a owl:Restriction ;
+                owl:onProperty ex:manages ;
+                owl:minCardinality 2
+            ] .
+        ex:dave a owl:NamedIndividual ;
+            ex:manages ex:bob , ex:eve .
+        ex:bob  a owl:NamedIndividual .
+        ex:eve  a owl:NamedIndividual .
+        ex:bob owl:differentFrom ex:eve .
+      `);
+      const inferred = await reasoner.materialize(quads);
+      const daveIsTeamLead = inferred.some(
+        (q) => q.predicate.value === RDF_TYPE && q.subject.value === EX("dave") && q.object.value === EX("TeamLead"),
+      );
+      expect(daveIsTeamLead).toBe(true);
+    } finally {
+      reasoner.terminate();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ABox realization gap: owl:oneOf (nominal class)
+// ---------------------------------------------------------------------------
+// Discovered 2026-06-10 during ontosphere integration. materialize() emits
+// only LeadershipTeam rdfs:subClassOf owl:Thing; no individual rdf:type
+// assertions for enumerated members.
+// Workaround: use owl:equivalentClass [ a owl:Class ; owl:unionOf (...) ].
+describe.skipIf(!wasmExists)("known-limitations: owl:oneOf ABox realization gap", () => {
+  it.skip("oneOf: enumerated individuals not typed as nominal class", async () => {
+    const reasoner = new RdfReasoner();
+    await reasoner.ready;
+    try {
+      const quads = parseTurtle(`
+        @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+        @prefix owl:  <http://www.w3.org/2002/07/owl#> .
+        @prefix ex:   <http://example.org/> .
+
+        ex:LeadershipTeam a owl:Class ;
+            owl:oneOf (ex:alice ex:dave) .
+        ex:alice a owl:NamedIndividual .
+        ex:dave  a owl:NamedIndividual .
+      `);
+      const inferred = await reasoner.materialize(quads);
+      const aliceTyped = inferred.some(
+        (q) => q.predicate.value === RDF_TYPE && q.subject.value === EX("alice") && q.object.value === EX("LeadershipTeam"),
+      );
+      expect(aliceTyped).toBe(true);
+    } finally {
+      reasoner.terminate();
+    }
+  });
+});
 
 // ---------------------------------------------------------------------------
 // ALIF+ hang: FunctionalProperty + InverseFunctionalProperty + 1 filler
