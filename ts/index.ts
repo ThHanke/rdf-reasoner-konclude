@@ -365,6 +365,50 @@ function mergeSameAsQuads(allQuads: Quad[], sameAsQuads: Quad[]): void {
   }
 }
 
+// Synthesize p rdfs:subPropertyOf q and q rdfs:subPropertyOf p for each
+// p owl:equivalentProperty q in the store. Adds quads to inferredGraph.
+function expandEquivPropInStore(
+  store: Store,
+  inferredGraph: import("@rdfjs/types").NamedNode,
+): void {
+  const subPropNode = DataFactory.namedNode(RDFS_SUB_PROPERTY_OF);
+  for (const q of store.getQuads(null, DataFactory.namedNode(OWL_EQUIVALENT_PROPERTY), null, null)) {
+    if (q.graph.value === inferredGraph.value) continue;
+    if (q.subject.termType !== "NamedNode" || q.object.termType !== "NamedNode") continue;
+    if (store.countQuads(q.subject, subPropNode, q.object, inferredGraph) === 0)
+      store.addQuad(DataFactory.quad(q.subject, subPropNode, q.object, inferredGraph));
+    if (store.countQuads(q.object, subPropNode, q.subject, inferredGraph) === 0)
+      store.addQuad(DataFactory.quad(q.object as import("@rdfjs/types").NamedNode, subPropNode, q.subject as import("@rdfjs/types").NamedNode, inferredGraph));
+  }
+}
+
+// Synthesize p rdfs:subPropertyOf q and q rdfs:subPropertyOf p for each
+// p owl:equivalentProperty q found in sourceQuads. Appends to resultQuads.
+function expandEquivPropInQuads(
+  sourceQuads: Quad[],
+  resultQuads: Quad[],
+  graphNode: import("@rdfjs/types").NamedNode | import("@rdfjs/types").DefaultGraph,
+): void {
+  const existingKeys = new Set(
+    resultQuads.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`),
+  );
+  const subPropNode = DataFactory.namedNode(RDFS_SUB_PROPERTY_OF);
+  for (const q of sourceQuads) {
+    if (q.predicate.value !== OWL_EQUIVALENT_PROPERTY) continue;
+    if (q.subject.termType !== "NamedNode" || q.object.termType !== "NamedNode") continue;
+    const fwdKey = `${q.subject.value}\0${RDFS_SUB_PROPERTY_OF}\0${q.object.value}`;
+    const bwdKey = `${q.object.value}\0${RDFS_SUB_PROPERTY_OF}\0${q.subject.value}`;
+    if (!existingKeys.has(fwdKey)) {
+      existingKeys.add(fwdKey);
+      resultQuads.push(DataFactory.quad(q.subject, subPropNode, q.object, graphNode));
+    }
+    if (!existingKeys.has(bwdKey)) {
+      existingKeys.add(bwdKey);
+      resultQuads.push(DataFactory.quad(q.object as import("@rdfjs/types").NamedNode, subPropNode, q.subject as import("@rdfjs/types").NamedNode, graphNode));
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // RdfReasoner
 // ---------------------------------------------------------------------------
@@ -1062,21 +1106,7 @@ export class RdfReasoner {
       }
 
       // OWL 2 DL: p owl:equivalentProperty q ⇒ p rdfs:subPropertyOf q AND q rdfs:subPropertyOf p.
-      // The WASM kernel does not emit these edges; synthesize them from base quads.
-      const subPropNode = DataFactory.namedNode(RDFS_SUB_PROPERTY_OF);
-      for (const q of store.getQuads(null, DataFactory.namedNode(OWL_EQUIVALENT_PROPERTY), null, null)) {
-        // Skip quads from the inferred graph itself
-        if (q.graph.value === inferredGraphNode.value) continue;
-        if (q.subject.termType !== "NamedNode" || q.object.termType !== "NamedNode") continue;
-        const forward = DataFactory.quad(q.subject, subPropNode, q.object, inferredGraphNode);
-        const backward = DataFactory.quad(q.object as import("@rdfjs/types").NamedNode, subPropNode, q.subject as import("@rdfjs/types").NamedNode, inferredGraphNode);
-        if (store.countQuads(q.subject, subPropNode, q.object, inferredGraphNode) === 0) {
-          store.addQuad(forward);
-        }
-        if (store.countQuads(q.object, subPropNode, q.subject, inferredGraphNode) === 0) {
-          store.addQuad(backward);
-        }
-      }
+      expandEquivPropInStore(store, inferredGraphNode);
 
       this._classifyPropertiesCache = { hash: fingerprint, result: undefined as void };
       this._classifyCache = null;
@@ -1103,26 +1133,7 @@ export class RdfReasoner {
       const resultQuads = decodeBuffers(resultBuf);
 
       // OWL 2 DL: p owl:equivalentProperty q ⇒ p rdfs:subPropertyOf q AND q rdfs:subPropertyOf p.
-      // The WASM kernel does not emit these edges; synthesize them from input quads.
-      const existingKeys = new Set(
-        resultQuads.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`),
-      );
-      const defaultGraph = DataFactory.defaultGraph();
-      const subPropNode = DataFactory.namedNode(RDFS_SUB_PROPERTY_OF);
-      for (const q of inputQuads) {
-        if (q.predicate.value !== OWL_EQUIVALENT_PROPERTY) continue;
-        if (q.subject.termType !== "NamedNode" || q.object.termType !== "NamedNode") continue;
-        const fwdKey = `${q.subject.value}\0${RDFS_SUB_PROPERTY_OF}\0${q.object.value}`;
-        const bwdKey = `${q.object.value}\0${RDFS_SUB_PROPERTY_OF}\0${q.subject.value}`;
-        if (!existingKeys.has(fwdKey)) {
-          existingKeys.add(fwdKey);
-          resultQuads.push(DataFactory.quad(q.subject, subPropNode, q.object, defaultGraph));
-        }
-        if (!existingKeys.has(bwdKey)) {
-          existingKeys.add(bwdKey);
-          resultQuads.push(DataFactory.quad(q.object as import("@rdfjs/types").NamedNode, subPropNode, q.subject as import("@rdfjs/types").NamedNode, defaultGraph));
-        }
-      }
+      expandEquivPropInQuads(inputQuads, resultQuads, DataFactory.defaultGraph());
       return resultQuads;
     });
     this._queue = result.then(
@@ -1224,16 +1235,7 @@ export class RdfReasoner {
     for (const q of decodeBuffers(buf))
       store.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, ig));
     // OWL 2 DL: p owl:equivalentProperty q ⇒ p rdfs:subPropertyOf q AND q rdfs:subPropertyOf p.
-    // The WASM kernel does not emit these edges; synthesize them from base quads.
-    const subPropNode = DataFactory.namedNode(RDFS_SUB_PROPERTY_OF);
-    for (const q of store.getQuads(null, DataFactory.namedNode(OWL_EQUIVALENT_PROPERTY), null, null)) {
-      if (q.graph.value === ig.value) continue;
-      if (q.subject.termType !== "NamedNode" || q.object.termType !== "NamedNode") continue;
-      if (store.countQuads(q.subject, subPropNode, q.object, ig) === 0)
-        store.addQuad(DataFactory.quad(q.subject, subPropNode, q.object, ig));
-      if (store.countQuads(q.object, subPropNode, q.subject, ig) === 0)
-        store.addQuad(DataFactory.quad(q.object as import("@rdfjs/types").NamedNode, subPropNode, q.subject as import("@rdfjs/types").NamedNode, ig));
-    }
+    expandEquivPropInStore(store, ig);
     this._classifyPropertiesCache = { hash: fingerprint, result: undefined as void };
     this._classifyCache = null;              // cross-invalidate
     this._materializeCache = null;           // cross-invalidate
