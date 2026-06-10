@@ -12,7 +12,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
-import { Parser } from "n3";
+import { Parser, Store, DataFactory } from "n3";
 import type { Quad } from "@rdfjs/types";
 
 import { RdfReasoner } from "../../ts/index.js";
@@ -957,6 +957,116 @@ describe.skipIf(!wasmExists)("Property characteristics", () => {
         const bobAlice = hasTriple(inferred, EX("Bob"), OWL_SAME_AS, EX("Alice"));
         expect(aliceBob, "alice owl:sameAs bob must be in result").toBe(true);
         expect(bobAlice, "bob owl:sameAs alice must be in result").toBe(true);
+      } finally {
+        fresh.terminate();
+      }
+    },
+    30_000,
+  );
+
+  // ── FunctionalProperty — isEntailed / whatIf coverage ─────────────────────
+
+  it(
+    "FunctionalProperty/isEntailed: multi-filler FP — isEntailed completes and returns correct boolean",
+    async () => {
+      const fresh = new RdfReasoner();
+      await fresh.ready;
+      try {
+        const fpQuads = parseTurtle(`
+          @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+          @prefix owl:  <http://www.w3.org/2002/07/owl#> .
+          @prefix ex:   <http://example.org/> .
+          ex:hasMother a owl:ObjectProperty, owl:FunctionalProperty .
+          ex:Person a owl:Class .
+          ex:Alice a owl:NamedIndividual, ex:Person .
+          ex:Eve   a owl:NamedIndividual .
+          ex:Carol a owl:NamedIndividual .
+          ex:Alice ex:hasMother ex:Eve .
+          ex:Alice ex:hasMother ex:Carol .
+        `);
+        const store = new Store(fpQuads);
+        const result = await fresh.isEntailed(
+          store,
+          DataFactory.quad(
+            DataFactory.namedNode(EX("Alice")),
+            DataFactory.namedNode(RDF_TYPE),
+            DataFactory.namedNode(EX("Person")),
+            DataFactory.defaultGraph(),
+          ),
+        );
+        expect(result, "isEntailed must complete and return true for explicitly-typed Alice").toBe(true);
+      } finally {
+        fresh.terminate();
+      }
+    },
+    30_000,
+  );
+
+  it(
+    "FunctionalProperty/isEntailed: TBox-only FP — no hang, returns false for unentailed type",
+    async () => {
+      // TBox-only (no ABox individuals): FP declaration is NOT stripped, but
+      // realization on TBox-only does not trigger the ALIF+ hang.
+      const fresh = new RdfReasoner();
+      await fresh.ready;
+      try {
+        const fpQuads = parseTurtle(`
+          @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+          @prefix owl:  <http://www.w3.org/2002/07/owl#> .
+          @prefix ex:   <http://example.org/> .
+          ex:hasMother a owl:ObjectProperty, owl:FunctionalProperty .
+          ex:Person a owl:Class .
+        `);
+        const store = new Store(fpQuads);
+        const result = await fresh.isEntailed(
+          store,
+          DataFactory.quad(
+            DataFactory.namedNode(EX("Person")),
+            DataFactory.namedNode(RDF_TYPE),
+            DataFactory.namedNode(EX("Animal")),
+            DataFactory.defaultGraph(),
+          ),
+        );
+        expect(result, "TBox-only FP must not hang and must return false for unentailed type").toBe(false);
+      } finally {
+        fresh.terminate();
+      }
+    },
+    30_000,
+  );
+
+  it(
+    "FunctionalProperty/whatIf: adding second FP filler as hypothesis → sameAs in delta",
+    async () => {
+      const fresh = new RdfReasoner();
+      await fresh.ready;
+      try {
+        const baseQuads = parseTurtle(`
+          @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+          @prefix owl:  <http://www.w3.org/2002/07/owl#> .
+          @prefix ex:   <http://example.org/> .
+          ex:hasMother a owl:ObjectProperty, owl:FunctionalProperty .
+          ex:Alice a owl:NamedIndividual .
+          ex:Eve   a owl:NamedIndividual .
+          ex:Alice ex:hasMother ex:Eve .
+        `);
+        const store = new Store(baseQuads);
+        const { added } = await fresh.whatIf(store, [
+          DataFactory.quad(
+            DataFactory.namedNode(EX("Alice")),
+            DataFactory.namedNode(EX("hasMother")),
+            DataFactory.namedNode(EX("Carol")),
+            DataFactory.defaultGraph(),
+          ),
+        ]);
+        const eveCarol = added.some(
+          q => q.subject.value === EX("Eve") && q.predicate.value === OWL_SAME_AS && q.object.value === EX("Carol"),
+        );
+        const carolEve = added.some(
+          q => q.subject.value === EX("Carol") && q.predicate.value === OWL_SAME_AS && q.object.value === EX("Eve"),
+        );
+        expect(eveCarol, "Eve owl:sameAs Carol must appear in whatIf delta.added").toBe(true);
+        expect(carolEve, "Carol owl:sameAs Eve must appear in whatIf delta.added").toBe(true);
       } finally {
         fresh.terminate();
       }
