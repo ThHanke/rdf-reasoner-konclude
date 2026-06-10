@@ -351,6 +351,24 @@ struct KoncludeReasoner::Impl {
     // Unit 3: disjointUnionOf memberships
     std::vector<std::pair<std::string,std::string>> mDisjointUnionOf;    // (classIri, memberIri)
 
+    // Unit 4 (plan-048): owl:oneOf nominal class memberships
+    std::vector<std::pair<std::string,std::string>> mOneOfMemberships;   // (classIri, memberIri)
+
+    // Unit 5 (plan-048): minCardinality restrictions
+    struct MinCardEntry {
+        std::string classIri;
+        std::string propIri;
+        int         minCard;
+        std::string qualClassIri;  // empty = unqualified
+    };
+    std::vector<MinCardEntry> mMinCardRestrictions;
+
+    // Unit 5 (plan-048): owl:differentFrom pairs (symmetric, for minCard distinctness check)
+    std::unordered_map<std::string, std::unordered_set<std::string>> mDifferentFromPairs;
+
+    // Unit 5 (plan-048): role assertions for minCard properties (unconditional — not gated on mSvfIndex)
+    std::unordered_map<std::string, std::vector<std::string>> mMinCardRoleAssertions;  // "subj\0prop" → [objs]
+
     Impl() {
         mConfigProvider = new WasmConfigProvider();
 
@@ -443,6 +461,10 @@ struct KoncludeReasoner::Impl {
         mSvfRoleAssertions.clear();
         mSvfABoxTypes.clear();
         mDisjointUnionOf.clear();
+        mOneOfMemberships.clear();
+        mMinCardRestrictions.clear();
+        mDifferentFromPairs.clear();
+        mMinCardRoleAssertions.clear();
     }
 };
 
@@ -743,6 +765,15 @@ void KoncludeReasoner::loadTripleBuffer(int triplePtr, int tripleCount, int strT
             } else if (pId == diffFromId && diffFromId != UINT32_MAX) {
                 if (sId == oId && (sId >> 30) == 0)
                     mImpl->mTriviallyInconsistent = true;
+                if ((sId >> 30) == 0 && (oId >> 30) == 0 && sId != oId) {
+                    uint32_t si = sId & 0x3FFFFFFFu, oi = oId & 0x3FFFFFFFu;
+                    if (si < count && oi < count) {
+                        std::string sIri(terms[si].ptr, terms[si].len);
+                        std::string oIri(terms[oi].ptr, terms[oi].len);
+                        mImpl->mDifferentFromPairs[sIri].insert(oIri);
+                        mImpl->mDifferentFromPairs[oIri].insert(sIri);
+                    }
+                }
             } else if (pId == complOfId && complOfId != UINT32_MAX) {
                 if ((sId >> 30) == 0 && (oId >> 30) == 0) {
                     uint32_t si = sId & 0x3FFFFFFFu, oi = oId & 0x3FFFFFFFu;
@@ -790,6 +821,10 @@ void KoncludeReasoner::loadTripleBuffer(int triplePtr, int tripleCount, int strT
         static const char sDisjUn[]    = "http://www.w3.org/2002/07/owl#disjointUnionOf";
         static const char sRdfFirst[]  = "http://www.w3.org/1999/02/22-rdf-syntax-ns#first";
         static const char sRdfRest[]   = "http://www.w3.org/1999/02/22-rdf-syntax-ns#rest";
+        static const char sOneOf[]     = "http://www.w3.org/2002/07/owl#oneOf";
+        static const char sMinCard[]   = "http://www.w3.org/2002/07/owl#minCardinality";
+        static const char sMinQCard[]  = "http://www.w3.org/2002/07/owl#minQualifiedCardinality";
+        static const char sOnClass[]   = "http://www.w3.org/2002/07/owl#onClass";
 
         uint32_t rdfTypeIdx = findTerm(sRdfType,  sizeof(sRdfType)  - 1);
         uint32_t restrictIdx= findTerm(sRestrict,  sizeof(sRestrict)  - 1);
@@ -800,6 +835,10 @@ void KoncludeReasoner::loadTripleBuffer(int triplePtr, int tripleCount, int strT
         uint32_t disjUnIdx  = findTerm(sDisjUn,    sizeof(sDisjUn)    - 1);
         uint32_t rdfFirstIdx= findTerm(sRdfFirst,  sizeof(sRdfFirst)  - 1);
         uint32_t rdfRestIdx = findTerm(sRdfRest,   sizeof(sRdfRest)   - 1);
+        uint32_t oneOfIdx   = findTerm(sOneOf,     sizeof(sOneOf)     - 1);
+        uint32_t minCardIdx = findTerm(sMinCard,   sizeof(sMinCard)   - 1);
+        uint32_t minQCardIdx= findTerm(sMinQCard,  sizeof(sMinQCard)  - 1);
+        uint32_t onClassIdx = findTerm(sOnClass,   sizeof(sOnClass)   - 1);
 
         // Unit 2: someValuesFrom blank-node structures
         std::unordered_set<uint32_t> svfRestBnodes;          // encoded blank node IDs (typeTag=1)
@@ -808,6 +847,12 @@ void KoncludeReasoner::loadTripleBuffer(int triplePtr, int tripleCount, int strT
         // Unit 3: RDF list traversal maps
         std::unordered_map<uint32_t, uint32_t> rdfFirstMap;  // bnodeEncId → memberTermIdx
         std::unordered_map<uint32_t, uint32_t> rdfRestMap;   // bnodeEncId → nextEncId
+        // Unit 4 (plan-048): oneOf heads — classTermIdx → headEncId
+        std::unordered_map<uint32_t, uint32_t> oneOfHeadMap;
+        // Unit 5 (plan-048): minCardinality literal + onClass on restriction bnodes
+        std::unordered_map<uint32_t, uint32_t> minCardValueMap;  // bnodeEncId → litEncId
+        std::unordered_map<uint32_t, uint32_t> minQCardValueMap; // bnodeEncId → litEncId
+        std::unordered_map<uint32_t, uint32_t> onClassMap;       // bnodeEncId → qualClassTermIdx
 
         for (int i = 0; i < tripleCount; ++i) {
             uint32_t sId = triples[i*3+0], pId = triples[i*3+1], oId = triples[i*3+2];
@@ -823,6 +868,14 @@ void KoncludeReasoner::loadTripleBuffer(int triplePtr, int tripleCount, int strT
                 rdfFirstMap[sId] = oId & 0x3FFFFFFFu;
             } else if (rdfRestIdx != UINT32_MAX && pId == rdfRestIdx && (sId >> 30) == 1) {
                 rdfRestMap[sId] = oId;
+            } else if (oneOfIdx != UINT32_MAX && pId == oneOfIdx && (sId >> 30) == 0) {
+                oneOfHeadMap[sId & 0x3FFFFFFFu] = oId;
+            } else if (minCardIdx != UINT32_MAX && pId == minCardIdx && (sId >> 30) == 1 && (oId >> 30) == 2) {
+                minCardValueMap[sId] = oId;
+            } else if (minQCardIdx != UINT32_MAX && pId == minQCardIdx && (sId >> 30) == 1 && (oId >> 30) == 2) {
+                minQCardValueMap[sId] = oId;
+            } else if (onClassIdx != UINT32_MAX && pId == onClassIdx && (sId >> 30) == 1 && (oId >> 30) == 0) {
+                onClassMap[sId] = oId & 0x3FFFFFFFu;
             }
         }
 
@@ -896,6 +949,103 @@ void KoncludeReasoner::loadTripleBuffer(int triplePtr, int tripleCount, int strT
                 mImpl->mSvfABoxTypes.push_back({
                     std::string(terms[si].ptr, terms[si].len),
                     std::string(terms[oi].ptr, terms[oi].len)});
+            }
+        }
+
+        // Unit 4 (plan-048): walk owl:oneOf RDF lists → mOneOfMemberships
+        if (!oneOfHeadMap.empty()) {
+            for (const auto& [classTermIdx, headEncId] : oneOfHeadMap) {
+                if (classTermIdx >= count) continue;
+                std::string classIri(terms[classTermIdx].ptr, terms[classTermIdx].len);
+                uint32_t curr = headEncId;
+                std::unordered_set<uint32_t> seen;
+                while (true) {
+                    if (seen.count(curr)) break;
+                    seen.insert(curr);
+                    if ((curr >> 30) == 0) break;  // rdf:nil or other NamedNode → end
+                    auto fit = rdfFirstMap.find(curr);
+                    if (fit == rdfFirstMap.end()) break;
+                    uint32_t memberIdx = fit->second;
+                    if (memberIdx < count)
+                        mImpl->mOneOfMemberships.push_back({classIri,
+                            std::string(terms[memberIdx].ptr, terms[memberIdx].len)});
+                    auto rit = rdfRestMap.find(curr);
+                    if (rit == rdfRestMap.end()) break;
+                    curr = rit->second;
+                }
+            }
+        }
+
+        // Unit 5 (plan-048): build mMinCardRestrictions from restriction bnodes
+        {
+            // Find bnodes that are owl:Restriction + have owl:onProperty + owl:minCardinality/minQCard
+            std::unordered_map<uint32_t, std::pair<uint32_t, uint32_t>> confirmedMinCards;
+            // bnodeEncId → (propTermIdx, litEncId)
+            for (uint32_t bn : svfRestBnodes) {
+                auto pit = svfOnPropMap.find(bn);
+                if (pit == svfOnPropMap.end()) continue;
+                uint32_t litEncId = UINT32_MAX;
+                auto mcit = minCardValueMap.find(bn);
+                if (mcit != minCardValueMap.end()) litEncId = mcit->second;
+                else {
+                    auto mqit = minQCardValueMap.find(bn);
+                    if (mqit != minQCardValueMap.end()) litEncId = mqit->second;
+                }
+                if (litEncId != UINT32_MAX)
+                    confirmedMinCards[bn] = {pit->second, litEncId};
+            }
+            if (!confirmedMinCards.empty()) {
+                for (int i = 0; i < tripleCount; ++i) {
+                    uint32_t sId = triples[i*3+0], pId = triples[i*3+1], oId = triples[i*3+2];
+                    bool isEquiv = (equivClsIdx != UINT32_MAX && pId == equivClsIdx);
+                    bool isSub   = (subClsIdx   != UINT32_MAX && pId == subClsIdx);
+                    if (!isEquiv && !isSub) continue;
+                    auto addEntry = [&](uint32_t classEncId, uint32_t bnodeEncId) {
+                        auto rit = confirmedMinCards.find(bnodeEncId);
+                        if (rit == confirmedMinCards.end()) return;
+                        uint32_t classIdx = classEncId & 0x3FFFFFFFu;
+                        uint32_t propIdx  = rit->second.first;
+                        uint32_t litEncId = rit->second.second;
+                        if (classIdx >= count || propIdx >= count) return;
+                        uint32_t litIdx = litEncId & 0x3FFFFFFFu;
+                        if (litIdx >= count) return;
+                        int n = 0;
+                        try { n = std::stoi(terms[litIdx].ptr); } catch (...) { return; }
+                        if (n <= 0) return;
+                        std::string cls(terms[classIdx].ptr, terms[classIdx].len);
+                        std::string prop(terms[propIdx].ptr, terms[propIdx].len);
+                        std::string qualCls;
+                        auto qit = onClassMap.find(bnodeEncId);
+                        if (qit != onClassMap.end() && qit->second < count)
+                            qualCls = std::string(terms[qit->second].ptr, terms[qit->second].len);
+                        mImpl->mMinCardRestrictions.push_back({cls, prop, n, qualCls});
+                    };
+                    if ((sId >> 30) == 0 && (oId >> 30) == 1) addEntry(sId, oId);
+                    if (isEquiv && (sId >> 30) == 1 && (oId >> 30) == 0) addEntry(oId, sId);
+                }
+            }
+        }
+
+        // Unit 5 (plan-048): collect role assertions for minCard properties
+        if (!mImpl->mMinCardRestrictions.empty()) {
+            std::unordered_set<uint32_t> mcPropIdxs;
+            for (const auto& entry : mImpl->mMinCardRestrictions)
+                for (uint32_t i = 0; i < count; ++i)
+                    if (terms[i].len == entry.propIri.size() &&
+                            memcmp(terms[i].ptr, entry.propIri.c_str(), entry.propIri.size()) == 0) {
+                        mcPropIdxs.insert(i); break;
+                    }
+            if (!mcPropIdxs.empty()) {
+                for (int i = 0; i < tripleCount; ++i) {
+                    uint32_t sId = triples[i*3+0], pId = triples[i*3+1], oId = triples[i*3+2];
+                    if ((sId >> 30) != 0 || (oId >> 30) != 0 || !mcPropIdxs.count(pId)) continue;
+                    uint32_t si = sId & 0x3FFFFFFFu, oi = oId & 0x3FFFFFFFu;
+                    if (si >= count || oi >= count) continue;
+                    std::string sIri(terms[si].ptr, terms[si].len);
+                    std::string pIri(terms[pId].ptr, terms[pId].len);
+                    std::string oIri(terms[oi].ptr, terms[oi].len);
+                    mImpl->mMinCardRoleAssertions[sIri + '\0' + pIri].push_back(oIri);
+                }
             }
         }
 
@@ -1503,6 +1653,68 @@ int KoncludeReasoner::buildInferredTripleBuffer() {
                     emitTriple(srcId,
                                intern.intern(std::string(roleQ)),
                                intern.intern(litStr, 2));
+                }
+            }
+        }
+
+        // Unit 4 (plan-048): owl:oneOf → member rdf:type class
+        if (!mImpl->mOneOfMemberships.empty()) {
+            static const std::string rdfTypeStr =
+                "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+            uint32_t pType = intern.intern(rdfTypeStr);
+            for (const auto& [classIri, memberIri] : mImpl->mOneOfMemberships)
+                emitTriple(intern.intern(memberIri), pType, intern.intern(classIri));
+        }
+
+        // Unit 5 (plan-048): minCardinality → member rdf:type class (OWA-correct)
+        if (!mImpl->mMinCardRestrictions.empty() && !mImpl->mMinCardRoleAssertions.empty()) {
+            static const std::string rdfTypeStr2 =
+                "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+            uint32_t pType = intern.intern(rdfTypeStr2);
+
+            CIndividualVector* indiVec2 =
+                mImpl->mOntology->getABox()->getIndividualVector(false);
+            qint64 indiCount2 = indiVec2 ? indiVec2->getItemCount() : 0;
+
+            for (const auto& entry : mImpl->mMinCardRestrictions) {
+                for (qint64 i = 0; i < indiCount2; ++i) {
+                    CIndividual* indi = indiVec2->getData(i);
+                    if (!indi) continue;
+                    QString indiQ = CIRIName::getRecentIRIName(indi->getIndividualNameLinker());
+                    if (indiQ.empty()) continue;
+                    std::string indiIri(indiQ);
+
+                    std::string roleKey = indiIri + '\0' + entry.propIri;
+                    auto rit = mImpl->mMinCardRoleAssertions.find(roleKey);
+                    if (rit == mImpl->mMinCardRoleAssertions.end()) continue;
+                    const std::vector<std::string>& fillers = rit->second;
+                    if ((int)fillers.size() < entry.minCard) continue;
+
+                    bool satisfied = false;
+                    if (entry.minCard == 1) {
+                        satisfied = true;
+                    } else {
+                        // Bitmask: find entry.minCard pairwise-distinct fillers
+                        int k = std::min((int)fillers.size(), 16);
+                        int need = entry.minCard;
+                        for (int mask = (1 << k) - 1; mask >= 0 && !satisfied; --mask) {
+                            if (__builtin_popcount(mask) != need) continue;
+                            bool allDistinct = true;
+                            for (int a = 0; a < k && allDistinct; ++a) {
+                                if (!(mask & (1 << a))) continue;
+                                for (int b = a + 1; b < k && allDistinct; ++b) {
+                                    if (!(mask & (1 << b))) continue;
+                                    auto it = mImpl->mDifferentFromPairs.find(fillers[a]);
+                                    if (it == mImpl->mDifferentFromPairs.end() ||
+                                            !it->second.count(fillers[b]))
+                                        allDistinct = false;
+                                }
+                            }
+                            if (allDistinct) satisfied = true;
+                        }
+                    }
+                    if (satisfied)
+                        emitTriple(intern.intern(indiIri), pType, intern.intern(entry.classIri));
                 }
             }
         }
