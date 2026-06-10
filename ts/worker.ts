@@ -102,6 +102,7 @@ export async function handleMessage(
         r.reset();
         const tripleAB = args[0] as ArrayBuffer;
         const strTableAB = args[1] as ArrayBuffer;
+        const forRealization = (args[2] as boolean) ?? false;
         const tripleCount = tripleAB.byteLength / 12; // 3 × u32 per triple
 
         const tripleBytes = tripleAB.byteLength;
@@ -112,7 +113,7 @@ export async function handleMessage(
         try {
           mod.HEAPU8.set(new Uint8Array(tripleAB), triplePtr);
           mod.HEAPU8.set(new Uint8Array(strTableAB), strTablePtr);
-          r.loadTripleBuffer(triplePtr, tripleCount, strTablePtr, strBytes);
+          r.loadTripleBuffer(triplePtr, tripleCount, strTablePtr, strBytes, forRealization);
         } finally {
           mod._free(triplePtr);
           mod._free(strTablePtr);
