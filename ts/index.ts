@@ -272,6 +272,99 @@ function propagateSomeValuesFromFillers(
   }
 }
 
+// FP/IFP pre-processing: compute JS sameAs pairs and strip multi-filler FP/IFP declarations.
+// Returns { quadsToSend, sameAsQuads } where sameAsQuads are in the default graph.
+// The caller adds sameAsQuads to the result after WASM returns, via mergeSameAsQuads().
+function computeFpIfpPreprocessing(inputQuads: Quad[]): { quadsToSend: Quad[]; sameAsQuads: Quad[] } {
+  const sameAsQuads: Quad[] = [];
+  const sameAsNode = DataFactory.namedNode(OWL_SAME_AS);
+  const defaultGraph = DataFactory.defaultGraph();
+
+  const fpProps = new Set(inputQuads
+    .filter(q => q.predicate.value === RDF_TYPE && q.object.value === OWL_FUNCTIONAL_PROPERTY)
+    .map(q => q.subject.value));
+  const fpPropsToStrip = new Set<string>();
+  if (fpProps.size > 0) {
+    for (const prop of fpProps) {
+      const bySubject = new Map<string, import("@rdfjs/types").NamedNode[]>();
+      for (const q of inputQuads) {
+        if (q.predicate.value === prop && q.subject.termType === "NamedNode" && q.object.termType === "NamedNode") {
+          const arr = bySubject.get(q.subject.value);
+          if (arr === undefined) bySubject.set(q.subject.value, [q.object as import("@rdfjs/types").NamedNode]);
+          else arr.push(q.object as import("@rdfjs/types").NamedNode);
+        }
+      }
+      const hasMultiFiller = [...bySubject.values()].some(arr => arr.length >= 2);
+      if (hasMultiFiller) fpPropsToStrip.add(prop);
+      for (const objects of bySubject.values()) {
+        if (objects.length >= 2) {
+          for (let i = 0; i < objects.length; i++) {
+            for (let j = i + 1; j < objects.length; j++) {
+              sameAsQuads.push(DataFactory.quad(objects[i], sameAsNode, objects[j], defaultGraph));
+              sameAsQuads.push(DataFactory.quad(objects[j], sameAsNode, objects[i], defaultGraph));
+            }
+          }
+        }
+      }
+    }
+  }
+
+  const ifpProps = new Set(inputQuads
+    .filter(q => q.predicate.value === RDF_TYPE && q.object.value === OWL_INVERSE_FUNCTIONAL_PROPERTY)
+    .map(q => q.subject.value));
+  const ifpPropsToStrip = new Set<string>();
+  if (ifpProps.size > 0) {
+    for (const prop of ifpProps) {
+      const byObject = new Map<string, import("@rdfjs/types").NamedNode[]>();
+      for (const q of inputQuads) {
+        if (q.predicate.value === prop && q.subject.termType === "NamedNode" && q.object.termType === "NamedNode") {
+          const arr = byObject.get(q.object.value);
+          if (arr === undefined) byObject.set(q.object.value, [q.subject as import("@rdfjs/types").NamedNode]);
+          else arr.push(q.subject as import("@rdfjs/types").NamedNode);
+        }
+      }
+      const hasMultiFiller = [...byObject.values()].some(arr => arr.length >= 2);
+      if (hasMultiFiller) ifpPropsToStrip.add(prop);
+      for (const subjects of byObject.values()) {
+        if (subjects.length >= 2) {
+          for (let i = 0; i < subjects.length; i++) {
+            for (let j = i + 1; j < subjects.length; j++) {
+              sameAsQuads.push(DataFactory.quad(subjects[i], sameAsNode, subjects[j], defaultGraph));
+              sameAsQuads.push(DataFactory.quad(subjects[j], sameAsNode, subjects[i], defaultGraph));
+            }
+          }
+        }
+      }
+    }
+  }
+
+  const hasPropsToStrip = fpPropsToStrip.size > 0 || ifpPropsToStrip.size > 0;
+  const quadsToSend = hasPropsToStrip
+    ? inputQuads.filter(q =>
+        !(q.predicate.value === RDF_TYPE &&
+          ((q.object.value === OWL_FUNCTIONAL_PROPERTY && fpPropsToStrip.has(q.subject.value)) ||
+           (q.object.value === OWL_INVERSE_FUNCTIONAL_PROPERTY && ifpPropsToStrip.has(q.subject.value)))),
+      )
+    : inputQuads;
+
+  return { quadsToSend, sameAsQuads };
+}
+
+// Merge sameAs quads into allQuads, deduplicating by SPO key.
+function mergeSameAsQuads(allQuads: Quad[], sameAsQuads: Quad[]): void {
+  if (sameAsQuads.length === 0) return;
+  const existingKeys = new Set(
+    allQuads.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`),
+  );
+  for (const q of sameAsQuads) {
+    const key = `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`;
+    if (!existingKeys.has(key)) {
+      existingKeys.add(key);
+      allQuads.push(q);
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // RdfReasoner
 // ---------------------------------------------------------------------------
@@ -779,75 +872,8 @@ export class RdfReasoner {
       // only sees the original store contents (base ABox assertions).
       const baseQuads = store.getQuads(null, null, null, null);
 
-      // FP/IFP workaround: compute JS sameAs pairs + strip FP/IFP declarations
-      // before sending to WASM to prevent the ALIF+ precompute hang.
-      const storeFpSameAsQuads: Quad[] = [];
-      const sameAsNode = DataFactory.namedNode(OWL_SAME_AS);
-
-      const storeFpProps = new Set(baseQuads
-        .filter(q => q.predicate.value === RDF_TYPE && q.object.value === OWL_FUNCTIONAL_PROPERTY)
-        .map(q => q.subject.value));
-      const storeFpPropsToStrip = new Set<string>();
-      if (storeFpProps.size > 0) {
-        for (const prop of storeFpProps) {
-          const bySubject = new Map<string, import("@rdfjs/types").NamedNode[]>();
-          for (const q of baseQuads) {
-            if (q.predicate.value === prop && q.subject.termType === "NamedNode" && q.object.termType === "NamedNode") {
-              const arr = bySubject.get(q.subject.value);
-              if (arr === undefined) bySubject.set(q.subject.value, [q.object as import("@rdfjs/types").NamedNode]);
-              else arr.push(q.object as import("@rdfjs/types").NamedNode);
-            }
-          }
-          const hasMultiFiller = [...bySubject.values()].some(arr => arr.length >= 2);
-          if (hasMultiFiller) storeFpPropsToStrip.add(prop);
-          for (const objects of bySubject.values()) {
-            if (objects.length >= 2) {
-              for (let i = 0; i < objects.length; i++) {
-                for (let j = i + 1; j < objects.length; j++) {
-                  storeFpSameAsQuads.push(DataFactory.quad(objects[i], sameAsNode, objects[j], inferredGraphNode));
-                  storeFpSameAsQuads.push(DataFactory.quad(objects[j], sameAsNode, objects[i], inferredGraphNode));
-                }
-              }
-            }
-          }
-        }
-      }
-      const storeIfpProps = new Set(baseQuads
-        .filter(q => q.predicate.value === RDF_TYPE && q.object.value === OWL_INVERSE_FUNCTIONAL_PROPERTY)
-        .map(q => q.subject.value));
-      const storeIfpPropsToStrip = new Set<string>();
-      if (storeIfpProps.size > 0) {
-        for (const prop of storeIfpProps) {
-          const byObject = new Map<string, import("@rdfjs/types").NamedNode[]>();
-          for (const q of baseQuads) {
-            if (q.predicate.value === prop && q.subject.termType === "NamedNode" && q.object.termType === "NamedNode") {
-              const arr = byObject.get(q.object.value);
-              if (arr === undefined) byObject.set(q.object.value, [q.subject as import("@rdfjs/types").NamedNode]);
-              else arr.push(q.subject as import("@rdfjs/types").NamedNode);
-            }
-          }
-          const hasMultiFiller = [...byObject.values()].some(arr => arr.length >= 2);
-          if (hasMultiFiller) storeIfpPropsToStrip.add(prop);
-          for (const subjects of byObject.values()) {
-            if (subjects.length >= 2) {
-              for (let i = 0; i < subjects.length; i++) {
-                for (let j = i + 1; j < subjects.length; j++) {
-                  storeFpSameAsQuads.push(DataFactory.quad(subjects[i], sameAsNode, subjects[j], inferredGraphNode));
-                  storeFpSameAsQuads.push(DataFactory.quad(subjects[j], sameAsNode, subjects[i], inferredGraphNode));
-                }
-              }
-            }
-          }
-        }
-      }
-      const storeHasPropsToStrip = storeFpPropsToStrip.size > 0 || storeIfpPropsToStrip.size > 0;
-      const storeWasmQuads = storeHasPropsToStrip
-        ? baseQuads.filter(q =>
-            !(q.predicate.value === RDF_TYPE &&
-              ((q.object.value === OWL_FUNCTIONAL_PROPERTY && storeFpPropsToStrip.has(q.subject.value)) ||
-               (q.object.value === OWL_INVERSE_FUNCTIONAL_PROPERTY && storeIfpPropsToStrip.has(q.subject.value)))),
-          )
-        : baseQuads;
+      const { quadsToSend: storeWasmQuads, sameAsQuads: storeFpSameAsQuads } =
+        computeFpIfpPreprocessing(baseQuads);
 
       const { tripleBuffer, strTableBuffer } = encodeToBuffers(storeWasmQuads);
 
@@ -874,21 +900,8 @@ export class RdfReasoner {
         );
       }
 
-      // Merge JS-computed FP/IFP sameAs pairs (deduplicate by SPO key).
-      if (storeFpSameAsQuads.length > 0) {
-        const existingKeys = new Set(
-          allQuads.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`),
-        );
-        for (const q of storeFpSameAsQuads) {
-          // storeFpSameAsQuads already carry inferredGraphNode as graph; compare SPO only
-          const key = `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`;
-          if (!existingKeys.has(key)) {
-            existingKeys.add(key);
-            // allQuads graph is set to inferredGraphNode in the loop below via addQuad
-            allQuads.push(DataFactory.quad(q.subject, q.predicate, q.object));
-          }
-        }
-      }
+      // Merge JS-computed FP/IFP sameAs pairs.
+      mergeSameAsQuads(allQuads, storeFpSameAsQuads);
 
       const inferredQuads = opts?.includeClassHierarchy === true
         ? allQuads
@@ -940,107 +953,8 @@ export class RdfReasoner {
       // Materialize iterable so we can both encode it and post-process it.
       const inputQuads = Array.isArray(quads) ? (quads as Quad[]) : [...quads];
 
-      // FP/IFP workaround: JS pre-computation of owl:sameAs entailments.
-      //
-      // Native Konclude v0.7.0 hangs on ALIF+ (FunctionalProperty + ABox individuals
-      // forcing sameAs inference).  We compute the sameAs pairs in JS, strip the
-      // FP/IFP declarations before sending to WASM, and merge the JS-computed sameAs
-      // triples into the final result.
-      //
-      // FunctionalProperty: if ?P is functional and two assertions `s ?P o1` and
-      // `s ?P o2` exist, then `o1 owl:sameAs o2` (and symmetrically).
-      //
-      // InverseFunctionalProperty: if ?P is inverse-functional and two assertions
-      // `s1 ?P o` and `s2 ?P o` exist, then `s1 owl:sameAs s2` (and symmetrically).
-      const fpSameAsQuads: Quad[] = [];
-      const defaultGraph = DataFactory.defaultGraph();
-      const sameAsNode = DataFactory.namedNode(OWL_SAME_AS);
-
-      const fpProps = new Set(inputQuads
-        .filter(q => q.predicate.value === RDF_TYPE && q.object.value === OWL_FUNCTIONAL_PROPERTY)
-        .map(q => q.subject.value));
-
-      const fpPropsToStrip = new Set<string>();
-      if (fpProps.size > 0) {
-        for (const prop of fpProps) {
-          // Group ABox assertions by subject: subject → [object, ...]
-          const bySubject = new Map<string, import("@rdfjs/types").NamedNode[]>();
-          for (const q of inputQuads) {
-            if (q.predicate.value === prop && q.subject.termType === "NamedNode" && q.object.termType === "NamedNode") {
-              const arr = bySubject.get(q.subject.value);
-              if (arr === undefined) {
-                bySubject.set(q.subject.value, [q.object as import("@rdfjs/types").NamedNode]);
-              } else {
-                arr.push(q.object as import("@rdfjs/types").NamedNode);
-              }
-            }
-          }
-          // Determine stripping from the same bySubject data; no second scan needed.
-          const hasMultiFiller = [...bySubject.values()].some(arr => arr.length >= 2);
-          if (hasMultiFiller) fpPropsToStrip.add(prop);
-          // For each subject with 2+ objects, all objects are owl:sameAs each other
-          for (const objects of bySubject.values()) {
-            if (objects.length >= 2) {
-              for (let i = 0; i < objects.length; i++) {
-                for (let j = i + 1; j < objects.length; j++) {
-                  fpSameAsQuads.push(DataFactory.quad(objects[i], sameAsNode, objects[j], defaultGraph));
-                  fpSameAsQuads.push(DataFactory.quad(objects[j], sameAsNode, objects[i], defaultGraph));
-                }
-              }
-            }
-          }
-        }
-      }
-
-      const ifpProps = new Set(inputQuads
-        .filter(q => q.predicate.value === RDF_TYPE && q.object.value === OWL_INVERSE_FUNCTIONAL_PROPERTY)
-        .map(q => q.subject.value));
-
-      // Strip FP/IFP declarations ONLY for properties that have multi-filler ABox
-      // assertions (i.e., patterns that would trigger the ALIF+ precompute hang in
-      // native Konclude v0.7.0).  Properties with 0 or 1 filler are passed through
-      // intact so WASM can handle them normally (e.g., for inverse-of inference,
-      // domain/range, or FP data-property inconsistency detection).
-      const ifpPropsToStrip = new Set<string>();
-      if (ifpProps.size > 0) {
-        for (const prop of ifpProps) {
-          // Group ABox assertions by object: object → [subject, ...]
-          const byObject = new Map<string, import("@rdfjs/types").NamedNode[]>();
-          for (const q of inputQuads) {
-            if (q.predicate.value === prop && q.subject.termType === "NamedNode" && q.object.termType === "NamedNode") {
-              const arr = byObject.get(q.object.value);
-              if (arr === undefined) {
-                byObject.set(q.object.value, [q.subject as import("@rdfjs/types").NamedNode]);
-              } else {
-                arr.push(q.subject as import("@rdfjs/types").NamedNode);
-              }
-            }
-          }
-          // Determine stripping from the same byObject data; no second scan needed.
-          const hasMultiFiller = [...byObject.values()].some(arr => arr.length >= 2);
-          if (hasMultiFiller) ifpPropsToStrip.add(prop);
-          // For each object with 2+ subjects, all subjects are owl:sameAs each other
-          for (const subjects of byObject.values()) {
-            if (subjects.length >= 2) {
-              for (let i = 0; i < subjects.length; i++) {
-                for (let j = i + 1; j < subjects.length; j++) {
-                  fpSameAsQuads.push(DataFactory.quad(subjects[i], sameAsNode, subjects[j], defaultGraph));
-                  fpSameAsQuads.push(DataFactory.quad(subjects[j], sameAsNode, subjects[i], defaultGraph));
-                }
-              }
-            }
-          }
-        }
-      }
-
-      const hasPropsToStrip = fpPropsToStrip.size > 0 || ifpPropsToStrip.size > 0;
-      const wasmQuads = hasPropsToStrip
-        ? inputQuads.filter(q =>
-            !(q.predicate.value === RDF_TYPE &&
-              ((q.object.value === OWL_FUNCTIONAL_PROPERTY && fpPropsToStrip.has(q.subject.value)) ||
-               (q.object.value === OWL_INVERSE_FUNCTIONAL_PROPERTY && ifpPropsToStrip.has(q.subject.value)))),
-          )
-        : inputQuads;
+      const { quadsToSend: wasmQuads, sameAsQuads: fpSameAsQuads } =
+        computeFpIfpPreprocessing(inputQuads);
 
       const { tripleBuffer, strTableBuffer } = encodeToBuffers(wasmQuads);
 
@@ -1067,19 +981,8 @@ export class RdfReasoner {
         );
       }
 
-      // Merge JS-computed FP/IFP sameAs pairs (deduplicate by SPO key).
-      if (fpSameAsQuads.length > 0) {
-        const existingKeys = new Set(
-          allQuads.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`),
-        );
-        for (const q of fpSameAsQuads) {
-          const key = `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`;
-          if (!existingKeys.has(key)) {
-            existingKeys.add(key);
-            allQuads.push(q);
-          }
-        }
-      }
+      // Merge JS-computed FP/IFP sameAs pairs.
+      mergeSameAsQuads(allQuads, fpSameAsQuads);
 
       if (opts?.includeClassHierarchy === true) {
         return allQuads;
@@ -1285,7 +1188,9 @@ export class RdfReasoner {
     // Capture base quads BEFORE writing inferred quads so someValuesFrom scan
     // only sees the original store contents.
     const baseQuads = store.getQuads(null, null, null, null);
-    const { tripleBuffer, strTableBuffer } = encodeToBuffers(baseQuads);
+    const { quadsToSend: inlineWasmQuads, sameAsQuads: inlineFpSameAsQuads } =
+      computeFpIfpPreprocessing(baseQuads);
+    const { tripleBuffer, strTableBuffer } = encodeToBuffers(inlineWasmQuads);
     await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
     await this._call("realization", []);
     const buf = (await this._call("getInferredTripleBuffer", [])) as ArrayBuffer;
@@ -1298,6 +1203,8 @@ export class RdfReasoner {
       );
       propagateSomeValuesFromFillers(someValuesFromIndex, baseQuads, allQuads, existingKeys, ig);
     }
+    // Merge JS-computed FP/IFP sameAs pairs.
+    mergeSameAsQuads(allQuads, inlineFpSameAsQuads);
     // Write ALL results (including subClassOf) so rdf:type AND subClassOf checks work
     for (const q of allQuads)
       store.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, ig));
@@ -1531,11 +1438,15 @@ export class RdfReasoner {
       }
 
       // Encode and run the full materialize pipeline
-      const { tripleBuffer, strTableBuffer } = encodeToBuffers(hypothetical);
+      const { quadsToSend: whatIfWasmQuads, sameAsQuads: whatIfSameAsQuads } =
+        computeFpIfpPreprocessing(hypothetical);
+      const { tripleBuffer, strTableBuffer } = encodeToBuffers(whatIfWasmQuads);
       await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
       await this._call("realization", []);
       const buf = (await this._call("getInferredTripleBuffer", [])) as ArrayBuffer;
       const afterQuads = decodeBuffers(buf);
+      // Merge JS-computed FP/IFP sameAs pairs.
+      mergeSameAsQuads(afterQuads, whatIfSameAsQuads);
 
       // Wrap after quads with ig so both sides have consistent graph
       const after: Quad[] = afterQuads.map(q =>
