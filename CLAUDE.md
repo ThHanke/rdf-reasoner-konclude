@@ -32,6 +32,8 @@ sudo chown -R $USER dist/
 
 **Patch workflow (vendor C++ patches 002+):** Use `scripts/new-vendor-patch.sh <number> <vendor-path> [python-script]` — it extracts the clean file, applies changes, generates the diff, and validates it. After adding a new patch: `make reset-patches` (resets vendor + re-applies all patches from scratch) before `make build-wasm`.
 
+**Multi-file patches:** `new-vendor-patch.sh` handles one file at a time. For changes spanning many vendor files, write a Python script that: (1) calls `git -C vendor/konclude show HEAD:<path>` to get the clean original as bytes, (2) applies `bytes.replace()` substitutions, (3) writes orig and modified to temp files, (4) calls `diff -u orig mod` and fixes the `--- /tmp/...` headers to `--- a/<path>` / `+++ b/<path>`, (5) concatenates all per-file diffs into a single `patches/NNN-name.patch`. Use `diff -u` (not Python `difflib`) to avoid newline format issues.
+
 ## Linting
 
 Trunk manages all linters. Run via:
