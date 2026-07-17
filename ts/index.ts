@@ -19,6 +19,7 @@ import { encodeToBuffers, decodeBuffers, computeStoreFingerprint } from "./inter
 
 export type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions, LaconicPart, LaconicJustification, LaconicExplainOptions } from "./types.js";
 export { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI } from "./types.js";
+export { createInlineWorker } from "./inlineWorker.js";
 import type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions, LaconicPart, LaconicJustification, LaconicExplainOptions } from "./types.js";
 import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI } from "./types.js";
 import { buildEntailmentProbe, tripleKey as probeTripleKey } from "./entailmentProbe.js";
@@ -101,13 +102,18 @@ export class RdfReasoner {
   private _entailmentProbeCounter = 0;
 
   constructor(opts?: RdfReasonerOptions) {
-    const url = opts?.workerUrl
-      ? (typeof opts.workerUrl === "string" ? new URL(opts.workerUrl) : opts.workerUrl)
-      : new URL("./worker.js", import.meta.url);
+    if (opts?.worker) {
+      this.worker = opts.worker;
+    } else {
+      const url = opts?.workerUrl
+        ? (typeof opts.workerUrl === "string" ? new URL(opts.workerUrl) : opts.workerUrl)
+        : new URL("./worker.js", import.meta.url);
 
-    this.worker = new Worker(url, {
-      type: "module",
-    });
+      // Indirect constructor reference so bundlers (Vite) that statically
+      // analyze `new Worker(...)` calls skip this dynamic instantiation.
+      const W = globalThis.Worker;
+      this.worker = new W(url, { type: "module" });
+    }
 
     // Store the readyReject handle so the onerror handler can use it if the
     // Worker crashes before posting {type:'ready'}.
