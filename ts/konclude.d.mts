@@ -17,6 +17,9 @@ export interface KoncludeReasonerInstance {
   buildPropertyTripleBuffer(): number;
   getInferredTripleBufferPtr(): number;
   buildUnsatisfiableClassBuffer(): string;
+  isSubClassOf(subIri: string, superIri: string): boolean;
+  isInstanceOf(individualIri: string, classIri: string): boolean;
+  isSatisfiableClass(classIri: string): boolean;
   reset(): void;
   /** Release Embind-managed C++ memory. Must be called when done. */
   delete(): void;

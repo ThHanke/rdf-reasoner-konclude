@@ -369,6 +369,11 @@ struct KoncludeReasoner::Impl {
     // Unit 5 (plan-048): role assertions for minCard properties (unconditional — not gated on mSvfIndex)
     std::unordered_map<std::string, std::vector<std::string>> mMinCardRoleAssertions;  // "subj\0prop" → [objs]
 
+    // IRI→concept/individual indexes — built once after classification/realization
+    // for O(1) lookup in isSubClassOf/isInstanceOf/isSatisfiableClass.
+    std::unordered_map<std::string, CConcept*> mConceptByIri;
+    std::unordered_map<std::string, CIndividual*> mIndividualByIri;
+
     Impl() {
         mConfigProvider = new WasmConfigProvider();
 
@@ -465,6 +470,39 @@ struct KoncludeReasoner::Impl {
         mMinCardRestrictions.clear();
         mDifferentFromPairs.clear();
         mMinCardRoleAssertions.clear();
+        mConceptByIri.clear();
+        mIndividualByIri.clear();
+    }
+
+    void buildConceptIndex() {
+        mConceptByIri.clear();
+        if (!mOntology) return;
+        CTaxonomy* taxonomy = mOntology->getConceptTaxonomy();
+        if (!taxonomy) return;
+        QHash<CConcept*, CHierarchyNode*>* nodeHash = taxonomy->getConceptHierarchyNodeHash();
+        if (!nodeHash) return;
+        for (auto it = nodeHash->constBegin(), end = nodeHash->constEnd(); it != end; ++it) {
+            CConcept* c = it.key();
+            if (!c) continue;
+            QString iri = CIRIName::getRecentIRIName(c->getClassNameLinker());
+            if (iri.empty()) continue;
+            mConceptByIri[std::string(iri)] = c;
+        }
+    }
+
+    void buildIndividualIndex() {
+        mIndividualByIri.clear();
+        if (!mOntology) return;
+        CIndividualVector* indiVec = mOntology->getABox()->getIndividualVector(false);
+        if (!indiVec) return;
+        qint64 count = indiVec->getItemCount();
+        for (qint64 i = 0; i < count; ++i) {
+            CIndividual* indi = indiVec->getData(i);
+            if (!indi) continue;
+            QString q = CIRIName::getRecentIRIName(indi->getIndividualNameLinker());
+            if (q.empty()) continue;
+            mIndividualByIri[std::string(q)] = indi;
+        }
     }
 };
 
@@ -1174,6 +1212,7 @@ bool KoncludeReasoner::runPipeline(KoncludeReasoner::Impl* impl, bool includeRea
     };
 
     impl->mClassified = stepDone(COntologyProcessingStep::OPSCLASSCLASSIFY);
+    if (impl->mClassified) impl->buildConceptIndex();
 
     bool hasIndividuals = impl->mOntology->getABox() &&
         impl->mOntology->getABox()->getIndividualVector(false) &&
@@ -1181,6 +1220,7 @@ bool KoncludeReasoner::runPipeline(KoncludeReasoner::Impl* impl, bool includeRea
 
     impl->mRealized = includeRealization && hasIndividuals &&
         stepDone(COntologyProcessingStep::OPSCONCEPTREALIZE);
+    if (impl->mRealized) impl->buildIndividualIndex();
 
     if (includeRealization) {
         impl->mReasonerManager->stopAndClearRealizers();
@@ -2008,4 +2048,52 @@ std::string KoncludeReasoner::buildUnsatisfiableClassBuffer() {
         result += iris[i];
     }
     return result;
+}
+
+// isSubClassOf — O(1) taxonomy lookup using pre-built concept index.
+// Returns true iff subIri ⊑ superIri according to the computed class hierarchy.
+bool KoncludeReasoner::isSubClassOf(const std::string& subIri, const std::string& superIri) {
+    if (!mImpl->mClassified) return false;
+
+    CTaxonomy* taxonomy = mImpl->mOntology->getConceptTaxonomy();
+    if (!taxonomy) return false;
+
+    auto subIt = mImpl->mConceptByIri.find(subIri);
+    auto supIt = mImpl->mConceptByIri.find(superIri);
+    if (subIt == mImpl->mConceptByIri.end() || supIt == mImpl->mConceptByIri.end()) return false;
+
+    return taxonomy->isSubsumption(supIt->second, subIt->second);
+}
+
+// isSatisfiableClass — O(1) taxonomy lookup using pre-built concept index.
+// Returns true iff classIri is satisfiable (not equivalent to owl:Nothing).
+bool KoncludeReasoner::isSatisfiableClass(const std::string& classIri) {
+    if (!mImpl->mClassified) return true;
+
+    CTaxonomy* taxonomy = mImpl->mOntology->getConceptTaxonomy();
+    if (!taxonomy) return true;
+
+    auto it = mImpl->mConceptByIri.find(classIri);
+    if (it == mImpl->mConceptByIri.end()) return true;
+
+    return taxonomy->isSatisfiable(it->second);
+}
+
+// isInstanceOf — O(1) realization lookup using pre-built individual/concept indexes.
+// Returns true iff individualIri is a known instance of classIri.
+bool KoncludeReasoner::isInstanceOf(const std::string& individualIri, const std::string& classIri) {
+    if (!mImpl->mRealized) return false;
+
+    CRealization* real = mImpl->mOntology->getRealization();
+    if (!real) return false;
+    CConceptRealization* conReal = real->getConceptRealization();
+    if (!conReal) return false;
+
+    auto indiIt = mImpl->mIndividualByIri.find(individualIri);
+    if (indiIt == mImpl->mIndividualByIri.end()) return false;
+
+    auto conceptIt = mImpl->mConceptByIri.find(classIri);
+    if (conceptIt == mImpl->mConceptByIri.end()) return false;
+
+    return conReal->isConceptInstance(indiIt->second, conceptIt->second);
 }

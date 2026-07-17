@@ -1,0 +1,420 @@
+--- a/Source/Reasoner/Consistiser/CPrecomputationTestingItem.h	2026-06-11 10:27:18.223897530 +0200
++++ b/Source/Reasoner/Consistiser/CPrecomputationTestingItem.h	2026-06-11 10:27:18.223897530 +0200
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_CONSISTISER_CPRECOMPUTATIONTESTINGITEM_H
+ 
+ // Libraries includes
+-
++#include <atomic>
+ 
+ // Namespace includes
+ #include "ConsistiserSettings.h"
+@@ -78,6 +78,7 @@
+ 				protected:
+ 					COntologyPrecomputationItem* mOntologyPreCompItem;
+ 					CConsistenceCalculationStatisticsCollection* mStatisticCollection;
++					cint64 mGeneration;
+ 
+ 				// private methods
+ 				private:
+--- a/Source/Reasoner/Consistiser/CPrecomputationTestingItem.cpp	2026-06-11 10:27:18.231897695 +0200
++++ b/Source/Reasoner/Consistiser/CPrecomputationTestingItem.cpp	2026-06-11 10:27:18.231897695 +0200
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include "CPrecomputationTestingItem.h"
++#include <atomic>
+ 
+ 
+ namespace Konclude {
+@@ -29,6 +30,8 @@
+ 
+ 
+ 			CPrecomputationTestingItem::CPrecomputationTestingItem(COntologyPrecomputationItem* preCompItem, CConsistenceCalculationStatisticsCollection* statisticCollection) {
++				static std::atomic<cint64> sNextGeneration(0);
++				mGeneration = ++sNextGeneration;
+ 				mOntologyPreCompItem = preCompItem;
+ 				mStatisticCollection = statisticCollection;
+ 			}
+--- a/Source/Reasoner/Classifier/CClassificationComputationItem.h	2026-06-11 10:27:18.239897859 +0200
++++ b/Source/Reasoner/Classifier/CClassificationComputationItem.h	2026-06-11 10:27:18.239897859 +0200
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_CLASSIFIER_CCLASSIFICATIONCOMPUTATIONITEM_H
+ 
+ // Libraries includes
+-
++#include <atomic>
+ 
+ // Namespace includes
+ #include "ClassifierSettings.h"
+@@ -72,6 +72,7 @@
+ 
+ 				// protected variables
+ 				protected:
++					cint64 mGeneration;
+ 
+ 				// private methods
+ 				private:
+--- a/Source/Reasoner/Classifier/CClassificationComputationItem.cpp	2026-06-11 10:27:18.243897942 +0200
++++ b/Source/Reasoner/Classifier/CClassificationComputationItem.cpp	2026-06-11 10:27:18.243897942 +0200
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include "CClassificationComputationItem.h"
++#include <atomic>
+ 
+ 
+ namespace Konclude {
+@@ -29,6 +30,8 @@
+ 
+ 
+ 			CClassificationComputationItem::CClassificationComputationItem() {
++				static std::atomic<cint64> sNextGeneration(0);
++				mGeneration = ++sNextGeneration;
+ 			}
+ 
+ 
+--- a/Source/Reasoner/Realizer/CRealizingTestingItem.h	2026-06-11 10:27:18.255898189 +0200
++++ b/Source/Reasoner/Realizer/CRealizingTestingItem.h	2026-06-11 10:27:18.255898189 +0200
+@@ -22,7 +22,7 @@
+ #define KONCLUDE_REASONER_REALIZER_CREALIZINGTESTINGITEM_H
+ 
+ // Libraries includes
+-
++#include <atomic>
+ 
+ // Namespace includes
+ #include "RealizerSettings.h"
+@@ -73,6 +73,7 @@
+ 				protected:
+ 					COntologyRealizingItem* mOntologyPreproItem;
+ 					QList<COntologyRealizingDynamicRequirmentProcessingData*> mProcDataList;
++					cint64 mGeneration;
+ 
+ 				// private methods
+ 				private:
+--- a/Source/Reasoner/Realizer/CRealizingTestingItem.cpp	2026-06-11 10:27:18.263898354 +0200
++++ b/Source/Reasoner/Realizer/CRealizingTestingItem.cpp	2026-06-11 10:27:18.263898354 +0200
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include "CRealizingTestingItem.h"
++#include <atomic>
+ 
+ 
+ namespace Konclude {
+@@ -29,6 +30,8 @@
+ 
+ 
+ 			CRealizingTestingItem::CRealizingTestingItem(COntologyRealizingItem* preproItem, COntologyRealizingDynamicRequirmentProcessingData* procData) {
++				static std::atomic<cint64> sNextGeneration(0);
++				mGeneration = ++sNextGeneration;
+ 				mOntologyPreproItem = preproItem;
+ 				if (procData) {
+ 					mProcDataList.append(procData);
+--- a/Source/Reasoner/Consistiser/Events/CPrecomputationCalculatedCallbackEvent.h	2026-06-11 10:27:18.271898518 +0200
++++ b/Source/Reasoner/Consistiser/Events/CPrecomputationCalculatedCallbackEvent.h	2026-06-11 10:27:18.271898518 +0200
+@@ -24,7 +24,7 @@
+ 
+ 
+ // Libraries includes
+-
++#include <atomic>
+ 
+ // Namespace includes
+ #include "../ConsistiserSettings.h"
+@@ -72,7 +72,7 @@
+ 					// public methods
+ 					public:
+ 						//! Constructor
+-						CPrecomputationCalculatedCallbackEvent(CThread* receiverThread, CSatisfiableCalculationJob* satCalcJob, CPrecomputationTestingItem* testingItem);
++						CPrecomputationCalculatedCallbackEvent(CThread* receiverThread, CSatisfiableCalculationJob* satCalcJob, CPrecomputationTestingItem* testingItem, cint64 expectedGeneration);
+ 
+ 						//! Destructor
+ 						virtual ~CPrecomputationCalculatedCallbackEvent();
+@@ -90,9 +90,10 @@
+ 
+ 					// protected variables
+ 					protected:
+-						CThread* mRecThread;
++						std::atomic<CThread*> mRecThread;
+ 						CSatisfiableCalculationJob* mSatCalcJob;
+ 						CPrecomputationTestingItem* mTestingItem;
++						cint64 mExpectedGeneration;
+ 
+ 					// private methods
+ 					private:
+--- a/Source/Reasoner/Consistiser/Events/CPrecomputationCalculatedCallbackEvent.cpp	2026-06-11 10:27:18.279898684 +0200
++++ b/Source/Reasoner/Consistiser/Events/CPrecomputationCalculatedCallbackEvent.cpp	2026-06-11 10:27:18.279898684 +0200
+@@ -30,11 +30,12 @@
+ 			namespace Events {
+ 
+ 
+-				CPrecomputationCalculatedCallbackEvent::CPrecomputationCalculatedCallbackEvent(CThread *receiverThread, CSatisfiableCalculationJob *satCalcJob, CPrecomputationTestingItem* testingItem) 
++				CPrecomputationCalculatedCallbackEvent::CPrecomputationCalculatedCallbackEvent(CThread *receiverThread, CSatisfiableCalculationJob *satCalcJob, CPrecomputationTestingItem* testingItem, cint64 expectedGeneration) 
+ 							: CCustomEvent(EVENTTYPE),CJobSatisfiableCallbackContextData(satCalcJob) {
+ 					mRecThread = receiverThread;
+ 					mSatCalcJob = satCalcJob;
+ 					mTestingItem = testingItem;
++					mExpectedGeneration = expectedGeneration;
+ 					setCallbackDataContext(this);
+ 				}
+ 
+@@ -44,7 +45,10 @@
+ 				}
+ 
+ 				void CPrecomputationCalculatedCallbackEvent::doCallback() {
+-					mRecThread->postEvent(this);
++					CThread* t = mRecThread.exchange(nullptr, std::memory_order_acq_rel);
++					if (t && mTestingItem->mGeneration == mExpectedGeneration) {
++						t->postEvent(this);
++					}
+ 				}
+ 
+ 				bool CPrecomputationCalculatedCallbackEvent::getTestResultSatisfiable() {
+--- a/Source/Reasoner/Consistiser/Events/CSaturationPrecomputationCalculatedCallbackEvent.h	2026-06-11 10:27:18.287898849 +0200
++++ b/Source/Reasoner/Consistiser/Events/CSaturationPrecomputationCalculatedCallbackEvent.h	2026-06-11 10:27:18.287898849 +0200
+@@ -24,7 +24,7 @@
+ 
+ 
+ // Libraries includes
+-
++#include <atomic>
+ 
+ // Namespace includes
+ #include "../ConsistiserSettings.h"
+@@ -72,7 +72,7 @@
+ 					// public methods
+ 					public:
+ 						//! Constructor
+-						CSaturationPrecomputationCalculatedCallbackEvent(CThread *receiverThread, CApproximatedSaturationCalculationJob *satCalcJob, CPrecomputationTestingItem* preTestItem);
++						CSaturationPrecomputationCalculatedCallbackEvent(CThread *receiverThread, CApproximatedSaturationCalculationJob *satCalcJob, CPrecomputationTestingItem* preTestItem, cint64 expectedGeneration);
+ 
+ 						//! Destructor
+ 						virtual ~CSaturationPrecomputationCalculatedCallbackEvent();
+@@ -90,9 +90,10 @@
+ 
+ 					// protected variables
+ 					protected:
+-						CThread *recThread;
++						std::atomic<CThread*> recThread;
+ 						CApproximatedSaturationCalculationJob* mSatCalcJob;
+ 						CPrecomputationTestingItem* mPreTestItem;
++						cint64 mExpectedGeneration;
+ 
+ 					// private methods
+ 					private:
+--- a/Source/Reasoner/Consistiser/Events/CSaturationPrecomputationCalculatedCallbackEvent.cpp	2026-06-11 10:27:18.295899013 +0200
++++ b/Source/Reasoner/Consistiser/Events/CSaturationPrecomputationCalculatedCallbackEvent.cpp	2026-06-11 10:27:18.299899096 +0200
+@@ -30,11 +30,12 @@
+ 			namespace Events {
+ 
+ 
+-				CSaturationPrecomputationCalculatedCallbackEvent::CSaturationPrecomputationCalculatedCallbackEvent(CThread *receiverThread, CApproximatedSaturationCalculationJob *satCalcJob, CPrecomputationTestingItem* preTestItem) 
++				CSaturationPrecomputationCalculatedCallbackEvent::CSaturationPrecomputationCalculatedCallbackEvent(CThread *receiverThread, CApproximatedSaturationCalculationJob *satCalcJob, CPrecomputationTestingItem* preTestItem, cint64 expectedGeneration) 
+ 						: CCustomEvent(EVENTTYPE) {
+ 					recThread = receiverThread;
+ 					mSatCalcJob = satCalcJob;
+ 					mPreTestItem = preTestItem;
++					mExpectedGeneration = expectedGeneration;
+ 				}
+ 
+ 
+@@ -44,7 +45,10 @@
+ 
+ 
+ 				void CSaturationPrecomputationCalculatedCallbackEvent::doCallback() {
+-					recThread->postEvent(this);
++					CThread* t = recThread.exchange(nullptr, std::memory_order_acq_rel);
++					if (t && mPreTestItem->mGeneration == mExpectedGeneration) {
++						t->postEvent(this);
++					}
+ 				}
+ 
+ 				CApproximatedSaturationCalculationJob *CSaturationPrecomputationCalculatedCallbackEvent::getSaturationCalculationJob() {
+--- a/Source/Reasoner/Classifier/Events/CTestCalculatedCallbackEvent.h	2026-06-11 10:27:18.307899260 +0200
++++ b/Source/Reasoner/Classifier/Events/CTestCalculatedCallbackEvent.h	2026-06-11 10:27:18.307899260 +0200
+@@ -24,7 +24,7 @@
+ 
+ 
+ // Libraries includes
+-
++#include <atomic>
+ 
+ // Namespace includes
+ #include "../ClassifierSettings.h"
+@@ -78,7 +78,7 @@
+ 					// public methods
+ 					public:
+ 						//! Constructor
+-						CTestCalculatedCallbackEvent(CThread *receiverThread, CSatisfiableCalculationJob *satCalcJob, CClassificationComputationItem *classBoxWorkItem, CClassificationCalculationStatisticsCollection* statisticCollection);
++						CTestCalculatedCallbackEvent(CThread *receiverThread, CSatisfiableCalculationJob *satCalcJob, CClassificationComputationItem *classBoxWorkItem, CClassificationCalculationStatisticsCollection* statisticCollection, cint64 expectedGeneration);
+ 
+ 						//! Destructor
+ 						virtual ~CTestCalculatedCallbackEvent();
+@@ -99,10 +99,11 @@
+ 
+ 					// protected variables
+ 					protected:
+-						CThread *recThread;
++						std::atomic<CThread*> recThread;
+ 						CSatisfiableCalculationJob* mSatCalcJob;
+ 						CClassificationComputationItem *workItem;
+ 						CClassificationCalculationStatisticsCollection* mUsedStatisticsCollection;
++						cint64 mExpectedGeneration;
+ 
+ 					// private methods
+ 					private:
+--- a/Source/Reasoner/Classifier/Events/CTestCalculatedCallbackEvent.cpp	2026-06-11 10:27:18.315899426 +0200
++++ b/Source/Reasoner/Classifier/Events/CTestCalculatedCallbackEvent.cpp	2026-06-11 10:27:18.315899426 +0200
+@@ -30,12 +30,13 @@
+ 			namespace Events {
+ 
+ 
+-				CTestCalculatedCallbackEvent::CTestCalculatedCallbackEvent(CThread *receiverThread, CSatisfiableCalculationJob *satCalcJob, CClassificationComputationItem *classBoxWorkItem, CClassificationCalculationStatisticsCollection* statisticCollection) 
++				CTestCalculatedCallbackEvent::CTestCalculatedCallbackEvent(CThread *receiverThread, CSatisfiableCalculationJob *satCalcJob, CClassificationComputationItem *classBoxWorkItem, CClassificationCalculationStatisticsCollection* statisticCollection, cint64 expectedGeneration) 
+ 						: CCustomEvent(EVENTTESTCALCULATEDCALLBACK),CJobSatisfiableCallbackContextData(satCalcJob) {
+ 					recThread = receiverThread;
+ 					mSatCalcJob = satCalcJob;
+ 					workItem = classBoxWorkItem;
+ 					mUsedStatisticsCollection = statisticCollection;
++					mExpectedGeneration = expectedGeneration;
+ 					setCallbackDataContext(this);
+ 				}
+ 
+@@ -51,7 +52,10 @@
+ 
+ 
+ 				void CTestCalculatedCallbackEvent::doCallback() {
+-					recThread->postEvent(this);
++					CThread* t = recThread.exchange(nullptr, std::memory_order_acq_rel);
++					if (t && workItem->mGeneration == mExpectedGeneration) {
++						t->postEvent(this);
++					}
+ 				}
+ 
+ 				bool CTestCalculatedCallbackEvent::getTestResultSatisfiable() {
+--- a/Source/Reasoner/Realizer/Events/CRealizingCalculatedCallbackEvent.h	2026-06-11 10:27:18.323899591 +0200
++++ b/Source/Reasoner/Realizer/Events/CRealizingCalculatedCallbackEvent.h	2026-06-11 10:27:18.323899591 +0200
+@@ -24,7 +24,7 @@
+ 
+ 
+ // Libraries includes
+-
++#include <atomic>
+ 
+ // Namespace includes
+ #include "../RealizerSettings.h"
+@@ -72,7 +72,7 @@
+ 					// public methods
+ 					public:
+ 						//! Constructor
+-						CRealizingCalculatedCallbackEvent(CThread* receiverThread, CSatisfiableCalculationJob* satCalcJob, CRealizingTestingItem* testingItem);
++						CRealizingCalculatedCallbackEvent(CThread* receiverThread, CSatisfiableCalculationJob* satCalcJob, CRealizingTestingItem* testingItem, cint64 expectedGeneration);
+ 
+ 						//! Destructor
+ 						virtual ~CRealizingCalculatedCallbackEvent();
+@@ -90,9 +90,10 @@
+ 
+ 					// protected variables
+ 					protected:
+-						CThread* mRecThread;
++						std::atomic<CThread*> mRecThread;
+ 						CSatisfiableCalculationJob* mSatCalcJob;
+ 						CRealizingTestingItem* mTestingItem;
++						cint64 mExpectedGeneration;
+ 
+ 					// private methods
+ 					private:
+--- a/Source/Reasoner/Realizer/Events/CRealizingCalculatedCallbackEvent.cpp	2026-06-11 10:27:18.331899756 +0200
++++ b/Source/Reasoner/Realizer/Events/CRealizingCalculatedCallbackEvent.cpp	2026-06-11 10:27:18.331899756 +0200
+@@ -30,11 +30,12 @@
+ 			namespace Events {
+ 
+ 
+-				CRealizingCalculatedCallbackEvent::CRealizingCalculatedCallbackEvent(CThread *receiverThread, CSatisfiableCalculationJob *satCalcJob, CRealizingTestingItem* testingItem) 
++				CRealizingCalculatedCallbackEvent::CRealizingCalculatedCallbackEvent(CThread *receiverThread, CSatisfiableCalculationJob *satCalcJob, CRealizingTestingItem* testingItem, cint64 expectedGeneration) 
+ 							: CCustomEvent(EVENTTYPE),CJobSatisfiableCallbackContextData(satCalcJob) {
+ 					mRecThread = receiverThread;
+ 					mSatCalcJob = satCalcJob;
+ 					mTestingItem = testingItem;
++					mExpectedGeneration = expectedGeneration;
+ 					setCallbackDataContext(this);
+ 				}
+ 
+@@ -44,7 +45,10 @@
+ 				}
+ 
+ 				void CRealizingCalculatedCallbackEvent::doCallback() {
+-					mRecThread->postEvent(this);
++					CThread* t = mRecThread.exchange(nullptr, std::memory_order_acq_rel);
++					if (t && mTestingItem->mGeneration == mExpectedGeneration) {
++						t->postEvent(this);
++					}
+ 				}
+ 
+ 				bool CRealizingCalculatedCallbackEvent::getTestResultSatisfiable() {
+--- a/Source/Reasoner/Consistiser/CPrecomputationThread.cpp	2026-06-11 10:27:18.339899920 +0200
++++ b/Source/Reasoner/Consistiser/CPrecomputationThread.cpp	2026-06-11 10:27:18.339899920 +0200
+@@ -118,7 +118,7 @@
+ 				}
+ 				job->setCalclulationStatisticsCollector(statColl);
+ 
+-				CPrecomputationCalculatedCallbackEvent* callbackEvent = new CPrecomputationCalculatedCallbackEvent(this,job,preTestItem);
++				CPrecomputationCalculatedCallbackEvent* callbackEvent = new CPrecomputationCalculatedCallbackEvent(this,job,preTestItem,preTestItem->mGeneration);
+ 				preCompItem->getPrecomputationTestingItemSet()->insert(preTestItem);
+ 
+ 				mCurrRunningTestParallelCount++;
+@@ -144,7 +144,7 @@
+ 				}
+ 				job->setCalclulationStatisticsCollector(statColl);
+ 
+-				CSaturationPrecomputationCalculatedCallbackEvent* callbackEvent = new CSaturationPrecomputationCalculatedCallbackEvent(this,job,preTestItem);
++				CSaturationPrecomputationCalculatedCallbackEvent* callbackEvent = new CSaturationPrecomputationCalculatedCallbackEvent(this,job,preTestItem,preTestItem->mGeneration);
+ 				preCompItem->getPrecomputationTestingItemSet()->insert(preTestItem);
+ 
+ 				mCurrRunningTestParallelCount++;
+--- a/Source/Reasoner/Classifier/COptimizedKPSetRoleSubsumptionClassifierThread.cpp	2026-06-11 10:27:18.351900167 +0200
++++ b/Source/Reasoner/Classifier/COptimizedKPSetRoleSubsumptionClassifierThread.cpp	2026-06-11 10:27:18.351900167 +0200
+@@ -1109,7 +1109,7 @@
+ 					statColl = ontPropItem->getCalculationStatisticsCollection();
+ 				}
+ 				job->setCalclulationStatisticsCollector(statColl);
+-				CTestCalculatedCallbackEvent *testResultCallback = new CTestCalculatedCallbackEvent(this,job,workItem,statColl);
++				CTestCalculatedCallbackEvent *testResultCallback = new CTestCalculatedCallbackEvent(this,job,workItem,statColl,workItem->mGeneration);
+ 				job->setCalculationConfiguration(ontPropItem->getCalculationConfiguration());
+ 				CSubsumptionClassifierThread::processCalculationJob(job,ontPropItem,testResultCallback,false);
+ 				return this;
+--- a/Source/Reasoner/Classifier/COptimizedSubClassSubsumptionClassifierThread.cpp	2026-06-11 10:27:18.359900332 +0200
++++ b/Source/Reasoner/Classifier/COptimizedSubClassSubsumptionClassifierThread.cpp	2026-06-11 10:27:18.363900414 +0200
+@@ -819,7 +819,7 @@
+ 					statColl = ontClassItem->getCalculationStatisticsCollection();
+ 				}
+ 				job->setCalclulationStatisticsCollector(statColl);
+-				CTestCalculatedCallbackEvent *testResultCallback = new CTestCalculatedCallbackEvent(this,job,workItem,statColl);
++				CTestCalculatedCallbackEvent *testResultCallback = new CTestCalculatedCallbackEvent(this,job,workItem,statColl,workItem->mGeneration);
+ 				job->setCalculationConfiguration(ontClassItem->getCalculationConfiguration());
+ 				CSubsumptionClassifierThread::processCalculationJob(job,ontClassItem,testResultCallback);
+ 				return this;
+--- a/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.cpp	2026-06-11 10:27:18.371900580 +0200
++++ b/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.cpp	2026-06-11 10:27:18.371900580 +0200
+@@ -1714,7 +1714,7 @@
+ 					statColl = ontClassItem->getCalculationStatisticsCollection();
+ 				}
+ 				job->setCalclulationStatisticsCollector(statColl);
+-				CTestCalculatedCallbackEvent *testResultCallback = new CTestCalculatedCallbackEvent(this,job,workItem,statColl);
++				CTestCalculatedCallbackEvent *testResultCallback = new CTestCalculatedCallbackEvent(this,job,workItem,statColl,workItem->mGeneration);
+ 				job->setCalculationConfiguration(ontClassItem->getCalculationConfiguration());
+ 				CSubsumptionClassifierThread::processCalculationJob(job,ontClassItem,testResultCallback,false);
+ 				return this;
+--- a/Source/Reasoner/Realizer/CRealizerThread.cpp	2026-06-11 10:27:18.379900745 +0200
++++ b/Source/Reasoner/Realizer/CRealizerThread.cpp	2026-06-11 10:27:18.383900827 +0200
+@@ -103,7 +103,7 @@
+ 
+ 			CRealizerThread* CRealizerThread::processCalculationJob(CSatisfiableCalculationJob* job, COntologyRealizingItem* preCompItem, CRealizingTestingItem* preTestItem) {
+ 
+-				CRealizingCalculatedCallbackEvent* callbackEvent = new CRealizingCalculatedCallbackEvent(this,job,preTestItem);
++				CRealizingCalculatedCallbackEvent* callbackEvent = new CRealizingCalculatedCallbackEvent(this,job,preTestItem,preTestItem->mGeneration);
+ 				preCompItem->getRealizingTestingItemSet()->insert(preTestItem);
+ 
+ 				mCurrRunningTestParallelCount++;

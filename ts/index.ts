@@ -17,10 +17,12 @@ import type { Quad } from "@rdfjs/types";
 import { Store, DataFactory } from "n3";
 import { encodeToBuffers, decodeBuffers, computeStoreFingerprint } from "./intern.js";
 
-export type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions } from "./types.js";
+export type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions, LaconicPart, LaconicJustification, LaconicExplainOptions } from "./types.js";
 export { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI } from "./types.js";
-import type { ReasoningOptions, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions } from "./types.js";
+import type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions, LaconicPart, LaconicJustification, LaconicExplainOptions } from "./types.js";
 import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI } from "./types.js";
+import { buildEntailmentProbe, tripleKey as probeTripleKey } from "./entailmentProbe.js";
+import { computeLaconicAsync, groupQuadsIntoAxioms, splitAxiom, axiomKey } from "./laconicJustification.js";
 
 // ---------------------------------------------------------------------------
 // Internal message types (mirroring ts/worker.ts)
@@ -96,9 +98,14 @@ export class RdfReasoner {
   private _materializeCache: { hash: string; result: void } | null = null;
   private _classifyPropertiesCache: { hash: string; result: void } | null = null;
   private _consistencyCache: { hash: string; result: boolean } | null = null;
+  private _entailmentProbeCounter = 0;
 
-  constructor() {
-    this.worker = new Worker(new URL("./worker.js", import.meta.url), {
+  constructor(opts?: RdfReasonerOptions) {
+    const url = opts?.workerUrl
+      ? (typeof opts.workerUrl === "string" ? new URL(opts.workerUrl) : opts.workerUrl)
+      : new URL("./worker.js", import.meta.url);
+
+    this.worker = new Worker(url, {
       type: "module",
     });
 
@@ -1045,6 +1052,18 @@ export class RdfReasoner {
     return raw.split('\n').filter(Boolean).includes(classIRI);
   }
 
+  private async _isSubClassOfDirect(sub: string, sup: string): Promise<boolean> {
+    return (await this._callDirect("isSubClassOf", [sub, sup])) as boolean;
+  }
+
+  private async _isInstanceOfDirect(indi: string, cls: string): Promise<boolean> {
+    return (await this._callDirect("isInstanceOf", [indi, cls])) as boolean;
+  }
+
+  private async _isSatisfiableClassDirect(cls: string): Promise<boolean> {
+    return (await this._callDirect("isSatisfiableClass", [cls])) as boolean;
+  }
+
   // -------------------------------------------------------------------------
   // explain()
   // -------------------------------------------------------------------------
@@ -1336,6 +1355,390 @@ export class RdfReasoner {
       }
 
       return justifications;
+    });
+    this._queue = result.then(() => {}, () => {});
+    return result;
+  }
+
+  // -------------------------------------------------------------------------
+  // explainInconsistencyLaconic()
+  // -------------------------------------------------------------------------
+
+  /** Compute MIPS justifications for an inconsistent ontology and post-process
+   *  each via the Horridge laconic algorithm to identify exactly which part of
+   *  each axiom drives the clash.
+   *
+   *  Returns [] if the ontology is consistent.
+   *  Returns [] if `opts.maxJustifications === 0`.
+   *  When the cost cap (`laconicMaxAxioms` / `laconicMaxParts`) is exceeded for
+   *  a justification, that entry has `laconic.skipped === true`.
+   */
+  explainInconsistencyLaconic(
+    store: Store,
+    opts?: LaconicExplainOptions,
+  ): Promise<Array<{ justification: Quad[]; laconic: LaconicJustification }>> {
+    const maxAxioms = opts?.laconicMaxAxioms ?? 20;
+    const maxParts = opts?.laconicMaxParts ?? 40;
+
+    const result = this._queue.then(async () => {
+      // Get MIPS justifications (reuse explainInconsistency logic inline)
+      const allBase = store.getQuads(null, null, null, null).filter(q => {
+        const g = q.graph.value;
+        return g !== INFERRED_GRAPH_IRI && g !== HYPOTHETICAL_IRI;
+      });
+
+      const fingerprint = computeStoreFingerprint(store.getQuads(null, null, null, null));
+      let consistent: boolean;
+      if (this._consistencyCache?.hash === fingerprint) {
+        consistent = this._consistencyCache.result;
+      } else {
+        consistent = !(await this._checkInconsistencyDirect(allBase));
+        this._consistencyCache = { hash: fingerprint, result: consistent };
+      }
+
+      this._classifyCache = null;
+      this._materializeCache = null;
+      this._classifyPropertiesCache = null;
+
+      if (consistent) return [];
+
+      const maxJustifications = opts?.maxJustifications ?? 1;
+      if (maxJustifications === 0) return [];
+
+      const allCandidates = store.getQuads(null, null, null, null).filter(q => {
+        const g = q.graph.value;
+        if (g === INFERRED_GRAPH_IRI || g === HYPOTHETICAL_IRI) return false;
+        if (opts?.axiomFilter && !opts.axiomFilter(q)) return false;
+        return true;
+      });
+
+      this._classifyCache = null;
+      this._materializeCache = null;
+      this._classifyPropertiesCache = null;
+      this._consistencyCache = null;
+
+      if (!(await this._checkInconsistencyDirect(allCandidates))) return [];
+
+      // Find MIPS (same inline BlackBox as explainInconsistency)
+      const findOne = async (cands: Quad[]): Promise<Quad[] | null> => {
+        let w = [...cands];
+        let changed = true;
+        while (changed && w.length > 1) {
+          changed = false;
+          const mid = Math.floor(w.length / 2);
+          const [fh, sh] = [w.slice(0, mid), w.slice(mid)];
+          if (await this._checkInconsistencyDirect(fh)) { w = fh; changed = true; continue; }
+          if (await this._checkInconsistencyDirect(sh)) { w = sh; changed = true; continue; }
+          break;
+        }
+        let i = 0;
+        while (i < w.length) {
+          if (w.length === 1) break;
+          const without = [...w.slice(0, i), ...w.slice(i + 1)];
+          if (await this._checkInconsistencyDirect(without)) { w = without; } else { i++; }
+        }
+        return w;
+      };
+
+      const justifications: Quad[][] = [];
+      const j1 = await findOne(allCandidates);
+      if (!j1 || j1.length === 0) return [];
+      justifications.push(j1);
+
+      if (maxJustifications > 1) {
+        const hsQueue: Array<{ excluded: Set<string>; justification: Quad[] }> = [
+          { excluded: new Set(), justification: j1 },
+        ];
+        const explored = new Set<string>();
+        const keyOf = (q: Quad) => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`;
+        while (hsQueue.length > 0 && justifications.length < maxJustifications) {
+          const { excluded, justification: curJ } = hsQueue.shift()!;
+          const eKey = [...excluded].sort().join("|");
+          if (explored.has(eKey)) continue;
+          explored.add(eKey);
+          for (const ax of curJ) {
+            const newExcl = new Set(excluded);
+            newExcl.add(keyOf(ax));
+            const nKey = [...newExcl].sort().join("|");
+            if (explored.has(nKey)) continue;
+            const reduced = allCandidates.filter(q => !newExcl.has(keyOf(q)));
+            if (!(await this._checkInconsistencyDirect(reduced))) continue;
+            const jN = await findOne(reduced);
+            if (!jN || jN.length === 0) continue;
+            const jKey = jN.map(keyOf).sort().join("|");
+            if (!justifications.some(j => j.map(keyOf).sort().join("|") === jKey)) {
+              justifications.push(jN);
+              if (justifications.length >= maxJustifications) break;
+              hsQueue.push({ excluded: newExcl, justification: jN });
+            }
+          }
+        }
+      }
+
+      // Post-process each justification with laconic
+      const out: Array<{ justification: Quad[]; laconic: LaconicJustification }> = [];
+
+      for (const j of justifications) {
+        const { axioms, sourceQuads } = groupQuadsIntoAxioms(j, allBase);
+
+        const totalParts = axioms.reduce((n, ax) => n + splitAxiom(ax).length, 0);
+        if (axioms.length > maxAxioms || totalParts > maxParts) {
+          out.push({
+            justification: j,
+            laconic: {
+              parts: axioms.map(ax => ({
+                quad: ax[0],
+                sourceQuad: ax[0],
+                isPartOf: false,
+              })),
+              sharpened: false,
+              skipped: true,
+            },
+          });
+          continue;
+        }
+
+        // Map split-part keys → original source quads so the oracle can
+        // resolve any sub-part back to its parent axiom's full RDF encoding.
+        const partKeyToSource = new Map<string, Quad[]>();
+        for (const ax of axioms) {
+          const src = sourceQuads.get(axiomKey(ax)) ?? ax;
+          for (const part of splitAxiom(ax)) {
+            partKeyToSource.set(axiomKey(part), src);
+          }
+          // Also map the original axiom key itself
+          partKeyToSource.set(axiomKey(ax), src);
+        }
+
+        const entails = async (parts: Quad[][]): Promise<boolean> => {
+          const quads: Quad[] = [];
+          for (const p of parts) {
+            const k = axiomKey(p);
+            const src = partKeyToSource.get(k);
+            quads.push(...(src ?? p));
+          }
+          return this._checkInconsistencyDirect(quads);
+        };
+
+        const { laconic, sources } = await computeLaconicAsync(axioms, entails);
+        const sharpened = laconic.length !== axioms.length
+          || laconic.some(p => !sourceQuads.has(axiomKey(p)));
+
+        out.push({
+          justification: j,
+          laconic: {
+            parts: laconic.map(part => {
+              const source = sources.get(part) ?? part;
+              return {
+                quad: part[0],
+                sourceQuad: source[0],
+                isPartOf: axiomKey(part) !== axiomKey(source),
+              };
+            }),
+            sharpened,
+            skipped: false,
+          },
+        });
+      }
+
+      return out;
+    });
+    this._queue = result.then(() => {}, () => {});
+    return result;
+  }
+
+  // -------------------------------------------------------------------------
+  // explainEntailment()
+  // -------------------------------------------------------------------------
+
+  /** Explain why a triple (subjectIri, predicateIri, objectIri) is entailed
+   *  by the ontology, using entailment-as-unsatisfiability reduction.
+   *
+   *  Returns an `EntailmentResult` containing:
+   *  - `isEntailed` — `true/false/null` (null when ontology is inconsistent)
+   *  - `justifications` — minimal justifications (each is a Quad[] subset)
+   *  - `ontologyInconsistent` / `vacuous` — special-case flags
+   *
+   *  Supports rdfs:subClassOf and rdf:type shapes. Returns unsupported for
+   *  other predicates (isEntailed reflects only asserted facts).
+   */
+  explainEntailment(
+    store: Store,
+    subjectIri: string,
+    predicateIri: string,
+    objectIri: string,
+    opts?: ExplainEntailmentOptions,
+  ): Promise<EntailmentResult> {
+    const maxJustifications = opts?.maxJustifications ?? 1;
+    const objectIsClassLike = opts?.objectIsClassLike ?? true;
+
+    const result = this._queue.then(async () => {
+      const allBase = store.getQuads(null, null, null, null).filter(q => {
+        const g = q.graph.value;
+        return g !== INFERRED_GRAPH_IRI && g !== HYPOTHETICAL_IRI;
+      });
+
+      // C1: ontology must be consistent for the reduction to be sound
+      if (await this._checkInconsistencyDirect(allBase)) {
+        return {
+          isEntailed: null as boolean | null,
+          justifications: [] as Quad[][],
+          ontologyInconsistent: true,
+          reason: "Ontology is already inconsistent; entailment is vacuous.",
+        };
+      }
+
+      // Asserted-triple short circuit
+      const asserted = allBase.some(
+        q => q.subject.value === subjectIri &&
+             q.predicate.value === predicateIri &&
+             q.object.value === objectIri,
+      );
+
+      const probeId = `probe_${++this._entailmentProbeCounter}`;
+      const probe = buildEntailmentProbe(
+        subjectIri, predicateIri, objectIri, objectIsClassLike, probeId,
+      );
+
+      if (probe.kind === "unsupported") {
+        return { isEntailed: asserted, justifications: [] as Quad[][] };
+      }
+
+      // O ∪ ¬α — test entailment via the consistency oracle
+      const withProbe = [...allBase, ...probe.probeQuads];
+      const entailed = await this._checkInconsistencyDirect(withProbe);
+      if (!entailed) {
+        return { isEntailed: false, justifications: [] as Quad[][] };
+      }
+
+      // C2: vacuous-truth detection for subClassOf — an unsatisfiable class
+      // is a subclass of everything (vacuous truth, not a useful justification).
+      if (probe.kind === "subClassOf") {
+        const { tripleBuffer, strTableBuffer } = encodeToBuffers(allBase);
+        await this._callDirect("loadTripleBuffer", [tripleBuffer, strTableBuffer, false], [tripleBuffer, strTableBuffer]);
+        await this._callDirect("classification", []);
+        const sat = await this._isSatisfiableClassDirect(subjectIri);
+        if (!sat) {
+          return {
+            isEntailed: true as boolean | null,
+            justifications: [] as Quad[][],
+            vacuous: true,
+            reason: "Subject class is unsatisfiable; it is a subclass of anything (vacuous truth).",
+          };
+        }
+      }
+
+      if (maxJustifications === 0) {
+        return { isEntailed: true, justifications: [] as Quad[][] };
+      }
+
+      // Invalidate caches — sub-calls modify WASM state
+      this._classifyCache = null;
+      this._materializeCache = null;
+      this._classifyPropertiesCache = null;
+      this._consistencyCache = null;
+
+      // Partition into justification candidates vs background declarations.
+      // Background (rdf:type owl:Class etc.) must be passed to every oracle
+      // call so Konclude recognises classes/properties, but is never returned
+      // as part of a justification.
+      const ontologyCandidates: Quad[] = [];
+      const background: Quad[] = [];
+      for (const q of allBase) {
+        if (this._isBuiltInDeclaration(q)) { background.push(q); }
+        else { ontologyCandidates.push(q); }
+      }
+      const filteredCandidates = opts?.axiomFilter
+        ? ontologyCandidates.filter(q => opts.axiomFilter!(q))
+        : ontologyCandidates;
+
+      const keyOf = (q: Quad) => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`;
+      const stripProbe = (j: Quad[]): Quad[] =>
+        j.filter(q => !probe.probeKeys.has(probeTripleKey(q.subject.value, q.predicate.value, q.object.value)));
+
+      const justifications: Quad[][] = [];
+
+      // BlackBox find one justification — probe quads are PINNED: only ontology
+      // candidates participate in bisection/deletion, probe quads are always
+      // re-added before each oracle call so they are never lost.
+      const findOne = async (ontCandidates: Quad[]): Promise<Quad[] | null> => {
+        let working = [...ontCandidates];
+
+        // Shrink phase: binary partition (ontology candidates only)
+        let changed = true;
+        while (changed && working.length > 1) {
+          changed = false;
+          const mid = Math.floor(working.length / 2);
+          const fh = working.slice(0, mid);
+          const sh = working.slice(mid);
+          if (await this._checkInconsistencyDirect([...fh, ...probe.probeQuads, ...background])) {
+            working = fh; changed = true; continue;
+          }
+          if (await this._checkInconsistencyDirect([...sh, ...probe.probeQuads, ...background])) {
+            working = sh; changed = true; continue;
+          }
+          break;
+        }
+
+        // Deletion pass: remove each ontology candidate that is not individually required
+        let i = 0;
+        while (i < working.length) {
+          if (working.length === 0) break;
+          const without = [...working.slice(0, i), ...working.slice(i + 1)];
+          if (await this._checkInconsistencyDirect([...without, ...probe.probeQuads, ...background])) {
+            working = without;
+          } else {
+            i++;
+          }
+        }
+
+        return working.length > 0 ? [...working, ...probe.probeQuads] : null;
+      };
+
+      // Verify full candidate set + probe is inconsistent
+      if (!(await this._checkInconsistencyDirect([...filteredCandidates, ...probe.probeQuads, ...background]))) {
+        return { isEntailed: true, justifications: [] as Quad[][] };
+      }
+
+      const j1 = await findOne(filteredCandidates);
+      if (!j1 || j1.length === 0) {
+        return { isEntailed: true, justifications: [] as Quad[][] };
+      }
+      justifications.push(stripProbe(j1));
+
+      // HSDAG for additional justifications
+      if (maxJustifications > 1) {
+        const hsQueue: Array<{ excluded: Set<string>; justification: Quad[] }> = [
+          { excluded: new Set(), justification: j1 },
+        ];
+        const explored = new Set<string>();
+        while (hsQueue.length > 0 && justifications.length < maxJustifications) {
+          const { excluded, justification: curJ } = hsQueue.shift()!;
+          const eKey = [...excluded].sort().join("|");
+          if (explored.has(eKey)) continue;
+          explored.add(eKey);
+          for (const ax of curJ) {
+            // Never exclude probe quads from the hitting set
+            if (probe.probeKeys.has(probeTripleKey(ax.subject.value, ax.predicate.value, ax.object.value))) continue;
+            const newExcl = new Set(excluded);
+            newExcl.add(keyOf(ax));
+            const nKey = [...newExcl].sort().join("|");
+            if (explored.has(nKey)) continue;
+            const reduced = filteredCandidates.filter(q => !newExcl.has(keyOf(q)));
+            if (!(await this._checkInconsistencyDirect([...reduced, ...probe.probeQuads, ...background]))) continue;
+            const jNew = await findOne(reduced);
+            if (!jNew || jNew.length === 0) continue;
+            const jKey = stripProbe(jNew).map(keyOf).sort().join("|");
+            if (!justifications.some(j => j.map(keyOf).sort().join("|") === jKey)) {
+              justifications.push(stripProbe(jNew));
+              if (justifications.length >= maxJustifications) break;
+              hsQueue.push({ excluded: newExcl, justification: jNew });
+            }
+          }
+        }
+      }
+
+      return { isEntailed: true, justifications };
     });
     this._queue = result.then(() => {}, () => {});
     return result;
