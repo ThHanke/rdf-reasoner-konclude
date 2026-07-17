@@ -200,6 +200,10 @@ export interface ReasoningResult {
 export interface RdfReasonerOptions {
   /** Optional URL to the worker script. When absent, uses import.meta.url resolution. */
   workerUrl?: string | URL;
+  /** Pre-constructed Worker instance. When provided, workerUrl is ignored and no
+   *  new Worker is created. Use this when your bundler (e.g. Vite) cannot
+   *  statically analyze `new Worker(url)` in library code. */
+  worker?: Worker;
 }
 
 /**

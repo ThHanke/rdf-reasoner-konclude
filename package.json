@@ -1,6 +1,6 @@
 {
   "name": "rdf-reasoner-konclude",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "OWL-DL tableau reasoning via Konclude compiled to WebAssembly. Async TypeScript API — pass an N3.js Store, get inferred triples back. Uses RDF.js Quad types throughout.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -33,7 +33,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "postbuild": "cp ts/worker-node.mjs dist/worker-node.mjs && cp ts/index.node.mjs dist/index.node.mjs && sed -i 's|from \"./index\\.js\"|from \"./index.node.mjs\"|' dist/cli.js && { printf '#!/usr/bin/env node\\n'; cat dist/cli.js; } > dist/cli.js.tmp && mv dist/cli.js.tmp dist/cli.js && chmod +x dist/cli.js",
+    "postbuild": "cp ts/worker-node.mjs dist/worker-node.mjs && cp ts/index.node.mjs dist/index.node.mjs && sed -i 's|from \"./index\\.js\"|from \"./index.node.mjs\"|' dist/cli.js && { printf '#!/usr/bin/env node\\n'; cat dist/cli.js; } > dist/cli.js.tmp && mv dist/cli.js.tmp dist/cli.js && chmod +x dist/cli.js && npm run patch-wasm",
     "test": "vitest run",
     "apply-patches": "bash scripts/apply-patches.sh",
     "patch-wasm": "bash scripts/patch-konclude-mjs.sh",
