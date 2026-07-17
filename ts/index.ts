@@ -1638,8 +1638,16 @@ export class RdfReasoner {
       this._classifyPropertiesCache = null;
       this._consistencyCache = null;
 
-      // Build ontology candidates (minus declarations) — probe quads are separate.
-      const ontologyCandidates = allBase.filter(q => !this._isBuiltInDeclaration(q));
+      // Partition into justification candidates vs background declarations.
+      // Background (rdf:type owl:Class etc.) must be passed to every oracle
+      // call so Konclude recognises classes/properties, but is never returned
+      // as part of a justification.
+      const ontologyCandidates: Quad[] = [];
+      const background: Quad[] = [];
+      for (const q of allBase) {
+        if (this._isBuiltInDeclaration(q)) { background.push(q); }
+        else { ontologyCandidates.push(q); }
+      }
       const filteredCandidates = opts?.axiomFilter
         ? ontologyCandidates.filter(q => opts.axiomFilter!(q))
         : ontologyCandidates;
@@ -1663,10 +1671,10 @@ export class RdfReasoner {
           const mid = Math.floor(working.length / 2);
           const fh = working.slice(0, mid);
           const sh = working.slice(mid);
-          if (await this._checkInconsistencyDirect([...fh, ...probe.probeQuads])) {
+          if (await this._checkInconsistencyDirect([...fh, ...probe.probeQuads, ...background])) {
             working = fh; changed = true; continue;
           }
-          if (await this._checkInconsistencyDirect([...sh, ...probe.probeQuads])) {
+          if (await this._checkInconsistencyDirect([...sh, ...probe.probeQuads, ...background])) {
             working = sh; changed = true; continue;
           }
           break;
@@ -1677,7 +1685,7 @@ export class RdfReasoner {
         while (i < working.length) {
           if (working.length === 0) break;
           const without = [...working.slice(0, i), ...working.slice(i + 1)];
-          if (await this._checkInconsistencyDirect([...without, ...probe.probeQuads])) {
+          if (await this._checkInconsistencyDirect([...without, ...probe.probeQuads, ...background])) {
             working = without;
           } else {
             i++;
@@ -1688,7 +1696,7 @@ export class RdfReasoner {
       };
 
       // Verify full candidate set + probe is inconsistent
-      if (!(await this._checkInconsistencyDirect([...filteredCandidates, ...probe.probeQuads]))) {
+      if (!(await this._checkInconsistencyDirect([...filteredCandidates, ...probe.probeQuads, ...background]))) {
         return { isEntailed: true, justifications: [] as Quad[][] };
       }
 
@@ -1717,7 +1725,7 @@ export class RdfReasoner {
             const nKey = [...newExcl].sort().join("|");
             if (explored.has(nKey)) continue;
             const reduced = filteredCandidates.filter(q => !newExcl.has(keyOf(q)));
-            if (!(await this._checkInconsistencyDirect([...reduced, ...probe.probeQuads]))) continue;
+            if (!(await this._checkInconsistencyDirect([...reduced, ...probe.probeQuads, ...background]))) continue;
             const jNew = await findOne(reduced);
             if (!jNew || jNew.length === 0) continue;
             const jKey = stripProbe(jNew).map(keyOf).sort().join("|");
