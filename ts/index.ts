@@ -1498,11 +1498,23 @@ export class RdfReasoner {
           continue;
         }
 
+        // Map split-part keys → original source quads so the oracle can
+        // resolve any sub-part back to its parent axiom's full RDF encoding.
+        const partKeyToSource = new Map<string, Quad[]>();
+        for (const ax of axioms) {
+          const src = sourceQuads.get(axiomKey(ax)) ?? ax;
+          for (const part of splitAxiom(ax)) {
+            partKeyToSource.set(axiomKey(part), src);
+          }
+          // Also map the original axiom key itself
+          partKeyToSource.set(axiomKey(ax), src);
+        }
+
         const entails = async (parts: Quad[][]): Promise<boolean> => {
           const quads: Quad[] = [];
           for (const p of parts) {
             const k = axiomKey(p);
-            const src = sourceQuads.get(k);
+            const src = partKeyToSource.get(k);
             quads.push(...(src ?? p));
           }
           return this._checkInconsistencyDirect(quads);
