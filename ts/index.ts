@@ -17,10 +17,11 @@ import type { Quad } from "@rdfjs/types";
 import { Store, DataFactory } from "n3";
 import { encodeToBuffers, decodeBuffers, computeStoreFingerprint } from "./intern.js";
 
-export type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions } from "./types.js";
+export type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions } from "./types.js";
 export { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI } from "./types.js";
-import type { ReasoningOptions, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions } from "./types.js";
+import type { ReasoningOptions, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions } from "./types.js";
 import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI } from "./types.js";
+import { buildEntailmentProbe, tripleKey as probeTripleKey } from "./entailmentProbe.js";
 
 // ---------------------------------------------------------------------------
 // Internal message types (mirroring ts/worker.ts)
@@ -96,6 +97,7 @@ export class RdfReasoner {
   private _materializeCache: { hash: string; result: void } | null = null;
   private _classifyPropertiesCache: { hash: string; result: void } | null = null;
   private _consistencyCache: { hash: string; result: boolean } | null = null;
+  private _entailmentProbeCounter = 0;
 
   constructor(opts?: RdfReasonerOptions) {
     const url = opts?.workerUrl
@@ -1352,6 +1354,195 @@ export class RdfReasoner {
       }
 
       return justifications;
+    });
+    this._queue = result.then(() => {}, () => {});
+    return result;
+  }
+
+  // -------------------------------------------------------------------------
+  // explainEntailment()
+  // -------------------------------------------------------------------------
+
+  /** Explain why a triple (subjectIri, predicateIri, objectIri) is entailed
+   *  by the ontology, using entailment-as-unsatisfiability reduction.
+   *
+   *  Returns an `EntailmentResult` containing:
+   *  - `isEntailed` — `true/false/null` (null when ontology is inconsistent)
+   *  - `justifications` — minimal justifications (each is a Quad[] subset)
+   *  - `ontologyInconsistent` / `vacuous` — special-case flags
+   *
+   *  Supports rdfs:subClassOf and rdf:type shapes. Returns unsupported for
+   *  other predicates (isEntailed reflects only asserted facts).
+   */
+  explainEntailment(
+    store: Store,
+    subjectIri: string,
+    predicateIri: string,
+    objectIri: string,
+    opts?: ExplainEntailmentOptions,
+  ): Promise<EntailmentResult> {
+    const maxJustifications = opts?.maxJustifications ?? 1;
+    const objectIsClassLike = opts?.objectIsClassLike ?? true;
+
+    const result = this._queue.then(async () => {
+      const allBase = store.getQuads(null, null, null, null).filter(q => {
+        const g = q.graph.value;
+        return g !== INFERRED_GRAPH_IRI && g !== HYPOTHETICAL_IRI;
+      });
+
+      // C1: ontology must be consistent for the reduction to be sound
+      if (await this._checkInconsistencyDirect(allBase)) {
+        return {
+          isEntailed: null as boolean | null,
+          justifications: [] as Quad[][],
+          ontologyInconsistent: true,
+          reason: "Ontology is already inconsistent; entailment is vacuous.",
+        };
+      }
+
+      // Asserted-triple short circuit
+      const asserted = allBase.some(
+        q => q.subject.value === subjectIri &&
+             q.predicate.value === predicateIri &&
+             q.object.value === objectIri,
+      );
+
+      const probeId = `probe_${++this._entailmentProbeCounter}`;
+      const probe = buildEntailmentProbe(
+        subjectIri, predicateIri, objectIri, objectIsClassLike, probeId,
+      );
+
+      if (probe.kind === "unsupported") {
+        return { isEntailed: asserted, justifications: [] as Quad[][] };
+      }
+
+      // O ∪ ¬α — test entailment via the consistency oracle
+      const withProbe = [...allBase, ...probe.probeQuads];
+      const entailed = await this._checkInconsistencyDirect(withProbe);
+      if (!entailed) {
+        return { isEntailed: false, justifications: [] as Quad[][] };
+      }
+
+      // C2: vacuous-truth detection for subClassOf — an unsatisfiable class
+      // is a subclass of everything (vacuous truth, not a useful justification).
+      if (probe.kind === "subClassOf") {
+        const { tripleBuffer, strTableBuffer } = encodeToBuffers(allBase);
+        await this._callDirect("loadTripleBuffer", [tripleBuffer, strTableBuffer, false], [tripleBuffer, strTableBuffer]);
+        await this._callDirect("classification", []);
+        const sat = await this._isSatisfiableClassDirect(subjectIri);
+        if (!sat) {
+          return {
+            isEntailed: true as boolean | null,
+            justifications: [] as Quad[][],
+            vacuous: true,
+            reason: "Subject class is unsatisfiable; it is a subclass of anything (vacuous truth).",
+          };
+        }
+      }
+
+      if (maxJustifications === 0) {
+        return { isEntailed: true, justifications: [] as Quad[][] };
+      }
+
+      // Invalidate caches — sub-calls modify WASM state
+      this._classifyCache = null;
+      this._materializeCache = null;
+      this._classifyPropertiesCache = null;
+      this._consistencyCache = null;
+
+      // Build ontology candidates (minus declarations) — probe quads are separate.
+      const ontologyCandidates = allBase.filter(q => !this._isBuiltInDeclaration(q));
+      const filteredCandidates = opts?.axiomFilter
+        ? ontologyCandidates.filter(q => opts.axiomFilter!(q))
+        : ontologyCandidates;
+
+      const keyOf = (q: Quad) => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`;
+      const stripProbe = (j: Quad[]): Quad[] =>
+        j.filter(q => !probe.probeKeys.has(probeTripleKey(q.subject.value, q.predicate.value, q.object.value)));
+
+      const justifications: Quad[][] = [];
+
+      // BlackBox find one justification — probe quads are PINNED: only ontology
+      // candidates participate in bisection/deletion, probe quads are always
+      // re-added before each oracle call so they are never lost.
+      const findOne = async (ontCandidates: Quad[]): Promise<Quad[] | null> => {
+        let working = [...ontCandidates];
+
+        // Shrink phase: binary partition (ontology candidates only)
+        let changed = true;
+        while (changed && working.length > 1) {
+          changed = false;
+          const mid = Math.floor(working.length / 2);
+          const fh = working.slice(0, mid);
+          const sh = working.slice(mid);
+          if (await this._checkInconsistencyDirect([...fh, ...probe.probeQuads])) {
+            working = fh; changed = true; continue;
+          }
+          if (await this._checkInconsistencyDirect([...sh, ...probe.probeQuads])) {
+            working = sh; changed = true; continue;
+          }
+          break;
+        }
+
+        // Deletion pass: remove each ontology candidate that is not individually required
+        let i = 0;
+        while (i < working.length) {
+          if (working.length === 0) break;
+          const without = [...working.slice(0, i), ...working.slice(i + 1)];
+          if (await this._checkInconsistencyDirect([...without, ...probe.probeQuads])) {
+            working = without;
+          } else {
+            i++;
+          }
+        }
+
+        return working.length > 0 ? [...working, ...probe.probeQuads] : null;
+      };
+
+      // Verify full candidate set + probe is inconsistent
+      if (!(await this._checkInconsistencyDirect([...filteredCandidates, ...probe.probeQuads]))) {
+        return { isEntailed: true, justifications: [] as Quad[][] };
+      }
+
+      const j1 = await findOne(filteredCandidates);
+      if (!j1 || j1.length === 0) {
+        return { isEntailed: true, justifications: [] as Quad[][] };
+      }
+      justifications.push(stripProbe(j1));
+
+      // HSDAG for additional justifications
+      if (maxJustifications > 1) {
+        const hsQueue: Array<{ excluded: Set<string>; justification: Quad[] }> = [
+          { excluded: new Set(), justification: j1 },
+        ];
+        const explored = new Set<string>();
+        while (hsQueue.length > 0 && justifications.length < maxJustifications) {
+          const { excluded, justification: curJ } = hsQueue.shift()!;
+          const eKey = [...excluded].sort().join("|");
+          if (explored.has(eKey)) continue;
+          explored.add(eKey);
+          for (const ax of curJ) {
+            // Never exclude probe quads from the hitting set
+            if (probe.probeKeys.has(probeTripleKey(ax.subject.value, ax.predicate.value, ax.object.value))) continue;
+            const newExcl = new Set(excluded);
+            newExcl.add(keyOf(ax));
+            const nKey = [...newExcl].sort().join("|");
+            if (explored.has(nKey)) continue;
+            const reduced = filteredCandidates.filter(q => !newExcl.has(keyOf(q)));
+            if (!(await this._checkInconsistencyDirect([...reduced, ...probe.probeQuads]))) continue;
+            const jNew = await findOne(reduced);
+            if (!jNew || jNew.length === 0) continue;
+            const jKey = stripProbe(jNew).map(keyOf).sort().join("|");
+            if (!justifications.some(j => j.map(keyOf).sort().join("|") === jKey)) {
+              justifications.push(stripProbe(jNew));
+              if (justifications.length >= maxJustifications) break;
+              hsQueue.push({ excluded: newExcl, justification: jNew });
+            }
+          }
+        }
+      }
+
+      return { isEntailed: true, justifications };
     });
     this._queue = result.then(() => {}, () => {});
     return result;
