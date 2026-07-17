@@ -226,6 +226,40 @@ export interface EntailmentResult {
 }
 
 /**
+ * A single part of a laconic justification.
+ */
+export interface LaconicPart {
+  /** The laconic part's principal triple. */
+  quad: Quad;
+  /** The original axiom's principal triple that this part was derived from. */
+  sourceQuad: Quad;
+  /** True when this part is strictly smaller than its source axiom. */
+  isPartOf: boolean;
+}
+
+/**
+ * A laconic justification for an inconsistency.
+ */
+export interface LaconicJustification {
+  /** The laconic parts — minimal sub-axioms that together drive the clash. */
+  parts: LaconicPart[];
+  /** True when at least one part is a strict sub-axiom of its source. */
+  sharpened: boolean;
+  /** True when the cost cap was exceeded and laconic post-processing was skipped. */
+  skipped: boolean;
+}
+
+/**
+ * Options controlling how `explainInconsistencyLaconic()` operates.
+ */
+export interface LaconicExplainOptions extends ExplainOptions {
+  /** Maximum number of axioms in a justification before skipping laconic post-processing. Defaults to 20. */
+  laconicMaxAxioms?: number;
+  /** Maximum number of total parts before skipping laconic post-processing. Defaults to 40. */
+  laconicMaxParts?: number;
+}
+
+/**
  * Options controlling how `explainEntailment()` operates.
  */
 export interface ExplainEntailmentOptions extends ExplainOptions {

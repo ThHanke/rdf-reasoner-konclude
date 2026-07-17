@@ -17,11 +17,12 @@ import type { Quad } from "@rdfjs/types";
 import { Store, DataFactory } from "n3";
 import { encodeToBuffers, decodeBuffers, computeStoreFingerprint } from "./intern.js";
 
-export type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions } from "./types.js";
+export type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions, LaconicPart, LaconicJustification, LaconicExplainOptions } from "./types.js";
 export { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI } from "./types.js";
-import type { ReasoningOptions, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions } from "./types.js";
+import type { ReasoningOptions, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions, LaconicPart, LaconicJustification, LaconicExplainOptions } from "./types.js";
 import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI } from "./types.js";
 import { buildEntailmentProbe, tripleKey as probeTripleKey } from "./entailmentProbe.js";
+import { computeLaconicAsync, groupQuadsIntoAxioms, splitAxiom, axiomKey } from "./laconicJustification.js";
 
 // ---------------------------------------------------------------------------
 // Internal message types (mirroring ts/worker.ts)
@@ -1354,6 +1355,181 @@ export class RdfReasoner {
       }
 
       return justifications;
+    });
+    this._queue = result.then(() => {}, () => {});
+    return result;
+  }
+
+  // -------------------------------------------------------------------------
+  // explainInconsistencyLaconic()
+  // -------------------------------------------------------------------------
+
+  /** Compute MIPS justifications for an inconsistent ontology and post-process
+   *  each via the Horridge laconic algorithm to identify exactly which part of
+   *  each axiom drives the clash.
+   *
+   *  Returns [] if the ontology is consistent.
+   *  Returns [] if `opts.maxJustifications === 0`.
+   *  When the cost cap (`laconicMaxAxioms` / `laconicMaxParts`) is exceeded for
+   *  a justification, that entry has `laconic.skipped === true`.
+   */
+  explainInconsistencyLaconic(
+    store: Store,
+    opts?: LaconicExplainOptions,
+  ): Promise<Array<{ justification: Quad[]; laconic: LaconicJustification }>> {
+    const maxAxioms = opts?.laconicMaxAxioms ?? 20;
+    const maxParts = opts?.laconicMaxParts ?? 40;
+
+    const result = this._queue.then(async () => {
+      // Get MIPS justifications (reuse explainInconsistency logic inline)
+      const allBase = store.getQuads(null, null, null, null).filter(q => {
+        const g = q.graph.value;
+        return g !== INFERRED_GRAPH_IRI && g !== HYPOTHETICAL_IRI;
+      });
+
+      const fingerprint = computeStoreFingerprint(store.getQuads(null, null, null, null));
+      let consistent: boolean;
+      if (this._consistencyCache?.hash === fingerprint) {
+        consistent = this._consistencyCache.result;
+      } else {
+        consistent = !(await this._checkInconsistencyDirect(allBase));
+        this._consistencyCache = { hash: fingerprint, result: consistent };
+      }
+
+      this._classifyCache = null;
+      this._materializeCache = null;
+      this._classifyPropertiesCache = null;
+
+      if (consistent) return [];
+
+      const maxJustifications = opts?.maxJustifications ?? 1;
+      if (maxJustifications === 0) return [];
+
+      const allCandidates = store.getQuads(null, null, null, null).filter(q => {
+        const g = q.graph.value;
+        if (g === INFERRED_GRAPH_IRI || g === HYPOTHETICAL_IRI) return false;
+        if (opts?.axiomFilter && !opts.axiomFilter(q)) return false;
+        return true;
+      });
+
+      this._classifyCache = null;
+      this._materializeCache = null;
+      this._classifyPropertiesCache = null;
+      this._consistencyCache = null;
+
+      if (!(await this._checkInconsistencyDirect(allCandidates))) return [];
+
+      // Find MIPS (same inline BlackBox as explainInconsistency)
+      const findOne = async (cands: Quad[]): Promise<Quad[] | null> => {
+        let w = [...cands];
+        let changed = true;
+        while (changed && w.length > 1) {
+          changed = false;
+          const mid = Math.floor(w.length / 2);
+          const [fh, sh] = [w.slice(0, mid), w.slice(mid)];
+          if (await this._checkInconsistencyDirect(fh)) { w = fh; changed = true; continue; }
+          if (await this._checkInconsistencyDirect(sh)) { w = sh; changed = true; continue; }
+          break;
+        }
+        let i = 0;
+        while (i < w.length) {
+          if (w.length === 1) break;
+          const without = [...w.slice(0, i), ...w.slice(i + 1)];
+          if (await this._checkInconsistencyDirect(without)) { w = without; } else { i++; }
+        }
+        return w;
+      };
+
+      const justifications: Quad[][] = [];
+      const j1 = await findOne(allCandidates);
+      if (!j1 || j1.length === 0) return [];
+      justifications.push(j1);
+
+      if (maxJustifications > 1) {
+        const hsQueue: Array<{ excluded: Set<string>; justification: Quad[] }> = [
+          { excluded: new Set(), justification: j1 },
+        ];
+        const explored = new Set<string>();
+        const keyOf = (q: Quad) => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`;
+        while (hsQueue.length > 0 && justifications.length < maxJustifications) {
+          const { excluded, justification: curJ } = hsQueue.shift()!;
+          const eKey = [...excluded].sort().join("|");
+          if (explored.has(eKey)) continue;
+          explored.add(eKey);
+          for (const ax of curJ) {
+            const newExcl = new Set(excluded);
+            newExcl.add(keyOf(ax));
+            const nKey = [...newExcl].sort().join("|");
+            if (explored.has(nKey)) continue;
+            const reduced = allCandidates.filter(q => !newExcl.has(keyOf(q)));
+            if (!(await this._checkInconsistencyDirect(reduced))) continue;
+            const jN = await findOne(reduced);
+            if (!jN || jN.length === 0) continue;
+            const jKey = jN.map(keyOf).sort().join("|");
+            if (!justifications.some(j => j.map(keyOf).sort().join("|") === jKey)) {
+              justifications.push(jN);
+              if (justifications.length >= maxJustifications) break;
+              hsQueue.push({ excluded: newExcl, justification: jN });
+            }
+          }
+        }
+      }
+
+      // Post-process each justification with laconic
+      const out: Array<{ justification: Quad[]; laconic: LaconicJustification }> = [];
+
+      for (const j of justifications) {
+        const { axioms, sourceQuads } = groupQuadsIntoAxioms(j, allBase);
+
+        const totalParts = axioms.reduce((n, ax) => n + splitAxiom(ax).length, 0);
+        if (axioms.length > maxAxioms || totalParts > maxParts) {
+          out.push({
+            justification: j,
+            laconic: {
+              parts: axioms.map(ax => ({
+                quad: ax[0],
+                sourceQuad: ax[0],
+                isPartOf: false,
+              })),
+              sharpened: false,
+              skipped: true,
+            },
+          });
+          continue;
+        }
+
+        const entails = async (parts: Quad[][]): Promise<boolean> => {
+          const quads: Quad[] = [];
+          for (const p of parts) {
+            const k = axiomKey(p);
+            const src = sourceQuads.get(k);
+            quads.push(...(src ?? p));
+          }
+          return this._checkInconsistencyDirect(quads);
+        };
+
+        const { laconic, sources } = await computeLaconicAsync(axioms, entails);
+        const sharpened = laconic.length !== axioms.length
+          || laconic.some(p => !sourceQuads.has(axiomKey(p)));
+
+        out.push({
+          justification: j,
+          laconic: {
+            parts: laconic.map(part => {
+              const source = sources.get(part) ?? part;
+              return {
+                quad: part[0],
+                sourceQuad: source[0],
+                isPartOf: axiomKey(part) !== axiomKey(source),
+              };
+            }),
+            sharpened,
+            skipped: false,
+          },
+        });
+      }
+
+      return out;
     });
     this._queue = result.then(() => {}, () => {});
     return result;
