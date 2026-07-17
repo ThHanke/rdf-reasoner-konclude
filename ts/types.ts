@@ -193,3 +193,11 @@ export interface ReasoningResult {
    */
   consistent?: boolean;
 }
+
+/**
+ * Constructor options for RdfReasoner.
+ */
+export interface RdfReasonerOptions {
+  /** Optional URL to the worker script. When absent, uses import.meta.url resolution. */
+  workerUrl?: string | URL;
+}

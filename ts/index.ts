@@ -17,9 +17,9 @@ import type { Quad } from "@rdfjs/types";
 import { Store, DataFactory } from "n3";
 import { encodeToBuffers, decodeBuffers, computeStoreFingerprint } from "./intern.js";
 
-export type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions } from "./types.js";
+export type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions } from "./types.js";
 export { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI } from "./types.js";
-import type { ReasoningOptions, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions } from "./types.js";
+import type { ReasoningOptions, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions } from "./types.js";
 import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -97,8 +97,12 @@ export class RdfReasoner {
   private _classifyPropertiesCache: { hash: string; result: void } | null = null;
   private _consistencyCache: { hash: string; result: boolean } | null = null;
 
-  constructor() {
-    this.worker = new Worker(new URL("./worker.js", import.meta.url), {
+  constructor(opts?: RdfReasonerOptions) {
+    const url = opts?.workerUrl
+      ? (typeof opts.workerUrl === "string" ? new URL(opts.workerUrl) : opts.workerUrl)
+      : new URL("./worker.js", import.meta.url);
+
+    this.worker = new Worker(url, {
       type: "module",
     });
 
