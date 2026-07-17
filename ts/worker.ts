@@ -171,6 +171,18 @@ export async function handleMessage(
         result = reasoner.buildUnsatisfiableClassBuffer();
         break;
       }
+      case "isSubClassOf": {
+        result = reasoner.isSubClassOf(args[0] as string, args[1] as string);
+        break;
+      }
+      case "isInstanceOf": {
+        result = reasoner.isInstanceOf(args[0] as string, args[1] as string);
+        break;
+      }
+      case "isSatisfiableClass": {
+        result = reasoner.isSatisfiableClass(args[0] as string);
+        break;
+      }
       default: {
         const response: WorkerResponse = {
           id,

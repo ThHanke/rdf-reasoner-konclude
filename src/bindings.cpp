@@ -15,5 +15,8 @@ EMSCRIPTEN_BINDINGS(konclude) {
         .function("buildPropertyTripleBuffer",        &KoncludeReasoner::buildPropertyTripleBuffer)
         .function("getInferredTripleBufferPtr",        &KoncludeReasoner::getInferredTripleBufferPtr)
         .function("buildUnsatisfiableClassBuffer",    &KoncludeReasoner::buildUnsatisfiableClassBuffer)
+        .function("isSubClassOf",                     &KoncludeReasoner::isSubClassOf)
+        .function("isInstanceOf",                     &KoncludeReasoner::isInstanceOf)
+        .function("isSatisfiableClass",               &KoncludeReasoner::isSatisfiableClass)
         .function("reset",                            &KoncludeReasoner::reset);
 }
