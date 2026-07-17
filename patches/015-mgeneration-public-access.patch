@@ -1,0 +1,107 @@
+--- a/Source/Reasoner/Classifier/CClassificationComputationItem.h
++++ b/Source/Reasoner/Classifier/CClassificationComputationItem.h
+@@ -60,6 +60,8 @@
+ 			class CClassificationComputationItem {
+ 				// public methods
+ 				public:
++					cint64 mGeneration;
++
+ 					//! Constructor
+ 					CClassificationComputationItem();
+ 
+@@ -72,7 +74,6 @@
+ 
+ 				// protected variables
+ 				protected:
+-					cint64 mGeneration;
+ 
+ 				// private methods
+ 				private:
+--- a/Source/Reasoner/Consistiser/CPrecomputationTestingItem.h
++++ b/Source/Reasoner/Consistiser/CPrecomputationTestingItem.h
+@@ -71,6 +71,8 @@
+ 					CConsistenceCalculationStatisticsCollection* getUsedStatisticsCollection();
+ 					CPrecomputationTestingItem* setStatisticCollection(CConsistenceCalculationStatisticsCollection* statisticCollection);
+ 
++					cint64 mGeneration;
++
+ 				// protected methods
+ 				protected:
+ 
+@@ -78,7 +80,6 @@
+ 				protected:
+ 					COntologyPrecomputationItem* mOntologyPreCompItem;
+ 					CConsistenceCalculationStatisticsCollection* mStatisticCollection;
+-					cint64 mGeneration;
+ 
+ 				// private methods
+ 				private:
+--- a/Source/Reasoner/Realizer/CRealizingTestingItem.h
++++ b/Source/Reasoner/Realizer/CRealizingTestingItem.h
+@@ -66,6 +66,8 @@
+ 					QList<COntologyRealizingDynamicRequirmentProcessingData*> getProcessingDataList();
+ 					CRealizingTestingItem* addProcessingData(COntologyRealizingDynamicRequirmentProcessingData* procData);
+ 
++					cint64 mGeneration;
++
+ 				// protected methods
+ 				protected:
+ 
+@@ -73,7 +75,6 @@
+ 				protected:
+ 					COntologyRealizingItem* mOntologyPreproItem;
+ 					QList<COntologyRealizingDynamicRequirmentProcessingData*> mProcDataList;
+-					cint64 mGeneration;
+ 
+ 				// private methods
+ 				private:
+--- a/Source/Reasoner/Classifier/Events/CTestCalculatedCallbackEvent.cpp
++++ b/Source/Reasoner/Classifier/Events/CTestCalculatedCallbackEvent.cpp
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include "CTestCalculatedCallbackEvent.h"
++#include "../CClassificationComputationItem.h"
+ 
+ 
+ namespace Konclude {
+--- a/Source/Reasoner/Consistiser/Events/CPrecomputationCalculatedCallbackEvent.cpp
++++ b/Source/Reasoner/Consistiser/Events/CPrecomputationCalculatedCallbackEvent.cpp
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include "CPrecomputationCalculatedCallbackEvent.h"
++#include "../CPrecomputationTestingItem.h"
+ 
+ 
+ namespace Konclude {
+--- a/Source/Reasoner/Consistiser/Events/CSaturationPrecomputationCalculatedCallbackEvent.cpp
++++ b/Source/Reasoner/Consistiser/Events/CSaturationPrecomputationCalculatedCallbackEvent.cpp
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include "CSaturationPrecomputationCalculatedCallbackEvent.h"
++#include "../CPrecomputationTestingItem.h"
+ 
+ 
+ namespace Konclude {
+--- a/Source/Reasoner/Realizer/Events/CRealizingCalculatedCallbackEvent.cpp
++++ b/Source/Reasoner/Realizer/Events/CRealizingCalculatedCallbackEvent.cpp
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include "CRealizingCalculatedCallbackEvent.h"
++#include "../CRealizingTestingItem.h"
+ 
+ 
+ namespace Konclude {
+--- a/Source/Reasoner/Kernel/Manager/Events/CRequirementProcessedCallbackEvent.cpp
++++ b/Source/Reasoner/Kernel/Manager/Events/CRequirementProcessedCallbackEvent.cpp
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include "CRequirementProcessedCallbackEvent.h"
++#include "../CRequirementPreparingData.h"
+ 
+ 
+ namespace Konclude {
