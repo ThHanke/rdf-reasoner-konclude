@@ -201,3 +201,38 @@ export interface RdfReasonerOptions {
   /** Optional URL to the worker script. When absent, uses import.meta.url resolution. */
   workerUrl?: string | URL;
 }
+
+/**
+ * Result returned by `explainEntailment()`.
+ */
+export interface EntailmentResult {
+  /**
+   * Whether the triple is entailed by the ontology.
+   * `null` when the ontology is already inconsistent (vacuous entailment).
+   */
+  isEntailed: boolean | null;
+  /**
+   * Minimal justifications — each is a subset of the ontology's base axioms
+   * that alone entails the target triple. Empty when `isEntailed` is false,
+   * null, or when the entailment is vacuously true.
+   */
+  justifications: Quad[][];
+  /** Set to `true` when the ontology is already inconsistent. */
+  ontologyInconsistent?: boolean;
+  /** Set to `true` when entailment holds but only vacuously (subject class unsatisfiable). */
+  vacuous?: boolean;
+  /** Human-readable explanation of a special case (inconsistent / vacuous). */
+  reason?: string;
+}
+
+/**
+ * Options controlling how `explainEntailment()` operates.
+ */
+export interface ExplainEntailmentOptions extends ExplainOptions {
+  /**
+   * Treat the object IRI as class-like (owl:Class / named class).
+   * When `false`, the method falls back to "unsupported" for non-type predicates.
+   * Defaults to `true`.
+   */
+  objectIsClassLike?: boolean;
+}
