@@ -1045,6 +1045,18 @@ export class RdfReasoner {
     return raw.split('\n').filter(Boolean).includes(classIRI);
   }
 
+  private async _isSubClassOfDirect(sub: string, sup: string): Promise<boolean> {
+    return (await this._callDirect("isSubClassOf", [sub, sup])) as boolean;
+  }
+
+  private async _isInstanceOfDirect(indi: string, cls: string): Promise<boolean> {
+    return (await this._callDirect("isInstanceOf", [indi, cls])) as boolean;
+  }
+
+  private async _isSatisfiableClassDirect(cls: string): Promise<boolean> {
+    return (await this._callDirect("isSatisfiableClass", [cls])) as boolean;
+  }
+
   // -------------------------------------------------------------------------
   // explain()
   // -------------------------------------------------------------------------

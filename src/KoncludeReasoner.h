@@ -43,6 +43,10 @@ public:
     // Returns newline-delimited unsatisfiable class IRIs (empty string if none or not classified).
     std::string buildUnsatisfiableClassBuffer();
 
+    bool isSubClassOf(const std::string& subIri, const std::string& superIri);
+    bool isInstanceOf(const std::string& individualIri, const std::string& classIri);
+    bool isSatisfiableClass(const std::string& classIri);
+
     void reset();
 
 private:
