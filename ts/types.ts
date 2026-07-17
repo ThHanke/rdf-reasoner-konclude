@@ -193,3 +193,80 @@ export interface ReasoningResult {
    */
   consistent?: boolean;
 }
+
+/**
+ * Constructor options for RdfReasoner.
+ */
+export interface RdfReasonerOptions {
+  /** Optional URL to the worker script. When absent, uses import.meta.url resolution. */
+  workerUrl?: string | URL;
+}
+
+/**
+ * Result returned by `explainEntailment()`.
+ */
+export interface EntailmentResult {
+  /**
+   * Whether the triple is entailed by the ontology.
+   * `null` when the ontology is already inconsistent (vacuous entailment).
+   */
+  isEntailed: boolean | null;
+  /**
+   * Minimal justifications — each is a subset of the ontology's base axioms
+   * that alone entails the target triple. Empty when `isEntailed` is false,
+   * null, or when the entailment is vacuously true.
+   */
+  justifications: Quad[][];
+  /** Set to `true` when the ontology is already inconsistent. */
+  ontologyInconsistent?: boolean;
+  /** Set to `true` when entailment holds but only vacuously (subject class unsatisfiable). */
+  vacuous?: boolean;
+  /** Human-readable explanation of a special case (inconsistent / vacuous). */
+  reason?: string;
+}
+
+/**
+ * A single part of a laconic justification.
+ */
+export interface LaconicPart {
+  /** The laconic part's principal triple. */
+  quad: Quad;
+  /** The original axiom's principal triple that this part was derived from. */
+  sourceQuad: Quad;
+  /** True when this part is strictly smaller than its source axiom. */
+  isPartOf: boolean;
+}
+
+/**
+ * A laconic justification for an inconsistency.
+ */
+export interface LaconicJustification {
+  /** The laconic parts — minimal sub-axioms that together drive the clash. */
+  parts: LaconicPart[];
+  /** True when at least one part is a strict sub-axiom of its source. */
+  sharpened: boolean;
+  /** True when the cost cap was exceeded and laconic post-processing was skipped. */
+  skipped: boolean;
+}
+
+/**
+ * Options controlling how `explainInconsistencyLaconic()` operates.
+ */
+export interface LaconicExplainOptions extends ExplainOptions {
+  /** Maximum number of axioms in a justification before skipping laconic post-processing. Defaults to 20. */
+  laconicMaxAxioms?: number;
+  /** Maximum number of total parts before skipping laconic post-processing. Defaults to 40. */
+  laconicMaxParts?: number;
+}
+
+/**
+ * Options controlling how `explainEntailment()` operates.
+ */
+export interface ExplainEntailmentOptions extends ExplainOptions {
+  /**
+   * Treat the object IRI as class-like (owl:Class / named class).
+   * When `false`, the method falls back to "unsupported" for non-type predicates.
+   * Defaults to `true`.
+   */
+  objectIsClassLike?: boolean;
+}
