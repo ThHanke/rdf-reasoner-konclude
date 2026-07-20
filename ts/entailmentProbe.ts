@@ -5,8 +5,20 @@ const RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
 const RDFS_SUBCLASSOF = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
 const OWL_CLASS = "http://www.w3.org/2002/07/owl#Class";
 const OWL_COMPLEMENT_OF = "http://www.w3.org/2002/07/owl#complementOf";
+const OWL_SAME_AS = "http://www.w3.org/2002/07/owl#sameAs";
+const OWL_EQUIVALENT_PROPERTY = "http://www.w3.org/2002/07/owl#equivalentProperty";
+const OWL_DISJOINT_WITH = "http://www.w3.org/2002/07/owl#disjointWith";
+const OWL_EQUIVALENT_CLASS = "http://www.w3.org/2002/07/owl#equivalentClass";
 
-export type ProbeKind = "subClassOf" | "type" | "unsupported";
+export type ProbeKind =
+  | "subClassOf"
+  | "type"
+  | "sameAs"
+  | "equivalentProperty"
+  | "disjointWith"
+  | "equivalentClass"
+  | "dataProperty"
+  | "unsupported";
 
 export interface ProbePlan {
   kind: ProbeKind;
@@ -23,9 +35,15 @@ export function classifyAxiom(
   predicateIri: string,
   objectIsClassLike: boolean,
 ): ProbeKind {
-  if (!objectIsClassLike) return "unsupported";
+  if (predicateIri === OWL_SAME_AS) return "sameAs";
+  if (predicateIri === OWL_EQUIVALENT_PROPERTY) return "equivalentProperty";
+
+  if (!objectIsClassLike) return "dataProperty";
+
   if (predicateIri === RDFS_SUBCLASSOF) return "subClassOf";
   if (predicateIri === RDF_TYPE) return "type";
+  if (predicateIri === OWL_DISJOINT_WITH) return "disjointWith";
+  if (predicateIri === OWL_EQUIVALENT_CLASS) return "equivalentClass";
   return "unsupported";
 }
 
@@ -42,9 +60,16 @@ export function buildEntailmentProbe(
       kind,
       probeQuads: [],
       probeKeys: new Set(),
-      reason: objectIsClassLike
-        ? `predicate ${predicateIri} is not a supported entailment shape`
-        : "object is a literal; the entailment reduction requires an IRI object",
+      reason: `predicate ${predicateIri} is not a supported entailment shape`,
+    };
+  }
+
+  if (kind !== "subClassOf" && kind !== "type") {
+    return {
+      kind,
+      probeQuads: [],
+      probeKeys: new Set(),
+      reason: `${kind} entailments use TS synthesis, not the BlackBox probe path`,
     };
   }
 
@@ -56,7 +81,13 @@ export function buildEntailmentProbe(
 
   const quads: Quad[] = [];
   const keys = new Set<string>();
-  const push = (s: ReturnType<typeof namedNode> | ReturnType<typeof blankNode>, sKey: string, p: string, o: ReturnType<typeof namedNode> | ReturnType<typeof blankNode>, oKey: string): void => {
+  const push = (
+    s: ReturnType<typeof namedNode> | ReturnType<typeof blankNode>,
+    sKey: string,
+    p: string,
+    o: ReturnType<typeof namedNode> | ReturnType<typeof blankNode>,
+    oKey: string,
+  ): void => {
     quads.push(quad(s as any, namedNode(p) as any, o as any, g) as Quad);
     keys.add(tripleKey(sKey, p, oKey));
   };

@@ -392,6 +392,45 @@ const justs = await reasoner.explain(store, quad, { maxJustifications: 3 });
 // justs: Quad[][] — each inner array is one minimal justification
 ```
 
+### Explaining an entailment triple (`explainEntailment`)
+
+`explainEntailment` explains why a specific triple is entailed by the ontology.
+It uses native justification synthesis where possible (~1ms), falling back to the
+BlackBox algorithm (5-13s) only for `rdfs:subClassOf` and `rdf:type` when the
+native cache misses.
+
+```typescript
+const result = await reasoner.explainEntailment(
+  store,
+  "http://example.org/alice",
+  "http://www.w3.org/1999/02/22-rdf-syntax-ns#type",
+  "http://example.org/Animal",
+);
+// result.isEntailed — true/false/null (null when ontology is inconsistent)
+// result.justifications — Quad[][], each is a set of axioms explaining the entailment
+```
+
+**Supported entailment types:**
+
+| Predicate | Method | Speed |
+|-----------|--------|-------|
+| `rdfs:subClassOf` | Native dep-chain cache | ~1ms |
+| `rdf:type` | Native (via subClassOf chain) | ~1ms |
+| `owl:sameAs` | TS synthesis (FP/IFP pattern) | <1ms |
+| `owl:equivalentProperty` | TS synthesis (asserted lookup) | <1ms |
+| `owl:equivalentClass` | TS synthesis (asserted lookup) | <1ms |
+| `owl:disjointWith` | TS synthesis (asserted lookup) | <1ms |
+| Data properties | Asserted-triple lookup | <1ms |
+
+**Options:**
+
+- `nativeOnly: true` — skip BlackBox fallback entirely. If the native path misses,
+  returns `isEntailed: true` with empty justifications instead of re-reasoning.
+- `objectIsClassLike: false` — treat the object as a non-class entity (e.g., literal).
+  Enables data property explanation.
+- `maxJustifications` — maximum number of justifications to return (default: 1).
+  Only applies to the BlackBox path; native/synthesis paths return at most one.
+
 ### Diagnosing an inconsistency (`explainInconsistency`)
 
 Returns minimal inconsistent sub-ontologies (MIPS). Returns `[]` on consistent ontologies.
