@@ -20,6 +20,8 @@ export interface KoncludeReasonerInstance {
   isSubClassOf(subIri: string, superIri: string): boolean;
   isInstanceOf(individualIri: string, classIri: string): boolean;
   isSatisfiableClass(classIri: string): boolean;
+  getSubClassJustification(subIri: string, superIri: string): string;
+  hasNativeJustification(subIri: string, superIri: string): boolean;
   reset(): void;
   /** Release Embind-managed C++ memory. Must be called when done. */
   delete(): void;
