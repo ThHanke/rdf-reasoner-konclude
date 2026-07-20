@@ -40,6 +40,8 @@ interface KoncludeReasonerInstance {
   isSubClassOf(sub: string, sup: string): boolean;
   isInstanceOf(indi: string, cls: string): boolean;
   isSatisfiableClass(cls: string): boolean;
+  getSubClassJustification(sub: string, sup: string): string;
+  hasNativeJustification(sub: string, sup: string): boolean;
   delete?(): void;
 }
 
@@ -162,6 +164,12 @@ export function createInlineWorker(koncludeModuleUrl: string | URL): Worker {
           break;
         case "isSatisfiableClass":
           result = r.isSatisfiableClass(args[0] as string);
+          break;
+        case "getSubClassJustification":
+          result = r.getSubClassJustification(args[0] as string, args[1] as string);
+          break;
+        case "hasNativeJustification":
+          result = r.hasNativeJustification(args[0] as string, args[1] as string);
           break;
         default:
           emit("message", { data: { id, error: `Unknown method: ${method}` } });

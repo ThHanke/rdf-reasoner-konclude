@@ -18,5 +18,7 @@ EMSCRIPTEN_BINDINGS(konclude) {
         .function("isSubClassOf",                     &KoncludeReasoner::isSubClassOf)
         .function("isInstanceOf",                     &KoncludeReasoner::isInstanceOf)
         .function("isSatisfiableClass",               &KoncludeReasoner::isSatisfiableClass)
+        .function("getSubClassJustification",         &KoncludeReasoner::getSubClassJustification)
+        .function("hasNativeJustification",           &KoncludeReasoner::hasNativeJustification)
         .function("reset",                            &KoncludeReasoner::reset);
 }
