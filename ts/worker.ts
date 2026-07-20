@@ -183,6 +183,14 @@ export async function handleMessage(
         result = reasoner.isSatisfiableClass(args[0] as string);
         break;
       }
+      case "getSubClassJustification": {
+        result = reasoner.getSubClassJustification(args[0] as string, args[1] as string);
+        break;
+      }
+      case "hasNativeJustification": {
+        result = reasoner.hasNativeJustification(args[0] as string, args[1] as string);
+        break;
+      }
       default: {
         const response: WorkerResponse = {
           id,

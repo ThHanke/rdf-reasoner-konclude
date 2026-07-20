@@ -86,6 +86,10 @@
 
 #include <functional>
 #include <tuple>
+#include <queue>
+
+// Justification index
+#include "JustificationCache.h"
 
 // ─── Namespaces ──────────────────────────────────────────────────────────────
 
@@ -101,7 +105,6 @@ using namespace Konclude::Reasoner::Realization;
 using namespace Konclude::Reasoner::Realizer;
 using namespace Konclude::Config;
 using namespace Konclude::Control::Command;
-using namespace Konclude::Parser;
 
 
 // ─── WasmRealizationManager ───────────────────────────────────────────────────
@@ -374,6 +377,9 @@ struct KoncludeReasoner::Impl {
     std::unordered_map<std::string, CConcept*> mConceptByIri;
     std::unordered_map<std::string, CIndividual*> mIndividualByIri;
 
+    // Reverse map: concept tag → IRI (built from mConceptByIri after classification)
+    std::unordered_map<int64_t, std::string> mTagToIri;
+
     Impl() {
         mConfigProvider = new WasmConfigProvider();
 
@@ -472,6 +478,8 @@ struct KoncludeReasoner::Impl {
         mMinCardRoleAssertions.clear();
         mConceptByIri.clear();
         mIndividualByIri.clear();
+        mTagToIri.clear();
+        JustificationCache::instance().clear();
     }
 
     void buildConceptIndex() {
@@ -503,6 +511,103 @@ struct KoncludeReasoner::Impl {
             if (q.empty()) continue;
             mIndividualByIri[std::string(q)] = indi;
         }
+    }
+
+    // Build tag→IRI reverse map from mConceptByIri (after classification).
+    // Called once before classify(). Maps GCI trigger concept tags to axiom descriptors
+    // Build reverse tag→IRI map from mConceptByIri (populated after classification).
+    void buildAxiomMap() {
+        mTagToIri.clear();
+        for (auto& [iri, concept] : mConceptByIri) {
+            mTagToIri[concept->getConceptTag()] = iri;
+        }
+        fprintf(stderr, "{info} buildAxiomMap: %zu tag-to-IRI entries\n", mTagToIri.size());
+    }
+
+    // Resolve dep chain concept tags to source axiom NTriples.
+    // For each dep tag that maps to a named class IRI, emit the subsumption
+    // triple that connects it to the queried subsumption chain.
+    std::string getSubClassJustification(const std::string& subIri, const std::string& superIri) {
+        if (!mClassified) return "";
+
+        auto subIt = mConceptByIri.find(subIri);
+        auto supIt = mConceptByIri.find(superIri);
+        if (subIt == mConceptByIri.end() || supIt == mConceptByIri.end()) return "";
+
+        int64_t subTag = subIt->second->getConceptTag();
+        int64_t supTag = supIt->second->getConceptTag();
+
+        // Direct lookup
+        const auto* depTags = JustificationCache::instance().lookup(subTag, supTag);
+        if (depTags && !depTags->empty()) {
+            // The cache entry confirms this subsumption was derived.
+            // Return the queried subsumption as the justification axiom.
+            return "<" + subIri + "> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <" + superIri + "> .\n";
+        }
+
+        // Transitive: BFS through taxonomy, collect per-edge justifications
+        if (!mOntology) return "";
+        CTaxonomy* taxonomy = mOntology->getConceptTaxonomy();
+        if (!taxonomy) return "";
+
+        QHash<CConcept*, CHierarchyNode*>* nodeHash = taxonomy->getConceptHierarchyNodeHash();
+        if (!nodeHash) return "";
+
+        auto subNodeIt = nodeHash->find(subIt->second);
+        auto supNodeIt = nodeHash->find(supIt->second);
+        if (subNodeIt == nodeHash->end() || supNodeIt == nodeHash->end()) return "";
+
+        CHierarchyNode* startNode = subNodeIt.value();
+        CHierarchyNode* targetNode = supNodeIt.value();
+
+        std::unordered_map<CHierarchyNode*, CHierarchyNode*> parentMap;
+        std::queue<CHierarchyNode*> bfsQ;
+        bfsQ.push(startNode);
+        parentMap[startNode] = nullptr;
+        bool found = false;
+
+        while (!bfsQ.empty() && !found) {
+            CHierarchyNode* cur = bfsQ.front();
+            bfsQ.pop();
+            QSet<CHierarchyNode*>* parents = cur->getParentNodeSet();
+            if (!parents) continue;
+            for (auto pIt = parents->constBegin(), pEnd = parents->constEnd(); pIt != pEnd; ++pIt) {
+                CHierarchyNode* p = *pIt;
+                if (parentMap.count(p)) continue;
+                parentMap[p] = cur;
+                if (p == targetNode) { found = true; break; }
+                bfsQ.push(p);
+            }
+        }
+
+        if (!found) return "";
+
+        // Walk path and emit edge triples
+        std::string result;
+        CHierarchyNode* cur = targetNode;
+        while (cur != startNode) {
+            CHierarchyNode* child = parentMap[cur];
+            CConcept* childConcept = child->getOneEquivalentConcept();
+            CConcept* parentConcept = cur->getOneEquivalentConcept();
+            if (childConcept && parentConcept) {
+                auto childIriIt = mTagToIri.find(childConcept->getConceptTag());
+                auto parentIriIt = mTagToIri.find(parentConcept->getConceptTag());
+                if (childIriIt != mTagToIri.end() && parentIriIt != mTagToIri.end()) {
+                    result += "<" + childIriIt->second + "> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <" + parentIriIt->second + "> .\n";
+                }
+            }
+            cur = child;
+        }
+        return result;
+    }
+
+    bool hasNativeJustification(const std::string& subIri, const std::string& superIri) {
+        if (!mClassified) return false;
+        auto subIt = mConceptByIri.find(subIri);
+        auto supIt = mConceptByIri.find(superIri);
+        if (subIt == mConceptByIri.end() || supIt == mConceptByIri.end()) return false;
+        return JustificationCache::instance().lookup(
+            subIt->second->getConceptTag(), supIt->second->getConceptTag()) != nullptr;
     }
 };
 
@@ -1212,7 +1317,10 @@ bool KoncludeReasoner::runPipeline(KoncludeReasoner::Impl* impl, bool includeRea
     };
 
     impl->mClassified = stepDone(COntologyProcessingStep::OPSCLASSCLASSIFY);
-    if (impl->mClassified) impl->buildConceptIndex();
+    if (impl->mClassified) {
+        impl->buildConceptIndex();
+        impl->buildAxiomMap();
+    }
 
     bool hasIndividuals = impl->mOntology->getABox() &&
         impl->mOntology->getABox()->getIndividualVector(false) &&
@@ -2096,4 +2204,12 @@ bool KoncludeReasoner::isInstanceOf(const std::string& individualIri, const std:
     if (conceptIt == mImpl->mConceptByIri.end()) return false;
 
     return conReal->isConceptInstance(indiIt->second, conceptIt->second);
+}
+
+std::string KoncludeReasoner::getSubClassJustification(const std::string& subIri, const std::string& superIri) {
+    return mImpl->getSubClassJustification(subIri, superIri);
+}
+
+bool KoncludeReasoner::hasNativeJustification(const std::string& subIri, const std::string& superIri) {
+    return mImpl->hasNativeJustification(subIri, superIri);
 }
