@@ -1070,6 +1070,14 @@ export class RdfReasoner {
     return (await this._callDirect("isSatisfiableClass", [cls])) as boolean;
   }
 
+  private async _getSubClassJustificationDirect(sub: string, sup: string): Promise<string> {
+    return (await this._callDirect("getSubClassJustification", [sub, sup])) as string;
+  }
+
+  private async _hasNativeJustificationDirect(sub: string, sup: string): Promise<boolean> {
+    return (await this._callDirect("hasNativeJustification", [sub, sup])) as boolean;
+  }
+
   // -------------------------------------------------------------------------
   // explain()
   // -------------------------------------------------------------------------
@@ -1636,6 +1644,29 @@ export class RdfReasoner {
 
       if (maxJustifications === 0) {
         return { isEntailed: true, justifications: [] as Quad[][] };
+      }
+
+      // Native justification fast-path: if the dep chain cache has data
+      // for this subsumption, return it directly (O(1)) instead of running
+      // the expensive BlackBox HSDAG algorithm.
+      if (probe.kind === "subClassOf") {
+        const ntriples = await this._getSubClassJustificationDirect(subjectIri, objectIri);
+        if (ntriples.length > 0) {
+          const justQuads: Quad[] = [];
+          for (const line of ntriples.split('\n')) {
+            const m = line.match(/^<([^>]+)>\s+<([^>]+)>\s+<([^>]+)>\s*\.$/);
+            if (m) {
+              justQuads.push(DataFactory.quad(
+                DataFactory.namedNode(m[1]),
+                DataFactory.namedNode(m[2]),
+                DataFactory.namedNode(m[3]),
+              ));
+            }
+          }
+          if (justQuads.length > 0) {
+            return { isEntailed: true, justifications: [justQuads] };
+          }
+        }
       }
 
       // Invalidate caches — sub-calls modify WASM state

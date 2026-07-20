@@ -47,6 +47,10 @@ public:
     bool isInstanceOf(const std::string& individualIri, const std::string& classIri);
     bool isSatisfiableClass(const std::string& classIri);
 
+    // Justification queries — O(1) lookup from dep chain cache
+    std::string getSubClassJustification(const std::string& subIri, const std::string& superIri);
+    bool hasNativeJustification(const std::string& subIri, const std::string& superIri);
+
     void reset();
 
 private:

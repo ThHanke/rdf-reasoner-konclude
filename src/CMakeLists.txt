@@ -248,6 +248,12 @@ list(APPEND KERNEL_SOURCES
     "${OVERRIDE_DIR}/CClassificationManager.cpp"
 )
 
+# Classification message analyser override: walks dep chain during subsumer
+# extraction to capture justification data (IMPLICATION dep node concept tags)
+# before task memory is released.
+list(FILTER KERNEL_SOURCES EXCLUDE REGEX ".*/Algorithm/CSatisfiableTaskClassificationMessageAnalyser\\.cpp$")
+list(APPEND KERNEL_SOURCES "${OVERRIDE_DIR}/CSatisfiableTaskClassificationMessageAnalyser.cpp")
+
 # ---------------------------------------------------------------------------
 # 3. Static library: konclude_kernel
 # ---------------------------------------------------------------------------
@@ -278,6 +284,8 @@ target_include_directories(konclude_kernel
         "${CMAKE_SOURCE_DIR}/src/compat"
         # Konclude source root (for intra-project includes)
         "${CMAKE_SOURCE_DIR}/vendor/konclude/Source"
+        # src/ for JustificationCache.h
+        "${CMAKE_SOURCE_DIR}/src"
 )
 
 # Force-include QtCompat.h before all translation units so that Qt type

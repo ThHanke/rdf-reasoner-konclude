@@ -164,6 +164,8 @@ function mockEntailmentViaProbe(consistencyThreshold: number, isSatisfiableClass
       simulateWorkerMessage({ id: req.id, result: consistent });
     } else if (req.method === "isSatisfiableClass") {
       simulateWorkerMessage({ id: req.id, result: isSatisfiableClass });
+    } else if (req.method === "getSubClassJustification") {
+      simulateWorkerMessage({ id: req.id, result: "" });
     } else if (req.method === "getInferredTripleBuffer") {
       simulateWorkerMessage({ id: req.id, result: buildCombinedBuffer([]) });
     }
