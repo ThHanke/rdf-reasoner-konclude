@@ -291,7 +291,11 @@ describe("RdfReasoner — explainEntailment", () => {
     );
 
     expect(result.isEntailed).toBe(true);
-    expect(result.justifications).toEqual([]);
+    expect(result.justifications.length).toBe(1);
+    expect(result.justifications[0].length).toBe(1);
+    expect(result.justifications[0][0].subject.value).toBe(A.value);
+    expect(result.justifications[0][0].predicate.value).toBe(skosLabel);
+    expect(result.justifications[0][0].object.value).toBe(B.value);
   });
 
   // -------------------------------------------------------------------------
