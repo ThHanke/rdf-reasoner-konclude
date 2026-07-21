@@ -273,4 +273,19 @@ export interface ExplainEntailmentOptions extends ExplainOptions {
    * Defaults to `true`.
    */
   objectIsClassLike?: boolean;
+  /**
+   * @deprecated Use `justificationMode: "causal"` instead. When both are set,
+   * `justificationMode` takes precedence.
+   */
+  nativeOnly?: boolean;
+  /**
+   * Controls how justifications are computed.
+   *
+   * - `"causal"` (default): uses native dep-chain cache and TS synthesis.
+   *   Returns the causal proof path (~1ms). If the native path misses,
+   *   returns `isEntailed: true` with empty justifications.
+   * - `"minimal"`: uses the BlackBox algorithm (axiom-removal + WASM reload)
+   *   to find a guaranteed-minimal axiom set. Slower (5-13s per call).
+   */
+  justificationMode?: "causal" | "minimal";
 }

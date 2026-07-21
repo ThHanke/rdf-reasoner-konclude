@@ -278,6 +278,9 @@ if(WASM_PRECOMP_VERBOSE)
   target_compile_definitions(konclude_kernel PRIVATE WASM_PRECOMP_VERBOSE)
 endif()
 
+# IU-A3: clash-path justification hook — extract dep chains from tableau catch blocks
+target_compile_definitions(konclude_kernel PRIVATE WASM_JUSTIFICATION_HOOK)
+
 target_include_directories(konclude_kernel
     PUBLIC
         # Qt-free compatibility shim (added in Unit 3)

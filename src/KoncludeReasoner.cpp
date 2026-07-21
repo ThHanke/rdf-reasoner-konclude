@@ -91,6 +91,18 @@
 // Justification index
 #include "JustificationCache.h"
 
+// Axiom reverse mapping (IU-A1): expression→axiom hashes
+#include "Reasoner/Ontology/CExpressionDataBoxMapping.h"
+#include "Parser/Expressions/CClassExpression.h"
+#include "Parser/Expressions/CSubClassOfExpression.h"
+#include "Parser/Expressions/CEquivalentClassesExpression.h"
+#include "Parser/Expressions/CDisjointClassesExpression.h"
+#include "Parser/Expressions/CObjectPropertyExpression.h"
+#include "Parser/Expressions/CSubObjectPropertyOfExpression.h"
+#include "Parser/Expressions/CEquivalentObjectPropertiesExpression.h"
+#include "Parser/Expressions/CObjectPropertyDomainExpression.h"
+#include "Parser/Expressions/CObjectPropertyRangeExpression.h"
+
 // ─── Namespaces ──────────────────────────────────────────────────────────────
 
 using namespace Konclude;
@@ -105,6 +117,7 @@ using namespace Konclude::Reasoner::Realization;
 using namespace Konclude::Reasoner::Realizer;
 using namespace Konclude::Config;
 using namespace Konclude::Control::Command;
+using namespace Konclude::Parser::Expression;
 
 
 // ─── WasmRealizationManager ───────────────────────────────────────────────────
@@ -379,6 +392,11 @@ struct KoncludeReasoner::Impl {
 
     // Reverse map: concept tag → IRI (built from mConceptByIri after classification)
     std::unordered_map<int64_t, std::string> mTagToIri;
+    // IU-A1: reverse map tag → CConcept*/CRole* for axiom lookup
+    std::unordered_map<int64_t, CConcept*> mTagToConcept;
+    std::unordered_map<int64_t, CRole*> mTagToRole;
+    std::unordered_map<int64_t, std::string> mRoleTagToIri;
+    std::unordered_map<std::string, CRole*> mRoleByIri;
 
     Impl() {
         mConfigProvider = new WasmConfigProvider();
@@ -479,6 +497,10 @@ struct KoncludeReasoner::Impl {
         mConceptByIri.clear();
         mIndividualByIri.clear();
         mTagToIri.clear();
+        mTagToConcept.clear();
+        mTagToRole.clear();
+        mRoleTagToIri.clear();
+        mRoleByIri.clear();
         JustificationCache::instance().clear();
     }
 
@@ -518,10 +540,37 @@ struct KoncludeReasoner::Impl {
     // Build reverse tag→IRI map from mConceptByIri (populated after classification).
     void buildAxiomMap() {
         mTagToIri.clear();
+        mTagToConcept.clear();
         for (auto& [iri, concept] : mConceptByIri) {
-            mTagToIri[concept->getConceptTag()] = iri;
+            int64_t tag = concept->getConceptTag();
+            mTagToIri[tag] = iri;
+            mTagToConcept[tag] = concept;
         }
         fprintf(stderr, "{info} buildAxiomMap: %zu tag-to-IRI entries\n", mTagToIri.size());
+        buildRoleIndex();
+    }
+
+    void buildRoleIndex() {
+        mTagToRole.clear();
+        mRoleTagToIri.clear();
+        mRoleByIri.clear();
+        if (!mOntology) return;
+        auto* mapping = mOntology->getDataBoxes()->getExpressionDataBoxMapping();
+        if (!mapping) return;
+        auto* roleHash = mapping->getRoleObjectPropertyTermMappingHash();
+        if (!roleHash) return;
+        for (auto it = roleHash->constBegin(), end = roleHash->constEnd(); it != end; ++it) {
+            CRole* role = it.key();
+            if (!role) continue;
+            auto* propExpr = dynamic_cast<CObjectPropertyExpression*>(it.value());
+            if (!propExpr) continue;
+            int64_t tag = role->getRoleTag();
+            mTagToRole[tag] = role;
+            std::string iri(propExpr->getName());
+            mRoleTagToIri[tag] = iri;
+            mRoleByIri[iri] = role;
+        }
+        fprintf(stderr, "{info} buildRoleIndex: %zu role-tag-to-IRI entries\n", mRoleTagToIri.size());
     }
 
     // Resolve dep chain concept tags to source axiom NTriples.
@@ -608,6 +657,221 @@ struct KoncludeReasoner::Impl {
         if (subIt == mConceptByIri.end() || supIt == mConceptByIri.end()) return false;
         return JustificationCache::instance().lookup(
             subIt->second->getConceptTag(), supIt->second->getConceptTag()) != nullptr;
+    }
+
+    std::string getJustificationByType(const std::string& subIri, const std::string& superIri, int type) {
+        if (!mClassified) return "";
+        auto et = static_cast<JustificationCache::EntailmentType>(type);
+
+        int64_t subTag = -1, supTag = -1;
+        if (et == JustificationCache::PropertySubsumption) {
+            auto subIt = mRoleByIri.find(subIri);
+            auto supIt = mRoleByIri.find(superIri);
+            if (subIt == mRoleByIri.end() || supIt == mRoleByIri.end()) return "";
+            subTag = subIt->second->getRoleTag();
+            supTag = supIt->second->getRoleTag();
+        } else {
+            auto subIt = mConceptByIri.find(subIri);
+            auto supIt = mConceptByIri.find(superIri);
+            if (subIt == mConceptByIri.end() || supIt == mConceptByIri.end()) return "";
+            subTag = subIt->second->getConceptTag();
+            supTag = supIt->second->getConceptTag();
+        }
+
+        const auto* depTags = JustificationCache::instance().lookup(subTag, supTag, et);
+        if (!depTags || depTags->empty()) return "";
+
+        std::string result;
+        for (int64_t tag : *depTags) {
+            std::string axioms;
+            if (et == JustificationCache::PropertySubsumption) {
+                axioms = getAxiomsForRoleTag(tag);
+            } else {
+                axioms = getAxiomsForConceptTag(tag);
+            }
+            if (!axioms.empty()) result += axioms;
+        }
+        return result;
+    }
+
+    bool hasJustificationByType(const std::string& subIri, const std::string& superIri, int type) {
+        if (!mClassified) return false;
+        auto et = static_cast<JustificationCache::EntailmentType>(type);
+
+        int64_t subTag = -1, supTag = -1;
+        if (et == JustificationCache::PropertySubsumption) {
+            auto subIt = mRoleByIri.find(subIri);
+            auto supIt = mRoleByIri.find(superIri);
+            if (subIt == mRoleByIri.end() || supIt == mRoleByIri.end()) return false;
+            subTag = subIt->second->getRoleTag();
+            supTag = supIt->second->getRoleTag();
+        } else {
+            auto subIt = mConceptByIri.find(subIri);
+            auto supIt = mConceptByIri.find(superIri);
+            if (subIt == mConceptByIri.end() || supIt == mConceptByIri.end()) return false;
+            subTag = subIt->second->getConceptTag();
+            supTag = supIt->second->getConceptTag();
+        }
+
+        return JustificationCache::instance().lookup(subTag, supTag, et) != nullptr;
+    }
+
+    // IU-A1: Axiom reverse mapping — concept tag → source axiom NTriples
+    std::string getAxiomsForConceptTag(int64_t tag) {
+        if (!mClassified || !mOntology) return "";
+
+        auto cit = mTagToConcept.find(tag);
+        if (cit == mTagToConcept.end()) return "";
+        CConcept* concept = cit->second;
+
+        auto* mapping = mOntology->getDataBoxes()->getExpressionDataBoxMapping();
+        if (!mapping) return "";
+
+        auto* c2ctHash = mapping->getConceptClassTermMappingHash();
+        if (!c2ctHash || !c2ctHash->contains(concept)) return "";
+        CClassTermExpression* classTermExpr = c2ctHash->value(concept);
+
+        auto* ct2axHash = mapping->getClassTermExpressionClassAxiomExpressionHash();
+        if (!ct2axHash) return "";
+        QList<CClassAxiomExpression*> axioms = ct2axHash->values(classTermExpr);
+
+        std::string result;
+        for (CClassAxiomExpression* axiom : axioms) {
+            if (!axiom) continue;
+
+            if (auto* sc = dynamic_cast<CSubClassOfExpression*>(axiom)) {
+                auto* sub = dynamic_cast<CClassExpression*>(sc->getSubClassTermExpression());
+                auto* sup = dynamic_cast<CClassExpression*>(sc->getSuperClassTermExpression());
+                if (sub && sup) {
+                    result += "<" + std::string(sub->getName()) +
+                        "> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <" +
+                        std::string(sup->getName()) + "> .\n";
+                }
+                continue;
+            }
+
+            if (auto* eq = dynamic_cast<CEquivalentClassesExpression*>(axiom)) {
+                auto* list = eq->getClassTermExpressionList();
+                if (list && list->size() >= 2) {
+                    for (int i = 0; i < (int)list->size(); ++i) {
+                        for (int j = i + 1; j < (int)list->size(); ++j) {
+                            auto* a = dynamic_cast<CClassExpression*>((*list)[i]);
+                            auto* b = dynamic_cast<CClassExpression*>((*list)[j]);
+                            if (a && b) {
+                                result += "<" + std::string(a->getName()) +
+                                    "> <http://www.w3.org/2002/07/owl#equivalentClass> <" +
+                                    std::string(b->getName()) + "> .\n";
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
+
+            if (auto* dj = dynamic_cast<CDisjointClassesExpression*>(axiom)) {
+                auto* list = dj->getClassTermExpressionList();
+                if (list && list->size() >= 2) {
+                    for (int i = 0; i < (int)list->size(); ++i) {
+                        for (int j = i + 1; j < (int)list->size(); ++j) {
+                            auto* a = dynamic_cast<CClassExpression*>((*list)[i]);
+                            auto* b = dynamic_cast<CClassExpression*>((*list)[j]);
+                            if (a && b) {
+                                result += "<" + std::string(a->getName()) +
+                                    "> <http://www.w3.org/2002/07/owl#disjointWith> <" +
+                                    std::string(b->getName()) + "> .\n";
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
+        }
+        return result;
+    }
+
+    // IU-A1: Axiom reverse mapping — role tag → source axiom NTriples
+    std::string getAxiomsForRoleTag(int64_t tag) {
+        if (!mClassified || !mOntology) return "";
+
+        auto rit = mTagToRole.find(tag);
+        if (rit == mTagToRole.end()) return "";
+        CRole* role = rit->second;
+
+        auto* mapping = mOntology->getDataBoxes()->getExpressionDataBoxMapping();
+        if (!mapping) return "";
+
+        auto* r2optHash = mapping->getRoleObjectPropertyTermMappingHash();
+        if (!r2optHash || !r2optHash->contains(role)) return "";
+        CObjectPropertyTermExpression* propTermExpr = r2optHash->value(role);
+
+        auto* opt2axHash = mapping->getObjectPropertyTermObjectPropertyAxiomHash();
+        if (!opt2axHash) return "";
+        QList<CObjectPropertyAxiomExpression*> axioms = opt2axHash->values(propTermExpr);
+
+        std::string result;
+        for (CObjectPropertyAxiomExpression* axiom : axioms) {
+            if (!axiom) continue;
+
+            if (auto* sp = dynamic_cast<CSubObjectPropertyOfExpression*>(axiom)) {
+                auto* sup = dynamic_cast<CObjectPropertyExpression*>(
+                    sp->getSuperObjectPropertyTermExpression());
+                auto* subList = sp->getSubObjectPropertyTermExpressionList();
+                if (sup && subList && subList->size() == 1) {
+                    auto* sub = dynamic_cast<CObjectPropertyExpression*>((*subList)[0]);
+                    if (sub) {
+                        result += "<" + std::string(sub->getName()) +
+                            "> <http://www.w3.org/2000/01/rdf-schema#subPropertyOf> <" +
+                            std::string(sup->getName()) + "> .\n";
+                    }
+                }
+                continue;
+            }
+
+            if (auto* ep = dynamic_cast<CEquivalentObjectPropertiesExpression*>(axiom)) {
+                auto* list = ep->getObjectPropertyTermExpressionList();
+                if (list && list->size() >= 2) {
+                    for (int i = 0; i < (int)list->size(); ++i) {
+                        for (int j = i + 1; j < (int)list->size(); ++j) {
+                            auto* a = dynamic_cast<CObjectPropertyExpression*>((*list)[i]);
+                            auto* b = dynamic_cast<CObjectPropertyExpression*>((*list)[j]);
+                            if (a && b) {
+                                result += "<" + std::string(a->getName()) +
+                                    "> <http://www.w3.org/2002/07/owl#equivalentProperty> <" +
+                                    std::string(b->getName()) + "> .\n";
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
+
+            if (auto* dom = dynamic_cast<CObjectPropertyDomainExpression*>(axiom)) {
+                auto* prop = dynamic_cast<CObjectPropertyExpression*>(
+                    dom->getObjectPropertyTermExpression());
+                auto* cls = dynamic_cast<CClassExpression*>(
+                    dom->getClassTermExpression());
+                if (prop && cls) {
+                    result += "<" + std::string(prop->getName()) +
+                        "> <http://www.w3.org/2000/01/rdf-schema#domain> <" +
+                        std::string(cls->getName()) + "> .\n";
+                }
+                continue;
+            }
+
+            if (auto* rng = dynamic_cast<CObjectPropertyRangeExpression*>(axiom)) {
+                auto* prop = dynamic_cast<CObjectPropertyExpression*>(
+                    rng->getObjectPropertyTermExpression());
+                auto* cls = dynamic_cast<CClassExpression*>(
+                    rng->getClassTermExpression());
+                if (prop && cls) {
+                    result += "<" + std::string(prop->getName()) +
+                        "> <http://www.w3.org/2000/01/rdf-schema#range> <" +
+                        std::string(cls->getName()) + "> .\n";
+                }
+                continue;
+            }
+        }
+        return result;
     }
 };
 
@@ -2212,4 +2476,20 @@ std::string KoncludeReasoner::getSubClassJustification(const std::string& subIri
 
 bool KoncludeReasoner::hasNativeJustification(const std::string& subIri, const std::string& superIri) {
     return mImpl->hasNativeJustification(subIri, superIri);
+}
+
+std::string KoncludeReasoner::getAxiomsForConceptTag(int64_t tag) {
+    return mImpl->getAxiomsForConceptTag(tag);
+}
+
+std::string KoncludeReasoner::getAxiomsForRoleTag(int64_t tag) {
+    return mImpl->getAxiomsForRoleTag(tag);
+}
+
+std::string KoncludeReasoner::getJustificationByType(const std::string& subIri, const std::string& superIri, int type) {
+    return mImpl->getJustificationByType(subIri, superIri, type);
+}
+
+bool KoncludeReasoner::hasJustificationByType(const std::string& subIri, const std::string& superIri, int type) {
+    return mImpl->hasJustificationByType(subIri, superIri, type);
 }

@@ -1,0 +1,138 @@
+--- a/Source/Reasoner/Kernel/Algorithm/CCalculationTableauCompletionTaskHandleAlgorithm.cpp
++++ b/Source/Reasoner/Kernel/Algorithm/CCalculationTableauCompletionTaskHandleAlgorithm.cpp
+@@ -19,6 +19,13 @@
+  */
+ 
+ #include "CCalculationTableauCompletionTaskHandleAlgorithm.h"
++#ifdef WASM_JUSTIFICATION_HOOK
++#include "JustificationCache.h"
++#include "Reasoner/Kernel/Process/Dependency/CDependencyNode.h"
++#include "Reasoner/Kernel/Process/Dependency/CDependencyIterator.h"
++#include "Reasoner/Kernel/Process/Dependency/CDependency.h"
++#include "Reasoner/Kernel/Process/CClashedConceptDescriptor.h"
++#endif
+ 
+ 
+ 
+@@ -1342,6 +1349,60 @@
+ 						} catch (const CClashedConceptDescriptor*& clashConLinker) {
+ 							clashed = true;
+ 							KONCLUCE_TASK_ALGORITHM_MODEL_STRING_INSTRUCTION(mClashedDebugIndiModelString = generateDebugIndiModelStringList(calcAlgContext));
++							#ifdef WASM_JUSTIFICATION_HOOK
++							{
++								CClashedDependencyDescriptor* clashDesc = const_cast<CClashedDependencyDescriptor*>(static_cast<const CClashedDependencyDescriptor*>(clashConLinker));
++								int64_t negConceptTag = -1;
++								CDependencyTrackPoint* proofTP = nullptr;
++								while (clashDesc) {
++									CClashedConceptDescriptor* ccd = dynamic_cast<CClashedConceptDescriptor*>(clashDesc);
++									if (ccd && ccd->getConceptDescriptor() && ccd->getConceptDescriptor()->getConcept()) {
++										if (ccd->getConceptDescriptor()->getNegation()) {
++											negConceptTag = ccd->getConceptDescriptor()->getConcept()->getConceptTag();
++										} else if (!proofTP) {
++											proofTP = clashDesc->getDependencyTrackPoint();
++										}
++									}
++									clashDesc = clashDesc->getNext();
++								}
++								if (negConceptTag >= 0 && proofTP) {
++									std::vector<int64_t> depTags;
++									std::vector<CDependencyTrackPoint*> depStack;
++									depStack.push_back(proofTP);
++									int depth = 0;
++									while (!depStack.empty() && depth < 200) {
++										CDependencyTrackPoint* dp = depStack.back();
++										depStack.pop_back();
++										if (!dp) continue;
++										CDependencyNode* dn = dp->getDependencyNode();
++										if (!dn) continue;
++										CConceptDescriptor* cd = dn->getConceptDescriptor();
++										if (cd && cd->getConcept()) {
++											depTags.push_back(cd->getConcept()->getConceptTag());
++										}
++										CDependencyTrackPoint* prev = dn->getPreviousDependencyTrackPoint();
++										if (prev) depStack.push_back(prev);
++										if (dn->hasAdditionalAfterDependencies()) {
++											CDependencyIterator addIt = dn->getAdditionalDependencyIterator(false, true);
++											while (addIt.hasNext()) {
++												CDependency* addDep = addIt.nextDependency();
++												if (addDep) {
++													CDependencyTrackPoint* addTp = addDep->getPreviousDependencyTrackPoint();
++													if (addTp) depStack.push_back(addTp);
++												}
++											}
++										}
++										depth++;
++									}
++									if (!depTags.empty()) {
++										JustificationCache::instance().insert(
++											negConceptTag, negConceptTag,
++											JustificationCache::Realization,
++											std::move(depTags));
++									}
++								}
++							}
++							#endif
+ 						} catch (const CCalculationClashProcessingException& calcClashProcException) {
+ 							clashed = true;
+ 							CClashedDependencyDescriptor* clashConLinker = calcClashProcException.getClashedDependencyDescriptor();
+@@ -1350,6 +1411,60 @@
+ 							if (mConfDependencyBacktracking) {
+ 								clashedBacktracking(clashConLinker,calcAlgContext);
+ 							}
++							#ifdef WASM_JUSTIFICATION_HOOK
++							{
++								CClashedDependencyDescriptor* clashDesc = clashConLinker;
++								int64_t negConceptTag = -1;
++								CDependencyTrackPoint* proofTP = nullptr;
++								while (clashDesc) {
++									CClashedConceptDescriptor* ccd = dynamic_cast<CClashedConceptDescriptor*>(clashDesc);
++									if (ccd && ccd->getConceptDescriptor() && ccd->getConceptDescriptor()->getConcept()) {
++										if (ccd->getConceptDescriptor()->getNegation()) {
++											negConceptTag = ccd->getConceptDescriptor()->getConcept()->getConceptTag();
++										} else if (!proofTP) {
++											proofTP = clashDesc->getDependencyTrackPoint();
++										}
++									}
++									clashDesc = clashDesc->getNext();
++								}
++								if (negConceptTag >= 0 && proofTP) {
++									std::vector<int64_t> depTags;
++									std::vector<CDependencyTrackPoint*> depStack;
++									depStack.push_back(proofTP);
++									int depth = 0;
++									while (!depStack.empty() && depth < 200) {
++										CDependencyTrackPoint* dp = depStack.back();
++										depStack.pop_back();
++										if (!dp) continue;
++										CDependencyNode* dn = dp->getDependencyNode();
++										if (!dn) continue;
++										CConceptDescriptor* cd = dn->getConceptDescriptor();
++										if (cd && cd->getConcept()) {
++											depTags.push_back(cd->getConcept()->getConceptTag());
++										}
++										CDependencyTrackPoint* prev = dn->getPreviousDependencyTrackPoint();
++										if (prev) depStack.push_back(prev);
++										if (dn->hasAdditionalAfterDependencies()) {
++											CDependencyIterator addIt = dn->getAdditionalDependencyIterator(false, true);
++											while (addIt.hasNext()) {
++												CDependency* addDep = addIt.nextDependency();
++												if (addDep) {
++													CDependencyTrackPoint* addTp = addDep->getPreviousDependencyTrackPoint();
++													if (addTp) depStack.push_back(addTp);
++												}
++											}
++										}
++										depth++;
++									}
++									if (!depTags.empty()) {
++										JustificationCache::instance().insert(
++											negConceptTag, negConceptTag,
++											JustificationCache::Realization,
++											std::move(depTags));
++									}
++								}
++							}
++							#endif
+ 						} catch (const CCalculationStopProcessingException& calcStopProcException) {
+ 							if (calcStopProcException.isTaskCompletedProcessed()) {
+ 								completed = true;

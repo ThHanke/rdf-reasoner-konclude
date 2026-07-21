@@ -117,6 +117,10 @@ function mockAlwaysConsistent() {
       simulateWorkerMessage({ id: req.id, result: true }); // consistent
     } else if (req.method === "isSatisfiableClass") {
       simulateWorkerMessage({ id: req.id, result: true });
+    } else if (req.method === "hasNativeJustification") {
+      simulateWorkerMessage({ id: req.id, result: false });
+    } else if (req.method === "hasJustificationByType") {
+      simulateWorkerMessage({ id: req.id, result: false });
     } else if (req.method === "getInferredTripleBuffer") {
       simulateWorkerMessage({ id: req.id, result: buildCombinedBuffer([]) });
     }
@@ -135,6 +139,10 @@ function mockAlwaysInconsistent() {
       simulateWorkerMessage({ id: req.id, result: true });
     } else if (req.method === "consistency") {
       simulateWorkerMessage({ id: req.id, result: false }); // inconsistent
+    } else if (req.method === "hasNativeJustification") {
+      simulateWorkerMessage({ id: req.id, result: false });
+    } else if (req.method === "hasJustificationByType") {
+      simulateWorkerMessage({ id: req.id, result: false });
     }
   });
 }
@@ -164,6 +172,10 @@ function mockEntailmentViaProbe(consistencyThreshold: number, isSatisfiableClass
       simulateWorkerMessage({ id: req.id, result: consistent });
     } else if (req.method === "isSatisfiableClass") {
       simulateWorkerMessage({ id: req.id, result: isSatisfiableClass });
+    } else if (req.method === "hasNativeJustification") {
+      simulateWorkerMessage({ id: req.id, result: false });
+    } else if (req.method === "hasJustificationByType") {
+      simulateWorkerMessage({ id: req.id, result: false });
     } else if (req.method === "getSubClassJustification") {
       simulateWorkerMessage({ id: req.id, result: "" });
     } else if (req.method === "getInferredTripleBuffer") {
@@ -201,6 +213,7 @@ describe("RdfReasoner — explainEntailment", () => {
       A.value,
       RDFS_SUBCLASS_OF,
       C.value,
+      { justificationMode: "minimal" },
     );
 
     expect(result.isEntailed).toBeNull();
@@ -227,6 +240,7 @@ describe("RdfReasoner — explainEntailment", () => {
       A.value,
       RDFS_SUBCLASS_OF,
       C.value,
+      { justificationMode: "minimal" },
     );
 
     expect(result.isEntailed).toBe(false);
@@ -301,6 +315,7 @@ describe("RdfReasoner — explainEntailment", () => {
       A.value,
       RDFS_SUBCLASS_OF,
       C.value,
+      { justificationMode: "minimal" },
     );
 
     expect(result.isEntailed).toBe(true);
@@ -334,6 +349,7 @@ describe("RdfReasoner — explainEntailment", () => {
       A.value,
       RDFS_SUBCLASS_OF,
       C.value,
+      { justificationMode: "minimal" },
     );
 
     expect(result.isEntailed).toBe(true);
@@ -361,7 +377,7 @@ describe("RdfReasoner — explainEntailment", () => {
       A.value,
       RDFS_SUBCLASS_OF,
       C.value,
-      { maxJustifications: 0 },
+      { maxJustifications: 0, justificationMode: "minimal" },
     );
 
     expect(result.isEntailed).toBe(true);
@@ -386,6 +402,7 @@ describe("RdfReasoner — explainEntailment", () => {
       A.value,
       RDFS_SUBCLASS_OF,
       C.value,
+      { justificationMode: "minimal" },
     );
     expect(result.isEntailed).toBe(false);
 
@@ -435,5 +452,469 @@ describe("RdfReasoner — explainEntailment", () => {
     // it — the important thing is isEntailed is not false
     expect(result.isEntailed).not.toBe(null);
     expect(Array.isArray(result.justifications)).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 9: FP/IFP sameAs synthesis
+  // -------------------------------------------------------------------------
+
+  it("synthesizes FP sameAs justification from store data", async () => {
+    const reasoner = await makeReadyReasoner();
+    const fpProp = namedNode("http://example.org/hasMother");
+    const owlFP = namedNode("http://www.w3.org/2002/07/owl#FunctionalProperty");
+    const owlSameAs = namedNode("http://www.w3.org/2002/07/owl#sameAs");
+    const x = namedNode("http://example.org/x");
+    const y = namedNode("http://example.org/y");
+    const m = namedNode("http://example.org/Mary");
+    const store = new Store([
+      quad(fpProp, rdfType, owlFP, defaultGraph()),
+      quad(x, fpProp, m, defaultGraph()),
+      quad(y, fpProp, m, defaultGraph()),
+    ]);
+
+    mockAlwaysConsistent();
+
+    const result = await reasoner.explainEntailment(
+      store,
+      x.value,
+      "http://www.w3.org/2002/07/owl#sameAs",
+      y.value,
+    );
+
+    expect(result.isEntailed).toBe(true);
+    expect(result.justifications).toHaveLength(1);
+    expect(result.justifications[0]).toHaveLength(3);
+    const iris = result.justifications[0].map(q => q.predicate.value);
+    expect(iris).toContain("http://www.w3.org/1999/02/22-rdf-syntax-ns#type");
+    expect(iris).toContain("http://example.org/hasMother");
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 10: IFP sameAs synthesis
+  // -------------------------------------------------------------------------
+
+  it("synthesizes IFP sameAs justification from store data", async () => {
+    const reasoner = await makeReadyReasoner();
+    const ifpProp = namedNode("http://example.org/hasSSN");
+    const owlIFP = namedNode("http://www.w3.org/2002/07/owl#InverseFunctionalProperty");
+    const owlSameAs = namedNode("http://www.w3.org/2002/07/owl#sameAs");
+    const alice2 = namedNode("http://example.org/alice2");
+    const bob = namedNode("http://example.org/bob");
+    const ssn = namedNode("http://example.org/ssn123");
+    const store = new Store([
+      quad(ifpProp, rdfType, owlIFP, defaultGraph()),
+      quad(ssn, ifpProp, alice2, defaultGraph()),
+      quad(ssn, ifpProp, bob, defaultGraph()),
+    ]);
+
+    mockAlwaysConsistent();
+
+    const result = await reasoner.explainEntailment(
+      store,
+      alice2.value,
+      "http://www.w3.org/2002/07/owl#sameAs",
+      bob.value,
+    );
+
+    expect(result.isEntailed).toBe(true);
+    expect(result.justifications).toHaveLength(1);
+    expect(result.justifications[0]).toHaveLength(3);
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 11: sameAs with no FP/IFP pattern → asserted check
+  // -------------------------------------------------------------------------
+
+  it("sameAs returns asserted triple as justification when directly stated", async () => {
+    const reasoner = await makeReadyReasoner();
+    const owlSameAs = namedNode("http://www.w3.org/2002/07/owl#sameAs");
+    const store = new Store([
+      quad(A, owlSameAs, B, defaultGraph()),
+    ]);
+
+    mockAlwaysConsistent();
+
+    const result = await reasoner.explainEntailment(
+      store,
+      A.value,
+      "http://www.w3.org/2002/07/owl#sameAs",
+      B.value,
+    );
+
+    expect(result.isEntailed).toBe(true);
+    expect(result.justifications).toHaveLength(1);
+    expect(result.justifications[0]).toHaveLength(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 12: equivalentProperty synthesis
+  // -------------------------------------------------------------------------
+
+  it("synthesizes equivalentProperty justification", async () => {
+    const reasoner = await makeReadyReasoner();
+    const owlEP = namedNode("http://www.w3.org/2002/07/owl#equivalentProperty");
+    const p1 = namedNode("http://example.org/prop1");
+    const p2 = namedNode("http://example.org/prop2");
+    const store = new Store([
+      quad(p1, owlEP, p2, defaultGraph()),
+    ]);
+
+    mockAlwaysConsistent();
+
+    const result = await reasoner.explainEntailment(
+      store,
+      p1.value,
+      "http://www.w3.org/2002/07/owl#equivalentProperty",
+      p2.value,
+    );
+
+    expect(result.isEntailed).toBe(true);
+    expect(result.justifications).toHaveLength(1);
+    expect(result.justifications[0]).toHaveLength(1);
+    expect(result.justifications[0][0].subject.value).toBe(p1.value);
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 13: equivalentProperty reverse direction
+  // -------------------------------------------------------------------------
+
+  it("synthesizes equivalentProperty justification (reverse)", async () => {
+    const reasoner = await makeReadyReasoner();
+    const owlEP = namedNode("http://www.w3.org/2002/07/owl#equivalentProperty");
+    const p1 = namedNode("http://example.org/prop1");
+    const p2 = namedNode("http://example.org/prop2");
+    const store = new Store([
+      quad(p2, owlEP, p1, defaultGraph()),
+    ]);
+
+    mockAlwaysConsistent();
+
+    const result = await reasoner.explainEntailment(
+      store,
+      p1.value,
+      "http://www.w3.org/2002/07/owl#equivalentProperty",
+      p2.value,
+    );
+
+    expect(result.isEntailed).toBe(true);
+    expect(result.justifications).toHaveLength(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 14: dataProperty (asserted)
+  // -------------------------------------------------------------------------
+
+  it("returns asserted data property as justification", async () => {
+    const reasoner = await makeReadyReasoner();
+    const hasAge = namedNode("http://example.org/hasAge");
+    const age42 = namedNode("http://example.org/42"); // simplified as IRI
+    const store = new Store([
+      quad(alice, hasAge, age42, defaultGraph()),
+    ]);
+
+    mockAlwaysConsistent();
+
+    const result = await reasoner.explainEntailment(
+      store,
+      alice.value,
+      "http://example.org/hasAge",
+      "http://example.org/42",
+      { objectIsClassLike: false },
+    );
+
+    expect(result.isEntailed).toBe(true);
+    expect(result.justifications).toHaveLength(1);
+    expect(result.justifications[0]).toHaveLength(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 15: dataProperty (not asserted)
+  // -------------------------------------------------------------------------
+
+  it("returns isEntailed:false for non-asserted data property", async () => {
+    const reasoner = await makeReadyReasoner();
+    const store = new Store([
+      quad(alice, rdfType, Person, defaultGraph()),
+    ]);
+
+    mockAlwaysConsistent();
+
+    const result = await reasoner.explainEntailment(
+      store,
+      alice.value,
+      "http://example.org/hasAge",
+      "http://example.org/42",
+      { objectIsClassLike: false },
+    );
+
+    expect(result.isEntailed).toBe(false);
+    expect(result.justifications).toEqual([]);
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 16: equivalentClass synthesis
+  // -------------------------------------------------------------------------
+
+  it("synthesizes equivalentClass justification", async () => {
+    const reasoner = await makeReadyReasoner();
+    const owlEC = namedNode("http://www.w3.org/2002/07/owl#equivalentClass");
+    const store = new Store([
+      quad(A, owlEC, B, defaultGraph()),
+    ]);
+
+    mockAlwaysConsistent();
+
+    const result = await reasoner.explainEntailment(
+      store,
+      A.value,
+      "http://www.w3.org/2002/07/owl#equivalentClass",
+      B.value,
+    );
+
+    expect(result.isEntailed).toBe(true);
+    expect(result.justifications).toHaveLength(1);
+    expect(result.justifications[0]).toHaveLength(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 17: disjointWith synthesis
+  // -------------------------------------------------------------------------
+
+  it("synthesizes disjointWith justification", async () => {
+    const reasoner = await makeReadyReasoner();
+    const owlDW = namedNode("http://www.w3.org/2002/07/owl#disjointWith");
+    const store = new Store([
+      quad(A, owlDW, B, defaultGraph()),
+    ]);
+
+    mockAlwaysConsistent();
+
+    const result = await reasoner.explainEntailment(
+      store,
+      A.value,
+      "http://www.w3.org/2002/07/owl#disjointWith",
+      B.value,
+    );
+
+    expect(result.isEntailed).toBe(true);
+    expect(result.justifications).toHaveLength(1);
+    expect(result.justifications[0]).toHaveLength(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 18: sameAs with no FP/IFP and not asserted → falls through
+  // -------------------------------------------------------------------------
+
+  it("sameAs not asserted and no FP/IFP → returns not entailed", async () => {
+    const reasoner = await makeReadyReasoner();
+    const store = new Store([
+      quad(A, subClassOf, B, defaultGraph()),
+    ]);
+
+    mockAlwaysConsistent();
+
+    const result = await reasoner.explainEntailment(
+      store,
+      A.value,
+      "http://www.w3.org/2002/07/owl#sameAs",
+      B.value,
+    );
+
+    expect(result.isEntailed).toBe(false);
+    expect(result.justifications).toEqual([]);
+  });
+
+  // =========================================================================
+  // Track A: native justification cache paths (IU-A6)
+  // =========================================================================
+
+  // -------------------------------------------------------------------------
+  // Test 19: equivalentClass via bidirectional subClassOf cache
+  // -------------------------------------------------------------------------
+
+  it("equivalentClass — native bidirectional subClassOf", async () => {
+    const reasoner = await makeReadyReasoner();
+    const store = new Store([
+      quad(A, subClassOf, B, defaultGraph()),
+      quad(B, subClassOf, A, defaultGraph()),
+    ]);
+
+    mocks.workerPostMessage.mockImplementation((msg: unknown) => {
+      const req = msg as { id: number; method: string; args: unknown[] };
+      if (req.method === "hasNativeJustification") {
+        simulateWorkerMessage({ id: req.id, result: true });
+      } else if (req.method === "getSubClassJustification") {
+        const sub = req.args[0] as string;
+        const sup = req.args[1] as string;
+        simulateWorkerMessage({
+          id: req.id,
+          result: `<${sub}> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <${sup}> .\n`,
+        });
+      } else if (req.method === "hasJustificationByType") {
+        simulateWorkerMessage({ id: req.id, result: false });
+      }
+    });
+
+    const result = await reasoner.explainEntailment(
+      store, A.value,
+      "http://www.w3.org/2002/07/owl#equivalentClass",
+      B.value,
+    );
+
+    expect(result.isEntailed).toBe(true);
+    expect(result.justifications).toHaveLength(1);
+    expect(result.justifications[0].length).toBeGreaterThanOrEqual(1);
+    expect(result.justifications[0].some(
+      (q: Quad) => q.predicate.value === RDFS_SUBCLASS_OF,
+    )).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 20: equivalentClass — cache miss falls through
+  // -------------------------------------------------------------------------
+
+  it("equivalentClass — no native cache → not entailed", async () => {
+    const reasoner = await makeReadyReasoner();
+    const store = new Store([
+      quad(A, subClassOf, B, defaultGraph()),
+    ]);
+
+    mocks.workerPostMessage.mockImplementation((msg: unknown) => {
+      const req = msg as { id: number; method: string };
+      if (req.method === "hasNativeJustification") {
+        simulateWorkerMessage({ id: req.id, result: false });
+      } else if (req.method === "hasJustificationByType") {
+        simulateWorkerMessage({ id: req.id, result: false });
+      }
+    });
+
+    const result = await reasoner.explainEntailment(
+      store, A.value,
+      "http://www.w3.org/2002/07/owl#equivalentClass",
+      B.value,
+    );
+
+    expect(result.isEntailed).toBe(false);
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 21: disjointWith — native Classification cache hit
+  // -------------------------------------------------------------------------
+
+  it("disjointWith — native Classification cache hit", async () => {
+    const reasoner = await makeReadyReasoner();
+    const store = new Store([
+      quad(A, owlDisjointWith, B, defaultGraph()),
+    ]);
+
+    mocks.workerPostMessage.mockImplementation((msg: unknown) => {
+      const req = msg as { id: number; method: string; args: unknown[] };
+      if (req.method === "hasNativeJustification") {
+        simulateWorkerMessage({ id: req.id, result: false });
+      } else if (req.method === "hasJustificationByType") {
+        const type = req.args[2] as number;
+        if (type === 0) { // Classification
+          simulateWorkerMessage({ id: req.id, result: true });
+        } else {
+          simulateWorkerMessage({ id: req.id, result: false });
+        }
+      } else if (req.method === "getJustificationByType") {
+        simulateWorkerMessage({
+          id: req.id,
+          result: `<${A.value}> <http://www.w3.org/2002/07/owl#disjointWith> <${B.value}> .\n`,
+        });
+      }
+    });
+
+    const result = await reasoner.explainEntailment(
+      store, A.value,
+      "http://www.w3.org/2002/07/owl#disjointWith",
+      B.value,
+    );
+
+    expect(result.isEntailed).toBe(true);
+    expect(result.justifications).toHaveLength(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 22: rdf:type — Realization cache fallback
+  // -------------------------------------------------------------------------
+
+  it("rdf:type — Realization cache fallback after Classification miss", async () => {
+    const reasoner = await makeReadyReasoner();
+    const store = new Store([
+      quad(alice, rdfType, namedNode("http://example.org/Student"), defaultGraph()),
+    ]);
+
+    mocks.workerPostMessage.mockImplementation((msg: unknown) => {
+      const req = msg as { id: number; method: string; args: unknown[] };
+      if (req.method === "hasNativeJustification") {
+        simulateWorkerMessage({ id: req.id, result: false });
+      } else if (req.method === "hasJustificationByType") {
+        const type = req.args[2] as number;
+        if (type === 1) { // Realization
+          simulateWorkerMessage({ id: req.id, result: true });
+        } else {
+          simulateWorkerMessage({ id: req.id, result: false });
+        }
+      } else if (req.method === "getJustificationByType") {
+        simulateWorkerMessage({
+          id: req.id,
+          result: `<http://example.org/Student> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <${Person.value}> .\n`,
+        });
+      }
+    });
+
+    const result = await reasoner.explainEntailment(
+      store,
+      alice.value,
+      RDF_TYPE,
+      Person.value,
+    );
+
+    expect(result.isEntailed).toBe(true);
+    expect(result.justifications).toHaveLength(1);
+    expect(result.justifications[0].some(
+      (q: Quad) => q.predicate.value === RDFS_SUBCLASS_OF,
+    )).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 23: sameAs — native Realization cache hit
+  // -------------------------------------------------------------------------
+
+  it("sameAs — native Realization cache hit", async () => {
+    const reasoner = await makeReadyReasoner();
+    const store = new Store([
+      quad(A, subClassOf, B, defaultGraph()),
+    ]);
+
+    mocks.workerPostMessage.mockImplementation((msg: unknown) => {
+      const req = msg as { id: number; method: string; args: unknown[] };
+      if (req.method === "hasNativeJustification") {
+        simulateWorkerMessage({ id: req.id, result: false });
+      } else if (req.method === "hasJustificationByType") {
+        const type = req.args[2] as number;
+        if (type === 1) { // Realization
+          simulateWorkerMessage({ id: req.id, result: true });
+        } else {
+          simulateWorkerMessage({ id: req.id, result: false });
+        }
+      } else if (req.method === "getJustificationByType") {
+        simulateWorkerMessage({
+          id: req.id,
+          result: `<${A.value}> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <${B.value}> .\n`,
+        });
+      }
+    });
+
+    const result = await reasoner.explainEntailment(
+      store, A.value,
+      "http://www.w3.org/2002/07/owl#sameAs",
+      B.value,
+    );
+
+    expect(result.isEntailed).toBe(true);
+    expect(result.justifications).toHaveLength(1);
   });
 });

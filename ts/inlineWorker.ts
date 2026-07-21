@@ -42,6 +42,10 @@ interface KoncludeReasonerInstance {
   isSatisfiableClass(cls: string): boolean;
   getSubClassJustification(sub: string, sup: string): string;
   hasNativeJustification(sub: string, sup: string): boolean;
+  getAxiomsForConceptTag(tag: number): string;
+  getAxiomsForRoleTag(tag: number): string;
+  getJustificationByType(sub: string, sup: string, type: number): string;
+  hasJustificationByType(sub: string, sup: string, type: number): boolean;
   delete?(): void;
 }
 
@@ -170,6 +174,18 @@ export function createInlineWorker(koncludeModuleUrl: string | URL): Worker {
           break;
         case "hasNativeJustification":
           result = r.hasNativeJustification(args[0] as string, args[1] as string);
+          break;
+        case "getAxiomsForConceptTag":
+          result = r.getAxiomsForConceptTag(args[0] as number);
+          break;
+        case "getAxiomsForRoleTag":
+          result = r.getAxiomsForRoleTag(args[0] as number);
+          break;
+        case "getJustificationByType":
+          result = r.getJustificationByType(args[0] as string, args[1] as string, args[2] as number);
+          break;
+        case "hasJustificationByType":
+          result = r.hasJustificationByType(args[0] as string, args[1] as string, args[2] as number);
           break;
         default:
           emit("message", { data: { id, error: `Unknown method: ${method}` } });
