@@ -1685,6 +1685,58 @@ namespace Konclude {
 								STATINC(ANALYSESUBSUMERCOUNT,calcAlgContext);
 							}
 
+							// WASM: record clash dep-chain for unsatisfiable concepts
+							// so hasNativeJustification(C, owl:Nothing) works.
+							{
+								CClashedDependencyDescriptor* clashDesc = processingDataBox->getClashedDescriptorLinker();
+								if (clashDesc) {
+									CConcept* bottomConcept = processingDataBox->getOntology()->getTBox()->getBottomConcept();
+									if (bottomConcept) {
+										int64_t bottomTag = bottomConcept->getConceptTag();
+										std::vector<int64_t> clashDepTags;
+										while (clashDesc) {
+											CDependencyTrackPoint* clashTp = clashDesc->getDependencyTrackPoint();
+											if (clashTp) {
+												std::vector<CDependencyTrackPoint*> depStack;
+												depStack.push_back(clashTp);
+												int depth = 0;
+												while (!depStack.empty() && depth < 200) {
+													CDependencyTrackPoint* dp = depStack.back();
+													depStack.pop_back();
+													if (!dp) continue;
+													CDependencyNode* dn = dp->getDependencyNode();
+													if (!dn) continue;
+													CConceptDescriptor* cd = dn->getConceptDescriptor();
+													if (cd && cd->getConcept()) {
+														clashDepTags.push_back(cd->getConcept()->getConceptTag());
+													}
+													CDependencyTrackPoint* prev = dn->getPreviousDependencyTrackPoint();
+													if (prev) depStack.push_back(prev);
+													if (dn->hasAdditionalAfterDependencies()) {
+														CDependencyIterator addIt = dn->getAdditionalDependencyIterator(false, true);
+														while (addIt.hasNext()) {
+															CDependency* addDep = addIt.nextDependency();
+															if (addDep) {
+																CDependencyTrackPoint* addTp = addDep->getPreviousDependencyTrackPoint();
+																if (addTp) depStack.push_back(addTp);
+															}
+														}
+													}
+													depth++;
+												}
+											}
+											clashDesc = clashDesc->getNext();
+										}
+										if (!clashDepTags.empty()) {
+											JustificationCache::instance().insert(
+												testingConcept->getConceptTag(),
+												bottomTag,
+												std::move(clashDepTags));
+										}
+									}
+								}
+							}
+
 							if (considerOtherNode) {
 
 								cint64 consideredOtherNodeCount = 0;
