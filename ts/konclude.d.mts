@@ -22,6 +22,10 @@ export interface KoncludeReasonerInstance {
   isSatisfiableClass(classIri: string): boolean;
   getSubClassJustification(subIri: string, superIri: string): string;
   hasNativeJustification(subIri: string, superIri: string): boolean;
+  getAxiomsForConceptTag(tag: number): string;
+  getAxiomsForRoleTag(tag: number): string;
+  getJustificationByType(subIri: string, superIri: string, type: number): string;
+  hasJustificationByType(subIri: string, superIri: string, type: number): boolean;
   reset(): void;
   /** Release Embind-managed C++ memory. Must be called when done. */
   delete(): void;

@@ -421,11 +421,11 @@ Key files: `CConcreteOntologyUpdateBuilder.cpp` lines 2064-2109, `CExpressionDat
 
 ---
 
-## R6: Prioritized Implementation Roadmap (Revised — BlackBox Elimination)
+## R6: Prioritized Implementation Roadmap (Revised — BlackBox Deprecation)
 
 ### Key Insight: The Tableau Proves Everything
 
-Post-R1–R5 investigation plus follow-up research into role realization, same-individual realization, and property subsumption reveals: **every entailment type is proved by a tableau sat test with an accessible dep chain or clash descriptor.** The "BlackBox only" labels from the initial R3 assessment were wrong — they reflected missing interception points, not missing proofs.
+Post-R1–R5 investigation plus follow-up research into role realization, same-individual realization, and property subsumption reveals: **every entailment type is proved by a tableau sat test whose clash descriptor carries the full proof dep chain.** The "BlackBox only" labels from the initial R3 assessment were wrong — they reflected missing interception points, not missing proofs.
 
 All Konclude entailment proofs follow the same pattern:
 1. Submit sat test with negated hypothesis
@@ -433,7 +433,7 @@ All Konclude entailment proofs follow the same pattern:
 3. `CClashedDependencyDescriptor` carries the full proof dep chain
 4. Currently: only boolean flows back to the caller, dep chain discarded
 
-Konclude already has `CIndividualDependenceTrackingCollector` infrastructure for attaching dep tracking to realization sat jobs — it's just not wired to anything that persists the data.
+However, these dep chains are currently inaccessible — analysers skip the clash path where entailments are proved (R2 finding). The catch blocks in `CCalculationTableauCompletionTaskHandleAlgorithm.cpp` (lines 1342-1352) receive `CClashedDependencyDescriptor` but discard it after backtracking. Step 2 below proposes a patch to persist this data into the JustificationCache.
 
 ### Complete Entailment Type Inventory
 
@@ -467,7 +467,7 @@ Konclude already has `CIndividualDependenceTrackingCollector` infrastructure for
 | minCardinality → rdf:type | Restriction scan + distinctness check | Restriction + role assertions + differentFrom pairs |
 | equivalentProperty | Parsed in loadTripleBuffer | equivalentProperty axiom triple |
 
-### BlackBox Retirement Analysis
+### BlackBox Deprecation Analysis
 
 **What BlackBox currently provides:**
 1. Minimal justifications (axiom removal → MIPS)
@@ -486,9 +486,14 @@ Konclude already has `CIndividualDependenceTrackingCollector` infrastructure for
 
 **Recommendation:** Deprecate BlackBox as the primary explanation path. Keep `explainInconsistency` + `explainInconsistencyLaconic` (inconsistency diagnosis genuinely needs MIPS). Remove BlackBox from `explainEntailment` fallback once native covers all types.
 
-### Implementation Strategy: Unified Interception Pattern
+### Implementation Strategy: Three Interception Mechanisms
 
-Instead of per-type strategies, ONE pattern applies everywhere:
+Three distinct strategies, not one unified pattern:
+1. **Tableau dep-chain capture** (Steps 2, 5) — covers Category A types via clash-path hooks and analyser enrichment
+2. **Workaround synthesis** (Steps 4a, 4b) — covers Category C types that bypass tableau; input data IS justification
+3. **TS probe fix** (Step 6) — fixes data property explanation shape
+
+Step 1 (axiom reverse mapping) provides shared infrastructure for strategies 1 and 2.
 
 **Step 1: Axiom reverse mapping infrastructure** (foundation)
 - Expose `CExpressionDataBoxMapping` hashes through `KoncludeReasoner` C++ API
@@ -497,28 +502,33 @@ Instead of per-type strategies, ONE pattern applies everywhere:
 - Serialize to N-Triples or Manchester Syntax for JS consumption
 - **Files:** `src/KoncludeReasoner.cpp`, `src/KoncludeReasoner.h`, `src/bindings.cpp`
 
-**Step 2: Wire `CIndividualDependenceTrackingCollector` to JustificationCache**
-- Konclude already attaches tracking collectors to realization sat jobs (role: lines 2426-2432, sameAs: lines 3221-3228, property subsumption: lines 1002-1003)
-- These collectors receive dep chain data during tableau computation
-- Wire collector output → JustificationCache entries keyed by (individual, concept/role, entailment type)
-- **One interception pattern covers**: rdf:type, object properties, sameAs, AND subPropertyOf
-- **Files:** `src/compat/overrides/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp` (new override), `src/JustificationCache.h` (schema extension)
+**Step 2: Clash-path justification hook for realization**
+- Intercept `CClashedDependencyDescriptor` in catch blocks of `CCalculationTableauCompletionTaskHandleAlgorithm.cpp` (lines 1342-1352)
+- Two catch paths: `CClashedConceptDescriptor*` (line 1342) and `CCalculationClashProcessingException` (line 1345) — both must be handled
+- Persist clash descriptor to member/task field before catch scope exits, or extract dep chain inline
+- Walk `CDependencyTrackPoint` chain from clash descriptor → collect concept tags + dep node types → resolve to axioms via Step 1
+- Cache entries keyed by (individual tag, concept/role tag, entailment type) → JustificationCache schema extension
+- **Covers**: rdf:type (all paths), object properties, sameAs, subPropertyOf — all realization sat tests that clash
+- **Files:** `patches/NNN-clash-justification-hook.patch` targeting catch blocks, `src/JustificationCache.h` (schema extension + `shared_mutex` for concurrent read safety)
 
-**Step 3: Clash-path hook for concept realization**
-- Add justification extraction at `CCalculationTableauCompletionTaskHandleAlgorithm.cpp` line ~1505
-- Extract `CClashedDependencyDescriptor` chains when task has realization adapter
-- Complementary to Step 2 — covers the concept-instance test path specifically
-- **Files:** New override or patch of `CCalculationTableauCompletionTaskHandleAlgorithm.cpp`
-
-**Step 4: Workaround synthesis for Category C types**
+**Step 4a: Workaround synthesis — easy types (Track B, no C++ axiom API needed)**
 - Package Impl struct data as justification during `buildInferredTripleBuffer`
-- 4 easy types (FP/IFP, disjointUnionOf, oneOf, equivalentProperty): input data IS the justification
-- 2 moderate types (someValuesFrom chain, minCardinality): need propagation chain tracking
+- FP/IFP → owl:sameAs: justification = FP/IFP declaration + conflicting role assertions
+- disjointUnionOf → rdfs:subClassOf: justification = disjointUnionOf axiom triples
+- owl:oneOf → rdf:type: justification = oneOf axiom triples
+- equivalentProperty: justification = equivalentProperty axiom triple
+- **Files:** `src/KoncludeReasoner.cpp` (workaround sections)
+
+**Step 4b: Workaround synthesis — moderate types (depends on Step 1)**
+- someValuesFrom → rdf:type: needs propagation chain tracking through fixpoint iterations
+- minCardinality → rdf:type: needs restriction + role assertions + differentFrom pairs
+- Both require axiom reverse mapping from Step 1 to resolve restriction axioms
 - **Files:** `src/KoncludeReasoner.cpp` (workaround sections)
 
 **Step 5: Enrich classification analyser**
 - Walk `mAdditionalAfterDepLinker` branches (currently skipped)
 - Capture dep node type enum + role tags alongside concept tags
+- Recognize domain/range axioms compiled to anonymous GCI restrictions (`∃R.⊤ ⊑ C` for domain, `⊤ ⊑ ∀R.C` for range) — map back to original domain/range axiom via Step 1 reverse expression mapping
 - **Files:** `src/compat/overrides/CSatisfiableTaskClassificationMessageAnalyser.cpp`
 
 **Step 6: Fix inferred data property explanation**
@@ -526,44 +536,51 @@ Instead of per-type strategies, ONE pattern applies everywhere:
 - With native coverage, this becomes a probe shape mapping, not a BlackBox call
 - **Files:** `ts/entailmentProbe.ts`
 
-**Step 7: Deprecate BlackBox for entailment explanation**
-- Remove BlackBox fallback from `explainEntailment` once Steps 1-6 cover all types
-- Keep `explainInconsistency` / `explainInconsistencyLaconic` (genuinely needs MIPS)
-- **Files:** `ts/index.ts`, `ts/entailmentProbe.ts`
+**Step 7: Make BlackBox opt-in for entailment explanation**
+- Add `justificationMode: "causal" | "minimal"` option to `ExplainOptions`
+- Default to `"causal"` (native dep chain, ~1ms) once Steps 1-6 cover all types
+- `"minimal"` retains BlackBox MIPS path for users needing guaranteed-minimal axiom sets
+- `explainInconsistency` / `explainInconsistencyLaconic` always use BlackBox (genuinely needs MIPS)
+- **Files:** `ts/index.ts`, `ts/entailmentProbe.ts`, `ts/types.ts`
 
 ### Dependency Graph
 
 ```
-Step 1 (axiom reverse mapping) ─┬─→ Step 2 (tracking collector → JustificationCache)
-                                ├─→ Step 3 (clash-path hook)
-                                ├─→ Step 4 (workaround synthesis)
-                                ├─→ Step 5 (enrich classification analyser)
-                                └─→ Step 6 (data property fix)
+Track A (tableau interception — requires axiom reverse mapping):
+  Step 1 (axiom reverse mapping) ─┬─→ Step 2 (clash-path justification hook)
+                                  └─→ Step 5 (enrich classification analyser)
 
-Steps 1-6 complete ──────────────→ Step 7 (deprecate BlackBox for entailment)
+Track B (independent — no C++ axiom API needed):
+  Step 4a (4 easy workaround types: FP/IFP, disjointUnionOf, oneOf, equivalentProperty)
+  Step 6 (TS data property probe fix)
+
+Track B+1 (workaround synthesis requiring axiom reverse mapping):
+  Step 1 ──→ Step 4b (someValuesFrom chain, minCardinality)
+
+All steps complete ─────────────→ Step 7 (make BlackBox opt-in for entailment)
 ```
 
 ### Coverage Summary After Full Implementation
 
-| Entailment Type | Current | After Steps 1-3 | After Steps 4-6 | After Step 7 |
-|----------------|---------|-----------------|-----------------|-------------|
-| rdfs:subClassOf | Native (tags) | Native (axioms) | Native (enriched) | — |
-| owl:equivalentClass | BlackBox | Native | — | — |
-| owl:disjointWith | BlackBox | Native | — | — |
-| rdf:type (all paths) | Partial native / BlackBox | **Native** (clash hook) | — | — |
-| Object property assertions | BlackBox | **Native** (tracking collector) | — | — |
-| owl:sameAs (native) | BlackBox | **Native** (tracking collector) | — | — |
-| rdfs:subPropertyOf | BlackBox | **Native** (tracking collector) | — | — |
-| rdfs:domain/range | BlackBox | Native (via GCI in taxonomy) | — | — |
-| FP/IFP → owl:sameAs | None | — | **Synthesized** | — |
-| someValuesFrom → rdf:type | None | — | **Synthesized** (chain) | — |
-| disjointUnionOf | None | — | **Synthesized** | — |
-| owl:oneOf → rdf:type | None | — | **Synthesized** | — |
-| minCardinality → rdf:type | None | — | **Synthesized** | — |
-| equivalentProperty | None | — | **Synthesized** | — |
-| Inferred data properties | Broken | — | **Fixed** | — |
-| **BlackBox for entailment** | **Primary fallback** | **Secondary** | **Tertiary** | **REMOVED** |
-| BlackBox for inconsistency | Required | Required | Required | **Retained** (MIPS) |
+| Entailment Type | Current | Target | Delivered by | Track |
+|----------------|---------|--------|-------------|-------|
+| rdfs:subClassOf | Native (tags) | Native (axioms + enriched) | Step 5 (analyser) | A |
+| owl:equivalentClass | BlackBox | Native | Step 5 (bidirectional subClassOf) | A |
+| owl:disjointWith | BlackBox | Native | Step 5 (classification side-effect) | A |
+| rdf:type (all paths) | Partial native / BlackBox | **Native** | Step 2 (clash hook) | A |
+| Object property assertions | BlackBox | **Native** | Step 2 (clash hook) | A |
+| owl:sameAs (native) | BlackBox | **Native** | Step 2 (clash hook) | A |
+| rdfs:subPropertyOf | BlackBox | **Native** | Step 2 (clash hook) | A |
+| rdfs:domain/range | BlackBox | Native | Step 5 (via GCI in taxonomy) | A |
+| FP/IFP → owl:sameAs | None | **Synthesized** | Step 4a | B |
+| disjointUnionOf | None | **Synthesized** | Step 4a | B |
+| owl:oneOf → rdf:type | None | **Synthesized** | Step 4a | B |
+| equivalentProperty | None | **Synthesized** | Step 4a | B |
+| someValuesFrom → rdf:type | None | **Synthesized** (chain) | Step 4b | B+1 |
+| minCardinality → rdf:type | None | **Synthesized** | Step 4b | B+1 |
+| Inferred data properties | Broken | **Fixed** | Step 6 | B |
+| **BlackBox for entailment** | **Primary fallback** | **Opt-in** (`"minimal"` mode) | Step 7 | — |
+| BlackBox for inconsistency | Required | **Retained** (MIPS) | — | — |
 
 ### Native vs. BlackBox Justification Comparison
 
@@ -589,7 +606,7 @@ Steps 1-6 complete ──────────────→ Step 7 (depreca
 | Risk (original) | Resolution |
 |------|------------|
 | Dep nodes carry only concept tags, no axiom back-references | **R1 confirmed**: no axiom pointers, but CConcept is rich (role, operands, operator code). **R5 found**: full CConcept→CClassTermExpression→CClassAxiomExpression reverse mapping exists. Axioms recoverable. |
-| Realization analysers don't receive dep track points | **R2 confirmed**: analysers skip clash path. **Follow-up found**: `CIndividualDependenceTrackingCollector` already attached to realization sat jobs — just needs wiring to JustificationCache. |
+| Realization analysers don't receive dep track points | **R2 confirmed**: analysers skip clash path. **Follow-up found**: clash descriptors carry dep chains but are catch-block-scoped. `CIndividualDependenceTrackingCollector` tracks individual IDs only (bit-vector for incremental reasoning), NOT dep chains — cannot be repurposed for justification. Must intercept clash descriptors in catch blocks instead. |
 | CExpressionDataBoxMapping remains sparse for triple-buffer path | **R5 disproved**: mapping is NOT sparse. v0.5.0 observation was wrong. Full bidirectional hashes populated by `CConcreteOntologyUpdateBuilder`. |
 | Workaround-covered types have no Konclude-internal evidence | **R3 confirmed**: Impl struct preserves all input data. Synthesis feasible for all 6 workaround types. |
 
@@ -598,10 +615,32 @@ Steps 1-6 complete ──────────────→ Step 7 (depreca
 | Risk | Mitigation |
 |------|------------|
 | Clash-path hook modifies core tableau algorithm | Use override file pattern (src/compat/overrides/) rather than vendor patch; isolates change |
-| `CIndividualDependenceTrackingCollector` output format unknown | Need follow-up investigation of collector API before Step 2 implementation |
+| Clash-path catch block scoping | `CClashedDependencyDescriptor` is local to catch blocks; must persist to member/task field or extract inline before task memory release (see Open Questions P1) |
 | Performance of dep chain walks during realization (many more sat tests than classification) | Profile with large ABox ontologies; consider sampling or lazy evaluation |
 | Non-minimal justifications may confuse users expecting MIPS-style output | Document difference; offer post-hoc minimization as optional pass |
 | someValuesFrom chain tracking across fixpoint iterations adds complexity | Moderate — chain data already in Impl, just needs threading through propagation |
+
+## Deferred / Open Questions
+
+### From 2026-07-20 review (round 1 + round 2)
+
+**RESOLVED by R2 edits:**
+- ~~P0 — Step 2 infrastructure wrong~~ → Step 2 rewritten to use catch-block interception
+- ~~P1 — Clash descriptor scope~~ → Addressed in Step 2 description (persist to member/task field)
+- ~~P1 — 27K-line override impractical~~ → Step 2 now targets `patches/*.patch`
+- ~~P1 — "Key Insight" overstates accessibility~~ → Key Insight rewritten with conditional
+- ~~P2 — Steps 2/3 overlap~~ → Merged into single Step 2
+- ~~P2 — Data property dependency~~ → Step 5 now explicitly covers domain/range GCI mapping
+
+**Still open:**
+
+**P1 — R3 vs R6 contradiction:** R3 marks object properties/sameAs/subPropertyOf as "NOT FEASIBLE (native)" but R6 claims "Native". The follow-up research that overturned R3 is referenced but not documented inline. Add a bridge paragraph in R6 preamble or cross-reference the specific research findings.
+
+**P2 — No fallback if catch-block patch regresses:** If Step 2 patch introduces subtle tableau issues, BlackBox opt-in (Step 7) blocks. Consider per-entailment-type rollout rather than all-or-nothing.
+
+**P2 — Non-minimal justification UX:** Native dep chain justifications are supersets of minimal justifications. "Document difference" is not user-facing mitigation. Need concrete post-hoc minimization strategy (e.g., greedy axiom removal on dep chain subset — bounded by chain length, much cheaper than full MIPS).
+
+**P2 — JustificationCache schema design:** Current key is `(subTag, superTag) → vector<int64_t>`. Realization entries need individual IDs, role tags, and entailment type discriminators. New schema must coexist with existing classification entries. Architectural decision needed before Step 2 implementation.
 
 ## Sources & References
 

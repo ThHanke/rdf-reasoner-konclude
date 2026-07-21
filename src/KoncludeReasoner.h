@@ -51,6 +51,14 @@ public:
     std::string getSubClassJustification(const std::string& subIri, const std::string& superIri);
     bool hasNativeJustification(const std::string& subIri, const std::string& superIri);
 
+    // Generic justification queries by EntailmentType (0=Classification, 1=Realization, 2=PropertySubsumption)
+    std::string getJustificationByType(const std::string& subIri, const std::string& superIri, int type);
+    bool hasJustificationByType(const std::string& subIri, const std::string& superIri, int type);
+
+    // Axiom reverse mapping — convert concept/role tags back to source axiom NTriples
+    std::string getAxiomsForConceptTag(int64_t tag);
+    std::string getAxiomsForRoleTag(int64_t tag);
+
     void reset();
 
 private:

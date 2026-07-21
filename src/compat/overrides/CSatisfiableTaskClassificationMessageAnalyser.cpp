@@ -21,6 +21,8 @@
 #include "Reasoner/Kernel/Algorithm/CSatisfiableTaskClassificationMessageAnalyser.h"
 #include "JustificationCache.h"
 #include "Reasoner/Kernel/Process/Dependency/CDependencyNode.h"
+#include "Reasoner/Kernel/Process/Dependency/CDependencyIterator.h"
+#include "Reasoner/Kernel/Process/Dependency/CDependency.h"
 
 
 namespace Konclude {
@@ -1621,19 +1623,35 @@ namespace Konclude {
 													}
 													subsumerList->append(concept);
 
-													// WASM justification: walk dep chain, collect concept tags from all dep nodes
+													// WASM justification: tree-walk dep chain via stack,
+													// visiting both primary chain and mAdditionalAfterDepLinker branches.
 													if (depTrackPoint) {
 														std::vector<int64_t> depTags;
-														CDependencyTrackPoint* dp = depTrackPoint;
+														std::vector<CDependencyTrackPoint*> depStack;
+														depStack.push_back(depTrackPoint);
 														int depth = 0;
-														while (dp && depth < 200) {
+														while (!depStack.empty() && depth < 200) {
+															CDependencyTrackPoint* dp = depStack.back();
+															depStack.pop_back();
+															if (!dp) continue;
 															CDependencyNode* dn = dp->getDependencyNode();
-															if (!dn) break;
+															if (!dn) continue;
 															CConceptDescriptor* cd = dn->getConceptDescriptor();
 															if (cd && cd->getConcept()) {
 																depTags.push_back(cd->getConcept()->getConceptTag());
 															}
-															dp = dn->getPreviousDependencyTrackPoint();
+															CDependencyTrackPoint* prev = dn->getPreviousDependencyTrackPoint();
+															if (prev) depStack.push_back(prev);
+															if (dn->hasAdditionalAfterDependencies()) {
+																CDependencyIterator addIt = dn->getAdditionalDependencyIterator(false, true);
+																while (addIt.hasNext()) {
+																	CDependency* addDep = addIt.nextDependency();
+																	if (addDep) {
+																		CDependencyTrackPoint* addTp = addDep->getPreviousDependencyTrackPoint();
+																		if (addTp) depStack.push_back(addTp);
+																	}
+																}
+															}
 															depth++;
 														}
 														if (!depTags.empty()) {
