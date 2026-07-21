@@ -213,6 +213,7 @@ describe("RdfReasoner — explainEntailment", () => {
       A.value,
       RDFS_SUBCLASS_OF,
       C.value,
+      { justificationMode: "minimal" },
     );
 
     expect(result.isEntailed).toBeNull();
@@ -239,6 +240,7 @@ describe("RdfReasoner — explainEntailment", () => {
       A.value,
       RDFS_SUBCLASS_OF,
       C.value,
+      { justificationMode: "minimal" },
     );
 
     expect(result.isEntailed).toBe(false);
@@ -313,6 +315,7 @@ describe("RdfReasoner — explainEntailment", () => {
       A.value,
       RDFS_SUBCLASS_OF,
       C.value,
+      { justificationMode: "minimal" },
     );
 
     expect(result.isEntailed).toBe(true);
@@ -346,6 +349,7 @@ describe("RdfReasoner — explainEntailment", () => {
       A.value,
       RDFS_SUBCLASS_OF,
       C.value,
+      { justificationMode: "minimal" },
     );
 
     expect(result.isEntailed).toBe(true);
@@ -373,7 +377,7 @@ describe("RdfReasoner — explainEntailment", () => {
       A.value,
       RDFS_SUBCLASS_OF,
       C.value,
-      { maxJustifications: 0 },
+      { maxJustifications: 0, justificationMode: "minimal" },
     );
 
     expect(result.isEntailed).toBe(true);
@@ -398,6 +402,7 @@ describe("RdfReasoner — explainEntailment", () => {
       A.value,
       RDFS_SUBCLASS_OF,
       C.value,
+      { justificationMode: "minimal" },
     );
     expect(result.isEntailed).toBe(false);
 
