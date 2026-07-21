@@ -17,6 +17,17 @@ import type { Quad } from "@rdfjs/types";
 import { Store, DataFactory } from "n3";
 import { encodeToBuffers, decodeBuffers, computeStoreFingerprint } from "./intern.js";
 
+// Duck-type check for N3.Store — resilient to duplicate n3 module instances
+// (e.g. file:-linked packages with their own node_modules).
+function isStore(input: unknown): input is Store {
+  return (
+    input != null &&
+    typeof (input as Store).getQuads === "function" &&
+    typeof (input as Store).addQuad === "function" &&
+    typeof (input as Store).removeQuads === "function"
+  );
+}
+
 export type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions, LaconicPart, LaconicJustification, LaconicExplainOptions } from "./types.js";
 export { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI } from "./types.js";
 export { createInlineWorker } from "./inlineWorker.js";
@@ -233,7 +244,7 @@ export class RdfReasoner {
     input: Store | Iterable<Quad>,
     opts?: StoreReasoningOptions | ReasoningOptions,
   ): Promise<void> | Promise<Quad[]> {
-    if (input instanceof Store) {
+    if (isStore(input)) {
       return this._reasonOnStore(input, opts as StoreReasoningOptions | undefined);
     }
     return this._reasonOnQuads(input as Iterable<Quad>, opts as ReasoningOptions | undefined);
@@ -342,7 +353,7 @@ export class RdfReasoner {
     input: Store | Iterable<Quad>,
     opts?: StoreReasoningOptions,
   ): Promise<void> | Promise<Quad[]> {
-    if (input instanceof Store) {
+    if (isStore(input)) {
       return this.reason(input, opts);
     }
     return this.reason(input as Iterable<Quad>, { mode: "classify" });
@@ -368,12 +379,12 @@ export class RdfReasoner {
   // removed as no longer needed; full pipeline preferred for correctness.
   checkConsistency(quads: Iterable<Quad>): Promise<boolean>;
   checkConsistency(input: Store | Iterable<Quad>): Promise<boolean> {
-    const isStore = input instanceof Store;
+    const inputIsStore = isStore(input);
     // Compute fingerprint before entering the queue (snapshot of current store state)
-    const fingerprint = isStore
+    const fingerprint = inputIsStore
       ? computeStoreFingerprint((input as Store).getQuads(null, null, null, null))
       : null;
-    const quads = isStore
+    const quads = inputIsStore
       ? (input as Store).getQuads(null, null, null, null)
       : input as Iterable<Quad>;
     // Pre-check: materialise quads once so we can scan and encode from the same array.
@@ -449,7 +460,7 @@ export class RdfReasoner {
     input: Store | Iterable<Quad>,
     opts?: MaterializeStoreOptions | MaterializeOptions,
   ): Promise<void> | Promise<{ delta: InferenceDelta }> | Promise<Quad[]> {
-    if (input instanceof Store) {
+    if (isStore(input)) {
       return this._materializeOnStore(input, opts as MaterializeStoreOptions | undefined);
     }
     return this._materializeOnQuads(input as Iterable<Quad>, opts as MaterializeOptions | undefined);
@@ -593,7 +604,7 @@ export class RdfReasoner {
     input: Store | Iterable<Quad>,
     opts?: ClassifyPropertiesStoreOptions,
   ): Promise<void> | Promise<Quad[]> {
-    if (input instanceof Store) {
+    if (isStore(input)) {
       return this._classifyPropertiesOnStore(input, opts);
     }
     return this._classifyPropertiesOnQuads(input as Iterable<Quad>);
