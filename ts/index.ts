@@ -1581,10 +1581,11 @@ export class RdfReasoner {
    */
   explainInconsistency(store: Store, opts?: ExplainOptions): Promise<Quad[][]> {
     const result = this._queue.then(async () => {
+      const ig = opts?.inferredGraph ?? INFERRED_GRAPH_IRI;
       // Build base quads (exclude inferred/hypothetical graphs)
       const allBase = store.getQuads(null, null, null, null).filter(q => {
         const g = q.graph.value;
-        return g !== INFERRED_GRAPH_IRI && g !== HYPOTHETICAL_IRI;
+        return g !== ig && g !== HYPOTHETICAL_IRI;
       });
 
       // Fast-path: check consistency using existing cache or direct Worker call
@@ -1613,7 +1614,7 @@ export class RdfReasoner {
       // ABox inconsistency (Konclude requires them to recognize disjoint classes).
       const allCandidates = store.getQuads(null, null, null, null).filter(q => {
         const g = q.graph.value;
-        if (g === INFERRED_GRAPH_IRI || g === HYPOTHETICAL_IRI) return false;
+        if (g === ig || g === HYPOTHETICAL_IRI) return false;
         if (opts?.axiomFilter && !opts.axiomFilter(q)) return false;
         return true;
       });
@@ -1721,10 +1722,11 @@ export class RdfReasoner {
     const maxParts = opts?.laconicMaxParts ?? 40;
 
     const result = this._queue.then(async () => {
+      const ig = opts?.inferredGraph ?? INFERRED_GRAPH_IRI;
       // Get MIPS justifications (reuse explainInconsistency logic inline)
       const allBase = store.getQuads(null, null, null, null).filter(q => {
         const g = q.graph.value;
-        return g !== INFERRED_GRAPH_IRI && g !== HYPOTHETICAL_IRI;
+        return g !== ig && g !== HYPOTHETICAL_IRI;
       });
 
       const fingerprint = computeStoreFingerprint(store.getQuads(null, null, null, null));
@@ -1747,7 +1749,7 @@ export class RdfReasoner {
 
       const allCandidates = store.getQuads(null, null, null, null).filter(q => {
         const g = q.graph.value;
-        if (g === INFERRED_GRAPH_IRI || g === HYPOTHETICAL_IRI) return false;
+        if (g === ig || g === HYPOTHETICAL_IRI) return false;
         if (opts?.axiomFilter && !opts.axiomFilter(q)) return false;
         return true;
       });
@@ -1989,7 +1991,7 @@ export class RdfReasoner {
         }
 
         // someValuesFrom synthesis: restriction + role assertion → type
-        const inferredQuads = store.getQuads(null, null, null, DataFactory.namedNode(INFERRED_GRAPH_IRI));
+        const inferredQuads = store.getQuads(null, null, null, DataFactory.namedNode(ig));
         const svfJust = this._synthesizeSomeValuesFromJustification(allBase, inferredQuads, subjectIri, objectIri);
         if (svfJust) return { isEntailed: true, justifications: [svfJust] };
 
@@ -2105,7 +2107,7 @@ export class RdfReasoner {
       if (mode === "causal") {
         const inferredGraph = store.getQuads(
           subjectIri, predicateIri, objectIri,
-          DataFactory.namedNode(INFERRED_GRAPH_IRI),
+          DataFactory.namedNode(ig),
         );
         const assertedMatch = allBase.some(
           q => q.subject.value === subjectIri &&

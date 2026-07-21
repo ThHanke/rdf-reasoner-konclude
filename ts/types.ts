@@ -11,6 +11,15 @@ export interface ExplainOptions {
   /** Optional filter to restrict the candidate axiom set. Applied AFTER the
    *  built-in declaration filter. */
   axiomFilter?: (q: Quad) => boolean;
+  /**
+   * Named graph IRI that holds inferred triples in the store.
+   *
+   * Defaults to `INFERRED_GRAPH_IRI` (`"urn:konclude:inferred"`).
+   * Set this when the caller writes inferred quads to a different graph
+   * (e.g. `"urn:vg:inferred"` via `materialize({inferredGraph})`) so that
+   * base-axiom filtering reads the right graph.
+   */
+  inferredGraph?: string;
 }
 
 /**
