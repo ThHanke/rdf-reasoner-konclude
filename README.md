@@ -395,9 +395,8 @@ const justs = await reasoner.explain(store, quad, { maxJustifications: 3 });
 ### Explaining an entailment triple (`explainEntailment`)
 
 `explainEntailment` explains why a specific triple is entailed by the ontology.
-It uses native justification synthesis where possible (~1ms), falling back to the
-BlackBox algorithm (5-13s) only for `rdfs:subClassOf` and `rdf:type` when the
-native cache misses.
+All 16 entailment types use native dep-chain cache or TS synthesis (~1ms).
+BlackBox (5-13s) is available as opt-in via `justificationMode: "minimal"`.
 
 ```typescript
 const result = await reasoner.explainEntailment(
@@ -415,21 +414,34 @@ const result = await reasoner.explainEntailment(
 | Predicate | Method | Speed |
 |-----------|--------|-------|
 | `rdfs:subClassOf` | Native dep-chain cache | ~1ms |
-| `rdf:type` | Native (via subClassOf chain) | ~1ms |
-| `owl:sameAs` | TS synthesis (FP/IFP pattern) | <1ms |
-| `owl:equivalentProperty` | TS synthesis (asserted lookup) | <1ms |
-| `owl:equivalentClass` | TS synthesis (asserted lookup) | <1ms |
-| `owl:disjointWith` | TS synthesis (asserted lookup) | <1ms |
-| Data properties | Asserted-triple lookup | <1ms |
+| `rdf:type` (subClassOf chain) | Native (classification + asserted type) | ~1ms |
+| `rdf:type` (realization) | Native (clash-path hook) | ~1ms |
+| `rdf:type` (someValuesFrom) | Synthesized (restriction + role scan) | <1ms |
+| `rdf:type` (minCardinality) | Synthesized (restriction + filler count) | <1ms |
+| `owl:sameAs` (FP/IFP) | Synthesized (FP/IFP pattern scan) | <1ms |
+| `owl:sameAs` (native) | Native (realization cache) | ~1ms |
+| `owl:equivalentClass` | Native (bidirectional subClassOf) | ~1ms |
+| `owl:disjointWith` | Native (classification cache) | ~1ms |
+| `owl:equivalentProperty` | Synthesized (assertion scan) | <1ms |
+| `rdfs:subPropertyOf` | Native (clash-path hook) | ~1ms |
+| `rdfs:domain` / `rdfs:range` | Native (GCI in taxonomy) | ~1ms |
+| `disjointUnionOf` → `subClassOf` | Synthesized (RDF list walk) | <1ms |
+| `owl:oneOf` → `rdf:type` | Synthesized (member scan) | <1ms |
+| Data property assertions | Asserted-triple lookup | <1ms |
+| Object property assertions | Asserted-triple lookup | <1ms |
+
+Full coverage matrix with test cases: [`docs/entailment-coverage.md`](docs/entailment-coverage.md)
 
 **Options:**
 
-- `nativeOnly: true` — skip BlackBox fallback entirely. If the native path misses,
-  returns `isEntailed: true` with empty justifications instead of re-reasoning.
+- `justificationMode` — controls how justifications are computed:
+  - `"causal"` (default): native dep chain + TS synthesis. Returns the causal
+    proof path (~1ms). No BlackBox fallback.
+  - `"minimal"`: BlackBox MIPS. Guaranteed smallest axiom set (5-13s per call).
 - `objectIsClassLike: false` — treat the object as a non-class entity (e.g., literal).
   Enables data property explanation.
 - `maxJustifications` — maximum number of justifications to return (default: 1).
-  Only applies to the BlackBox path; native/synthesis paths return at most one.
+  Only applies to the `"minimal"` mode; native/synthesis paths return at most one.
 
 ### Diagnosing an inconsistency (`explainInconsistency`)
 

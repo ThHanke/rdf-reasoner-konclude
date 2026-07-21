@@ -80,6 +80,13 @@ const OWL_ONE_OF = "http://www.w3.org/2002/07/owl#oneOf";
 const RDF_FIRST = "http://www.w3.org/1999/02/22-rdf-syntax-ns#first";
 const RDF_REST = "http://www.w3.org/1999/02/22-rdf-syntax-ns#rest";
 const RDF_NIL = "http://www.w3.org/1999/02/22-rdf-syntax-ns#nil";
+const OWL_SOME_VALUES_FROM = "http://www.w3.org/2002/07/owl#someValuesFrom";
+const OWL_ON_PROPERTY = "http://www.w3.org/2002/07/owl#onProperty";
+const OWL_RESTRICTION = "http://www.w3.org/2002/07/owl#Restriction";
+const OWL_MIN_CARDINALITY = "http://www.w3.org/2002/07/owl#minCardinality";
+const OWL_MIN_QUALIFIED_CARDINALITY = "http://www.w3.org/2002/07/owl#minQualifiedCardinality";
+const OWL_ON_CLASS = "http://www.w3.org/2002/07/owl#onClass";
+const OWL_DIFFERENT_FROM = "http://www.w3.org/2002/07/owl#differentFrom";
 // ---------------------------------------------------------------------------
 // RdfReasoner
 // ---------------------------------------------------------------------------
@@ -1278,6 +1285,125 @@ export class RdfReasoner {
     return quads;
   }
 
+  private _synthesizeSomeValuesFromJustification(
+    allBase: Quad[], inferred: Quad[], subjectIri: string, objectIri: string,
+  ): Quad[] | null {
+    const restrictions = allBase.filter(
+      q => q.predicate.value === OWL_SOME_VALUES_FROM && q.object.value === objectIri,
+    );
+    for (const svfQuad of restrictions) {
+      const rNode = svfQuad.subject.value;
+      const propQuad = allBase.find(
+        q => q.subject.value === rNode && q.predicate.value === OWL_ON_PROPERTY,
+      );
+      if (!propQuad) continue;
+      const prop = propQuad.object.value;
+      const classQuad = allBase.find(
+        q => (q.predicate.value === OWL_EQUIVALENT_CLASS || q.predicate.value === RDFS_SUB_CLASS_OF) &&
+             q.object.value === rNode,
+      );
+      if (!classQuad) continue;
+      const sourceClass = classQuad.subject.value;
+      const typeQuads = allBase.filter(
+        q => q.predicate.value === RDF_TYPE && q.object.value === sourceClass,
+      );
+      const inferredTypeQuads = inferred.filter(
+        q => q.predicate.value === RDF_TYPE && q.object.value === sourceClass,
+      );
+      const allTypeQuads = [...typeQuads, ...inferredTypeQuads];
+      for (const tq of allTypeQuads) {
+        const sourceIndi = tq.subject.value;
+        const roleQuad = allBase.find(
+          q => q.subject.value === sourceIndi && q.predicate.value === prop && q.object.value === subjectIri,
+        );
+        if (!roleQuad) continue;
+        const restrictionTypeQuad = allBase.find(
+          q => q.subject.value === rNode && q.predicate.value === RDF_TYPE && q.object.value === OWL_RESTRICTION,
+        );
+        const justification: Quad[] = [];
+        if (restrictionTypeQuad) justification.push(restrictionTypeQuad);
+        justification.push(svfQuad, propQuad, classQuad, tq, roleQuad);
+        return justification;
+      }
+    }
+    return null;
+  }
+
+  private _synthesizeMinCardinalityJustification(
+    allBase: Quad[], subjectIri: string, objectIri: string,
+  ): Quad[] | null {
+    const mcQuads = allBase.filter(
+      q => q.predicate.value === OWL_MIN_CARDINALITY || q.predicate.value === OWL_MIN_QUALIFIED_CARDINALITY,
+    );
+    for (const mcQuad of mcQuads) {
+      const rNode = mcQuad.subject.value;
+      const minCard = parseInt(mcQuad.object.value, 10);
+      if (isNaN(minCard) || minCard < 1) continue;
+      const propQuad = allBase.find(
+        q => q.subject.value === rNode && q.predicate.value === OWL_ON_PROPERTY,
+      );
+      if (!propQuad) continue;
+      const prop = propQuad.object.value;
+      const classQuad = allBase.find(
+        q => (q.predicate.value === OWL_EQUIVALENT_CLASS || q.predicate.value === RDFS_SUB_CLASS_OF) &&
+             q.object.value === rNode,
+      );
+      if (!classQuad) continue;
+      if (classQuad.subject.value !== objectIri) continue;
+      const roleAssertions = allBase.filter(
+        q => q.subject.value === subjectIri && q.predicate.value === prop,
+      );
+      if (roleAssertions.length < minCard) continue;
+      if (minCard === 1) {
+        const restrictionTypeQuad = allBase.find(
+          q => q.subject.value === rNode && q.predicate.value === RDF_TYPE && q.object.value === OWL_RESTRICTION,
+        );
+        const justification: Quad[] = [];
+        if (restrictionTypeQuad) justification.push(restrictionTypeQuad);
+        justification.push(mcQuad, propQuad, classQuad, roleAssertions[0]);
+        return justification;
+      }
+      const fillers = roleAssertions.map(q => q.object.value);
+      const diffPairs: Quad[] = [];
+      for (let a = 0; a < fillers.length && diffPairs.length < minCard * (minCard - 1); a++) {
+        for (let b = a + 1; b < fillers.length; b++) {
+          const df = allBase.find(
+            q => (q.subject.value === fillers[a] && q.predicate.value === OWL_DIFFERENT_FROM && q.object.value === fillers[b]) ||
+                 (q.subject.value === fillers[b] && q.predicate.value === OWL_DIFFERENT_FROM && q.object.value === fillers[a]),
+          );
+          if (df) diffPairs.push(df);
+        }
+      }
+      if (diffPairs.length >= (minCard * (minCard - 1)) / 2) {
+        const restrictionTypeQuad = allBase.find(
+          q => q.subject.value === rNode && q.predicate.value === RDF_TYPE && q.object.value === OWL_RESTRICTION,
+        );
+        const justification: Quad[] = [];
+        if (restrictionTypeQuad) justification.push(restrictionTypeQuad);
+        justification.push(mcQuad, propQuad, classQuad, ...roleAssertions.slice(0, minCard), ...diffPairs);
+        return justification;
+      }
+    }
+    return null;
+  }
+
+  private _synthesizeOneOfTypeJustification(
+    allBase: Quad[], subjectIri: string, objectIri: string,
+  ): Quad[] | null {
+    const oneOfQuads = allBase.filter(
+      q => q.subject.value === objectIri && q.predicate.value === OWL_ONE_OF,
+    );
+    for (const oneOfQuad of oneOfQuads) {
+      const listHead = oneOfQuad.object.value;
+      const members = this._walkRdfList(allBase, listHead);
+      if (members.includes(subjectIri)) {
+        const listQuads = this._collectRdfListQuads(allBase, listHead);
+        return [oneOfQuad, ...listQuads];
+      }
+    }
+    return null;
+  }
+
   // -------------------------------------------------------------------------
   // explain()
   // -------------------------------------------------------------------------
@@ -1785,6 +1911,7 @@ export class RdfReasoner {
   ): Promise<EntailmentResult> {
     const maxJustifications = opts?.maxJustifications ?? 1;
     const objectIsClassLike = opts?.objectIsClassLike ?? true;
+    const mode = opts?.justificationMode ?? (opts?.nativeOnly ? "causal" : "causal");
 
     const result = this._queue.then(async () => {
       const allBase = store.getQuads(null, null, null, null).filter(q => {
@@ -1859,6 +1986,19 @@ export class RdfReasoner {
             return { isEntailed: true, justifications: [justQuads] };
           }
         }
+
+        // someValuesFrom synthesis: restriction + role assertion → type
+        const inferredQuads = store.getQuads(null, null, null, DataFactory.namedNode(INFERRED_GRAPH_IRI));
+        const svfJust = this._synthesizeSomeValuesFromJustification(allBase, inferredQuads, subjectIri, objectIri);
+        if (svfJust) return { isEntailed: true, justifications: [svfJust] };
+
+        // minCardinality synthesis: restriction + enough distinct fillers → type
+        const mcJust = this._synthesizeMinCardinalityJustification(allBase, subjectIri, objectIri);
+        if (mcJust) return { isEntailed: true, justifications: [mcJust] };
+
+        // oneOf synthesis: class owl:oneOf (...members...) → member rdf:type class
+        const oneOfJust = this._synthesizeOneOfTypeJustification(allBase, subjectIri, objectIri);
+        if (oneOfJust) return { isEntailed: true, justifications: [oneOfJust] };
       }
 
       // ── TS synthesis path ────────────────────────────────────────────
@@ -1957,11 +2097,24 @@ export class RdfReasoner {
       }
 
       // ── BlackBox fallback ─────────────────────────────────────────────
-      // Native path missed (no prior classification, or unsupported shape).
-      // Full entailment-as-unsatisfiability reduction with WASM reloads.
+      // Only used in "minimal" mode. In "causal" mode (default), check
+      // inferred graph for the triple — if present, it's entailed but we
+      // couldn't synthesize a justification. If absent, not entailed.
 
-      if (opts?.nativeOnly) {
-        return { isEntailed: true, justifications: [] as Quad[][] };
+      if (mode === "causal") {
+        const inferredGraph = store.getQuads(
+          subjectIri, predicateIri, objectIri,
+          DataFactory.namedNode(INFERRED_GRAPH_IRI),
+        );
+        const assertedMatch = allBase.some(
+          q => q.subject.value === subjectIri &&
+               q.predicate.value === predicateIri &&
+               q.object.value === objectIri,
+        );
+        if (inferredGraph.length > 0 || assertedMatch) {
+          return { isEntailed: true, justifications: [] as Quad[][] };
+        }
+        return { isEntailed: false, justifications: [] as Quad[][] };
       }
 
       // C1: ontology must be consistent for the reduction to be sound
