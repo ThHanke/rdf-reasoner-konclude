@@ -163,6 +163,9 @@ export interface ValidationResult {
  * Options for `validate()`.
  */
 export interface ValidateOptions {
+  /** Named graph IRI that holds inferred triples in the store.
+   *  Defaults to `INFERRED_GRAPH_IRI` (`"urn:konclude:inferred"`). */
+  inferredGraph?: string;
   /** Maximum inconsistency justifications to return. Defaults to 1. */
   maxJustificationsPerError?: number;
   /** Maximum justifications per unsatisfiable class. Defaults to 1.

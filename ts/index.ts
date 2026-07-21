@@ -697,9 +697,9 @@ export class RdfReasoner {
     }
   }
 
-  private async _classifyInline(store: Store, fingerprint: string): Promise<void> {
+  private async _classifyInline(store: Store, fingerprint: string, inferredGraph?: string): Promise<void> {
     if (this._classifyCache?.hash === fingerprint) return;
-    const ig = DataFactory.namedNode(INFERRED_GRAPH_IRI);
+    const ig = DataFactory.namedNode(inferredGraph ?? INFERRED_GRAPH_IRI);
     store.removeQuads(store.getQuads(null, null, null, ig));
     const { tripleBuffer, strTableBuffer } = encodeToBuffers(store.getQuads(null, null, null, null));
     await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer, false], [tripleBuffer, strTableBuffer]);
@@ -715,9 +715,9 @@ export class RdfReasoner {
     this._classifyPropertiesCache = null;    // cross-invalidate
   }
 
-  private async _materializeInline(store: Store, fingerprint: string): Promise<void> {
+  private async _materializeInline(store: Store, fingerprint: string, inferredGraph?: string): Promise<void> {
     if (this._materializeCache?.hash === fingerprint) return;
-    const ig = DataFactory.namedNode(INFERRED_GRAPH_IRI);
+    const ig = DataFactory.namedNode(inferredGraph ?? INFERRED_GRAPH_IRI);
     store.removeQuads(store.getQuads(null, null, null, ig));
     // Capture base quads BEFORE writing inferred quads so someValuesFrom scan
     // only sees the original store contents.
@@ -734,9 +734,9 @@ export class RdfReasoner {
     this._classifyPropertiesCache = null;    // cross-invalidate
   }
 
-  private async _classifyPropertiesInline(store: Store, fingerprint: string): Promise<void> {
+  private async _classifyPropertiesInline(store: Store, fingerprint: string, inferredGraph?: string): Promise<void> {
     if (this._classifyPropertiesCache?.hash === fingerprint) return;
-    const ig = DataFactory.namedNode(INFERRED_GRAPH_IRI);
+    const ig = DataFactory.namedNode(inferredGraph ?? INFERRED_GRAPH_IRI);
     store.removeQuads(store.getQuads(null, null, null, ig));
     const { tripleBuffer, strTableBuffer } = encodeToBuffers(store.getQuads(null, null, null, null));
     await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer, false], [tripleBuffer, strTableBuffer]);
@@ -759,10 +759,10 @@ export class RdfReasoner {
    * writes inferred triples into the store on cache miss (same invariant as
    * _classifyInline).  Must be called from inside a _queue slot only.
    */
-  private async _getUnsatisfiableClassesInternal(store: Store): Promise<string[]> {
+  private async _getUnsatisfiableClassesInternal(store: Store, inferredGraph?: string): Promise<string[]> {
     const fingerprint = computeStoreFingerprint(store.getQuads(null, null, null, null));
     if (this._classifyCache?.hash !== fingerprint) {
-      const ig = DataFactory.namedNode(INFERRED_GRAPH_IRI);
+      const ig = DataFactory.namedNode(inferredGraph ?? INFERRED_GRAPH_IRI);
       store.removeQuads(store.getQuads(null, null, null, ig));
       const { tripleBuffer, strTableBuffer } = encodeToBuffers(store.getQuads(null, null, null, null));
       await this._callDirect("loadTripleBuffer", [tripleBuffer, strTableBuffer, false], [tripleBuffer, strTableBuffer]);
@@ -806,20 +806,25 @@ export class RdfReasoner {
     return result;
   }
 
+  // REVIEW: isEntailed re-runs classify/materialize internally — callers like
+  // ontosphere already materialize through DlReasoner. Consider removing the
+  // internal reasoning and relying on the caller's prior materialize() call.
   /** Check whether a single axiom is entailed by the store's ontology. Returns
    *  null for unsupported predicates (a warning is logged). Triggers reasoning
    *  internally if the store has changed since the last call. */
-  isEntailed(store: Store, axiom: Quad): Promise<boolean | null>;
+  isEntailed(store: Store, axiom: Quad, opts?: { inferredGraph?: string }): Promise<boolean | null>;
   /** Check whether each axiom in a batch is entailed. Returns null for
    *  individual unsupported predicates. Reasoning is triggered at most once
    *  per required operation type. */
-  isEntailed(store: Store, axioms: Quad[]): Promise<(boolean | null)[]>;
+  isEntailed(store: Store, axioms: Quad[], opts?: { inferredGraph?: string }): Promise<(boolean | null)[]>;
   isEntailed(
     store: Store,
     axiomOrAxioms: Quad | Quad[],
+    opts?: { inferredGraph?: string },
   ): Promise<boolean | null> | Promise<(boolean | null)[]> {
     const isBatch = Array.isArray(axiomOrAxioms);
     const axioms: Quad[] = isBatch ? (axiomOrAxioms as Quad[]) : [axiomOrAxioms as Quad];
+    const igIri = opts?.inferredGraph ?? INFERRED_GRAPH_IRI;
 
     // Fast-path unsupported check for single axiom (no queue entry needed)
     if (!isBatch) {
@@ -831,7 +836,7 @@ export class RdfReasoner {
     }
 
     const result = this._queue.then(async () => {
-      const ig = DataFactory.namedNode(INFERRED_GRAPH_IRI);
+      const ig = DataFactory.namedNode(igIri);
       const fingerprint = computeStoreFingerprint(store.getQuads(null, null, null, null));
 
       // Determine which operations are needed
@@ -840,10 +845,9 @@ export class RdfReasoner {
       const needsClassifyProps = axioms.some(a => this._opForPredicate(a.predicate.value) === "classifyProperties");
 
       // Run needed operations in order; each cross-invalidates others
-      // Check classify axioms immediately after classify runs (before materialize overwrites INFERRED_GRAPH_IRI)
       const classifyResults = new Map<Quad, boolean>();
       if (needsClassify) {
-        await this._classifyInline(store, fingerprint);
+        await this._classifyInline(store, fingerprint, igIri);
         for (const a of axioms) {
           if (this._opForPredicate(a.predicate.value) === "classify") {
             classifyResults.set(a, store.has(DataFactory.quad(a.subject, a.predicate, a.object, ig)));
@@ -853,7 +857,7 @@ export class RdfReasoner {
 
       const materializeResults = new Map<Quad, boolean>();
       if (needsMaterialize) {
-        await this._materializeInline(store, fingerprint);
+        await this._materializeInline(store, fingerprint, igIri);
         for (const a of axioms) {
           if (this._opForPredicate(a.predicate.value) === "materialize") {
             materializeResults.set(a, store.has(DataFactory.quad(a.subject, a.predicate, a.object, ig)));
@@ -863,7 +867,7 @@ export class RdfReasoner {
 
       const classifyPropsResults = new Map<Quad, boolean>();
       if (needsClassifyProps) {
-        await this._classifyPropertiesInline(store, fingerprint);
+        await this._classifyPropertiesInline(store, fingerprint, igIri);
         for (const a of axioms) {
           if (this._opForPredicate(a.predicate.value) === "classifyProperties") {
             classifyPropsResults.set(a, store.has(DataFactory.quad(a.subject, a.predicate, a.object, ig)));
@@ -911,27 +915,30 @@ export class RdfReasoner {
    * If `opts.outputGraph` is provided the hypothetical inferences are also
    * written to that named graph in the store (must not equal INFERRED_GRAPH_IRI).
    */
-  whatIf(store: Store, additions: Quad[], opts?: WhatIfOptions): Promise<{ added: Quad[]; removed: Quad[] }> {
-    if (opts?.outputGraph === INFERRED_GRAPH_IRI) {
-      return Promise.reject(new Error(`whatIf: outputGraph must not equal INFERRED_GRAPH_IRI`));
+  // REVIEW: whatIf re-runs materialize internally — consider whether callers
+  // should handle this through DlReasoner instead.
+  whatIf(store: Store, additions: Quad[], opts?: WhatIfOptions & { inferredGraph?: string }): Promise<{ added: Quad[]; removed: Quad[] }> {
+    const igIri = opts?.inferredGraph ?? INFERRED_GRAPH_IRI;
+    if (opts?.outputGraph === igIri) {
+      return Promise.reject(new Error(`whatIf: outputGraph must not equal the inferred graph IRI`));
     }
     if (opts?.outputGraph === HYPOTHETICAL_IRI) {
       return Promise.reject(new Error(`whatIf: outputGraph must not equal HYPOTHETICAL_IRI`));
     }
 
     const result = this._queue.then(async () => {
-      const ig = DataFactory.namedNode(INFERRED_GRAPH_IRI);
+      const ig = DataFactory.namedNode(igIri);
 
-      // Snapshot before: current INFERRED_GRAPH_IRI quads (these quads have graph=ig)
+      // Snapshot before: current inferred quads
       const before: Quad[] = store.getQuads(null, null, null, ig);
 
-      // Build hypothetical quad set: base quads excluding INFERRED/HYPOTHETICAL graphs
+      // Build hypothetical quad set: base quads excluding inferred/hypothetical graphs
       const removalKeys = new Set(
         (opts?.removals ?? []).map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`)
       );
       const baseQuads = store.getQuads(null, null, null, null).filter(q => {
         const g = q.graph.value;
-        if (g === INFERRED_GRAPH_IRI || g === HYPOTHETICAL_IRI) return false;
+        if (g === igIri || g === HYPOTHETICAL_IRI) return false;
         const key = `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`;
         return !removalKeys.has(key);
       });
@@ -1649,11 +1656,12 @@ export class RdfReasoner {
       //   background    — built-in declarations always passed to WASM so Konclude
       //                   can recognise classes/properties, but never returned as
       //                   part of a justification
+      const igIri = opts?.inferredGraph ?? INFERRED_GRAPH_IRI;
       const allCandidates: Quad[] = [];
       const background: Quad[] = [];
       for (const q of store.getQuads(null, null, null, null)) {
         const g = q.graph.value;
-        if (g === INFERRED_GRAPH_IRI || g === HYPOTHETICAL_IRI) continue;
+        if (g === igIri || g === HYPOTHETICAL_IRI) continue;
         if (this._isBuiltInDeclaration(q)) {
           background.push(q);
           continue;
@@ -2557,14 +2565,15 @@ export class RdfReasoner {
     const result = this._queue.then(async () => {
       const maxErr  = opts?.maxJustificationsPerError  ?? 1;
       const maxWarn = opts?.maxJustificationsPerWarning ?? 1;
+      const igIri = opts?.inferredGraph ?? INFERRED_GRAPH_IRI;
 
       const allBase = store.getQuads(null, null, null, null).filter(q =>
-        q.graph.value !== INFERRED_GRAPH_IRI && q.graph.value !== HYPOTHETICAL_IRI,
+        q.graph.value !== igIri && q.graph.value !== HYPOTHETICAL_IRI,
       );
 
       const makeCandidates = () => store.getQuads(null, null, null, null).filter(q => {
         const g = q.graph.value;
-        if (g === INFERRED_GRAPH_IRI || g === HYPOTHETICAL_IRI) return false;
+        if (g === igIri || g === HYPOTHETICAL_IRI) return false;
         if (opts?.axiomFilter && !opts.axiomFilter(q)) return false;
         return true;
       });
