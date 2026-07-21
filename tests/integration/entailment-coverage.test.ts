@@ -100,22 +100,13 @@ describe.skipIf(!wasmExists)("Entailment coverage: roberts-family", () => {
 
   // ── 4. rdf:type (subClassOf chain) — Native ─────────────────────────
 
-  it("rdf:type via subClassOf chain: Robert rdf:type Person (entailed)", async () => {
+  it("rdf:type via domain: robert_jerome_hostler rdf:type Person (entailed)", async () => {
     const result = await reasoner.explainEntailment(
-      store, `${ROBERTS}Robert`, RDF_TYPE, `${ROBERTS}Person`,
+      store, `${ROBERTS}robert_jerome_hostler`, RDF_TYPE, `${ROBERTS}Person`,
     );
-    if (result.isEntailed) {
-      expect(result.justifications.length).toBeGreaterThanOrEqual(1);
-    }
-  }, 60000);
-
-  it("rdf:type: Robert rdf:type GrandParent (not entailed)", async () => {
-    const result = await reasoner.explainEntailment(
-      store, `${ROBERTS}Robert`, RDF_TYPE, `${ROBERTS}GrandParent`,
-    );
-    // Robert may or may not be a GrandParent in the ontology;
-    // this test validates the API returns a valid result shape
-    expect(typeof result.isEntailed).not.toBe("undefined");
+    expect(result.isEntailed).toBe(true);
+    expect(result.justifications.length).toBeGreaterThanOrEqual(1);
+    expect(result.justifications[0].length).toBeGreaterThan(0);
   }, 60000);
 
   // ── 9. owl:sameAs (native) — Native (realization cache) ─────────────
@@ -207,6 +198,7 @@ describe.skipIf(!wasmExists)("Entailment coverage: owl2dl fixtures", () => {
       );
       expect(result.isEntailed).toBe(true);
       expect(result.justifications.length).toBeGreaterThanOrEqual(1);
+      expect(result.justifications[0].length).toBeGreaterThan(0);
     }, 60000);
 
     it("dave rdf:type GrandParent (not entailed)", async () => {
@@ -295,6 +287,7 @@ describe.skipIf(!wasmExists)("Entailment coverage: owl2dl fixtures", () => {
       );
       expect(result.isEntailed).toBe(true);
       expect(result.justifications.length).toBeGreaterThanOrEqual(1);
+      expect(result.justifications[0].length).toBeGreaterThan(0);
     }, 60000);
 
     it("Purple rdf:type PrimaryColor (not entailed)", async () => {
@@ -322,6 +315,8 @@ describe.skipIf(!wasmExists)("Entailment coverage: owl2dl fixtures", () => {
         { objectIsClassLike: false },
       );
       expect(result.isEntailed).toBe(true);
+      expect(result.justifications.length).toBeGreaterThanOrEqual(1);
+      expect(result.justifications[0].length).toBeGreaterThan(0);
     }, 60000);
 
     it("non-asserted data property (not entailed)", async () => {
@@ -396,18 +391,22 @@ describe.skipIf(!wasmExists)("Entailment coverage: owl2dl fixtures", () => {
       await reasoner.materialize(store, { includeClassHierarchy: true });
     }, 360000);
 
-    it("alice rdf:type Person via domain (entailed)", async () => {
+    it("alice rdf:type Person via domain (entailed with justification)", async () => {
       const result = await reasoner.explainEntailment(
         store, EX("alice"), RDF_TYPE, EX("Person"),
       );
       expect(result.isEntailed).toBe(true);
+      expect(result.justifications.length).toBeGreaterThanOrEqual(1);
+      expect(result.justifications[0].length).toBeGreaterThan(0);
     }, 60000);
 
-    it("fido rdf:type Animal via range (entailed)", async () => {
+    it("fido rdf:type Animal via range (entailed with justification)", async () => {
       const result = await reasoner.explainEntailment(
         store, EX("fido"), RDF_TYPE, EX("Animal"),
       );
       expect(result.isEntailed).toBe(true);
+      expect(result.justifications.length).toBeGreaterThanOrEqual(1);
+      expect(result.justifications[0].length).toBeGreaterThan(0);
     }, 60000);
   });
 
@@ -432,12 +431,14 @@ describe.skipIf(!wasmExists)("Entailment coverage: owl2dl fixtures", () => {
       await reasoner.materialize(store, { includeClassHierarchy: true });
     }, 360000);
 
-    it("asserted object property returns entailed", async () => {
+    it("asserted object property returns entailed with justification", async () => {
       const result = await reasoner.explainEntailment(
         store, EX("alice"), EX("knows"), EX("bob"),
         { objectIsClassLike: false },
       );
       expect(result.isEntailed).toBe(true);
+      expect(result.justifications.length).toBeGreaterThanOrEqual(1);
+      expect(result.justifications[0].length).toBeGreaterThan(0);
     }, 60000);
 
     it("non-asserted object property returns not entailed", async () => {

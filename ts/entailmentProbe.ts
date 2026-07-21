@@ -9,6 +9,7 @@ const OWL_SAME_AS = "http://www.w3.org/2002/07/owl#sameAs";
 const OWL_EQUIVALENT_PROPERTY = "http://www.w3.org/2002/07/owl#equivalentProperty";
 const OWL_DISJOINT_WITH = "http://www.w3.org/2002/07/owl#disjointWith";
 const OWL_EQUIVALENT_CLASS = "http://www.w3.org/2002/07/owl#equivalentClass";
+const RDFS_SUB_PROPERTY_OF = "http://www.w3.org/2000/01/rdf-schema#subPropertyOf";
 
 export type ProbeKind =
   | "subClassOf"
@@ -17,6 +18,7 @@ export type ProbeKind =
   | "equivalentProperty"
   | "disjointWith"
   | "equivalentClass"
+  | "subPropertyOf"
   | "dataProperty"
   | "unsupported";
 
@@ -44,6 +46,7 @@ export function classifyAxiom(
   if (predicateIri === RDF_TYPE) return "type";
   if (predicateIri === OWL_DISJOINT_WITH) return "disjointWith";
   if (predicateIri === OWL_EQUIVALENT_CLASS) return "equivalentClass";
+  if (predicateIri === RDFS_SUB_PROPERTY_OF) return "subPropertyOf";
   return "unsupported";
 }
 
