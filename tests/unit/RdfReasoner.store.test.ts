@@ -875,7 +875,7 @@ describe("RdfReasoner — Store API", () => {
 
       await expect(
         reasoner.whatIf(store, [], { outputGraph: INFERRED_GRAPH_IRI })
-      ).rejects.toThrow("whatIf: outputGraph must not equal INFERRED_GRAPH_IRI");
+      ).rejects.toThrow("whatIf: outputGraph must not equal the inferred graph IRI");
 
       expect(mocks.workerPostMessage).not.toHaveBeenCalled();
     });
