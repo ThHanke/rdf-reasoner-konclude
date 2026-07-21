@@ -116,6 +116,8 @@ function mockValidateSequence(opts: {
       simulateWorkerMessage({ id: req.id, result: EMPTY_BUF });
     } else if (req.method === "getUnsatisfiableClassBuffer") {
       simulateWorkerMessage({ id: req.id, result: unsatInSubset });
+    } else if (req.method === "hasNativeJustification") {
+      simulateWorkerMessage({ id: req.id, result: false });
     }
   });
 }
