@@ -119,6 +119,8 @@ function mockAlwaysConsistent() {
       simulateWorkerMessage({ id: req.id, result: true });
     } else if (req.method === "hasNativeJustification") {
       simulateWorkerMessage({ id: req.id, result: false });
+    } else if (req.method === "hasJustificationByType") {
+      simulateWorkerMessage({ id: req.id, result: false });
     } else if (req.method === "getInferredTripleBuffer") {
       simulateWorkerMessage({ id: req.id, result: buildCombinedBuffer([]) });
     }
@@ -138,6 +140,8 @@ function mockAlwaysInconsistent() {
     } else if (req.method === "consistency") {
       simulateWorkerMessage({ id: req.id, result: false }); // inconsistent
     } else if (req.method === "hasNativeJustification") {
+      simulateWorkerMessage({ id: req.id, result: false });
+    } else if (req.method === "hasJustificationByType") {
       simulateWorkerMessage({ id: req.id, result: false });
     }
   });
@@ -169,6 +173,8 @@ function mockEntailmentViaProbe(consistencyThreshold: number, isSatisfiableClass
     } else if (req.method === "isSatisfiableClass") {
       simulateWorkerMessage({ id: req.id, result: isSatisfiableClass });
     } else if (req.method === "hasNativeJustification") {
+      simulateWorkerMessage({ id: req.id, result: false });
+    } else if (req.method === "hasJustificationByType") {
       simulateWorkerMessage({ id: req.id, result: false });
     } else if (req.method === "getSubClassJustification") {
       simulateWorkerMessage({ id: req.id, result: "" });
@@ -711,5 +717,199 @@ describe("RdfReasoner — explainEntailment", () => {
 
     expect(result.isEntailed).toBe(false);
     expect(result.justifications).toEqual([]);
+  });
+
+  // =========================================================================
+  // Track A: native justification cache paths (IU-A6)
+  // =========================================================================
+
+  // -------------------------------------------------------------------------
+  // Test 19: equivalentClass via bidirectional subClassOf cache
+  // -------------------------------------------------------------------------
+
+  it("equivalentClass — native bidirectional subClassOf", async () => {
+    const reasoner = await makeReadyReasoner();
+    const store = new Store([
+      quad(A, subClassOf, B, defaultGraph()),
+      quad(B, subClassOf, A, defaultGraph()),
+    ]);
+
+    mocks.workerPostMessage.mockImplementation((msg: unknown) => {
+      const req = msg as { id: number; method: string; args: unknown[] };
+      if (req.method === "hasNativeJustification") {
+        simulateWorkerMessage({ id: req.id, result: true });
+      } else if (req.method === "getSubClassJustification") {
+        const sub = req.args[0] as string;
+        const sup = req.args[1] as string;
+        simulateWorkerMessage({
+          id: req.id,
+          result: `<${sub}> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <${sup}> .\n`,
+        });
+      } else if (req.method === "hasJustificationByType") {
+        simulateWorkerMessage({ id: req.id, result: false });
+      }
+    });
+
+    const result = await reasoner.explainEntailment(
+      store, A.value,
+      "http://www.w3.org/2002/07/owl#equivalentClass",
+      B.value,
+    );
+
+    expect(result.isEntailed).toBe(true);
+    expect(result.justifications).toHaveLength(1);
+    expect(result.justifications[0].length).toBeGreaterThanOrEqual(1);
+    expect(result.justifications[0].some(
+      (q: Quad) => q.predicate.value === RDFS_SUBCLASS_OF,
+    )).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 20: equivalentClass — cache miss falls through
+  // -------------------------------------------------------------------------
+
+  it("equivalentClass — no native cache → not entailed", async () => {
+    const reasoner = await makeReadyReasoner();
+    const store = new Store([
+      quad(A, subClassOf, B, defaultGraph()),
+    ]);
+
+    mocks.workerPostMessage.mockImplementation((msg: unknown) => {
+      const req = msg as { id: number; method: string };
+      if (req.method === "hasNativeJustification") {
+        simulateWorkerMessage({ id: req.id, result: false });
+      } else if (req.method === "hasJustificationByType") {
+        simulateWorkerMessage({ id: req.id, result: false });
+      }
+    });
+
+    const result = await reasoner.explainEntailment(
+      store, A.value,
+      "http://www.w3.org/2002/07/owl#equivalentClass",
+      B.value,
+    );
+
+    expect(result.isEntailed).toBe(false);
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 21: disjointWith — native Classification cache hit
+  // -------------------------------------------------------------------------
+
+  it("disjointWith — native Classification cache hit", async () => {
+    const reasoner = await makeReadyReasoner();
+    const store = new Store([
+      quad(A, owlDisjointWith, B, defaultGraph()),
+    ]);
+
+    mocks.workerPostMessage.mockImplementation((msg: unknown) => {
+      const req = msg as { id: number; method: string; args: unknown[] };
+      if (req.method === "hasNativeJustification") {
+        simulateWorkerMessage({ id: req.id, result: false });
+      } else if (req.method === "hasJustificationByType") {
+        const type = req.args[2] as number;
+        if (type === 0) { // Classification
+          simulateWorkerMessage({ id: req.id, result: true });
+        } else {
+          simulateWorkerMessage({ id: req.id, result: false });
+        }
+      } else if (req.method === "getJustificationByType") {
+        simulateWorkerMessage({
+          id: req.id,
+          result: `<${A.value}> <http://www.w3.org/2002/07/owl#disjointWith> <${B.value}> .\n`,
+        });
+      }
+    });
+
+    const result = await reasoner.explainEntailment(
+      store, A.value,
+      "http://www.w3.org/2002/07/owl#disjointWith",
+      B.value,
+    );
+
+    expect(result.isEntailed).toBe(true);
+    expect(result.justifications).toHaveLength(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 22: rdf:type — Realization cache fallback
+  // -------------------------------------------------------------------------
+
+  it("rdf:type — Realization cache fallback after Classification miss", async () => {
+    const reasoner = await makeReadyReasoner();
+    const store = new Store([
+      quad(alice, rdfType, namedNode("http://example.org/Student"), defaultGraph()),
+    ]);
+
+    mocks.workerPostMessage.mockImplementation((msg: unknown) => {
+      const req = msg as { id: number; method: string; args: unknown[] };
+      if (req.method === "hasNativeJustification") {
+        simulateWorkerMessage({ id: req.id, result: false });
+      } else if (req.method === "hasJustificationByType") {
+        const type = req.args[2] as number;
+        if (type === 1) { // Realization
+          simulateWorkerMessage({ id: req.id, result: true });
+        } else {
+          simulateWorkerMessage({ id: req.id, result: false });
+        }
+      } else if (req.method === "getJustificationByType") {
+        simulateWorkerMessage({
+          id: req.id,
+          result: `<http://example.org/Student> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <${Person.value}> .\n`,
+        });
+      }
+    });
+
+    const result = await reasoner.explainEntailment(
+      store,
+      alice.value,
+      RDF_TYPE,
+      Person.value,
+    );
+
+    expect(result.isEntailed).toBe(true);
+    expect(result.justifications).toHaveLength(1);
+    expect(result.justifications[0].some(
+      (q: Quad) => q.predicate.value === RDFS_SUBCLASS_OF,
+    )).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 23: sameAs — native Realization cache hit
+  // -------------------------------------------------------------------------
+
+  it("sameAs — native Realization cache hit", async () => {
+    const reasoner = await makeReadyReasoner();
+    const store = new Store([
+      quad(A, subClassOf, B, defaultGraph()),
+    ]);
+
+    mocks.workerPostMessage.mockImplementation((msg: unknown) => {
+      const req = msg as { id: number; method: string; args: unknown[] };
+      if (req.method === "hasNativeJustification") {
+        simulateWorkerMessage({ id: req.id, result: false });
+      } else if (req.method === "hasJustificationByType") {
+        const type = req.args[2] as number;
+        if (type === 1) { // Realization
+          simulateWorkerMessage({ id: req.id, result: true });
+        } else {
+          simulateWorkerMessage({ id: req.id, result: false });
+        }
+      } else if (req.method === "getJustificationByType") {
+        simulateWorkerMessage({
+          id: req.id,
+          result: `<${A.value}> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <${B.value}> .\n`,
+        });
+      }
+    });
+
+    const result = await reasoner.explainEntailment(
+      store, A.value,
+      "http://www.w3.org/2002/07/owl#sameAs",
+      B.value,
+    );
+
+    expect(result.isEntailed).toBe(true);
+    expect(result.justifications).toHaveLength(1);
   });
 });

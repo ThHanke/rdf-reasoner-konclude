@@ -191,6 +191,22 @@ export async function handleMessage(
         result = reasoner.hasNativeJustification(args[0] as string, args[1] as string);
         break;
       }
+      case "getAxiomsForConceptTag": {
+        result = reasoner.getAxiomsForConceptTag(args[0] as number);
+        break;
+      }
+      case "getAxiomsForRoleTag": {
+        result = reasoner.getAxiomsForRoleTag(args[0] as number);
+        break;
+      }
+      case "getJustificationByType": {
+        result = reasoner.getJustificationByType(args[0] as string, args[1] as string, args[2] as number);
+        break;
+      }
+      case "hasJustificationByType": {
+        result = reasoner.hasJustificationByType(args[0] as string, args[1] as string, args[2] as number);
+        break;
+      }
       default: {
         const response: WorkerResponse = {
           id,

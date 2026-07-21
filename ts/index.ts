@@ -1087,6 +1087,29 @@ export class RdfReasoner {
     return (await this._callDirect("hasNativeJustification", [sub, sup])) as boolean;
   }
 
+  /** IU-A1: Reverse-map a concept tag to source axiom NTriples. */
+  async _getAxiomsForConceptTag(tag: number): Promise<string> {
+    return (await this._callDirect("getAxiomsForConceptTag", [tag])) as string;
+  }
+
+  /** IU-A1: Reverse-map a role tag to source axiom NTriples. */
+  async _getAxiomsForRoleTag(tag: number): Promise<string> {
+    return (await this._callDirect("getAxiomsForRoleTag", [tag])) as string;
+  }
+
+  // EntailmentType enum values matching JustificationCache.h
+  private static readonly _ET_CLASSIFICATION = 0;
+  private static readonly _ET_REALIZATION = 1;
+  private static readonly _ET_PROPERTY_SUBSUMPTION = 2;
+
+  private async _getJustificationByTypeDirect(subIri: string, superIri: string, type: number): Promise<string> {
+    return (await this._callDirect("getJustificationByType", [subIri, superIri, type])) as string;
+  }
+
+  private async _hasJustificationByTypeDirect(subIri: string, superIri: string, type: number): Promise<boolean> {
+    return (await this._callDirect("hasJustificationByType", [subIri, superIri, type])) as boolean;
+  }
+
   private _parseNTriplesJustification(ntriples: string): Quad[] {
     const quads: Quad[] = [];
     for (const line of ntriples.split('\n')) {
@@ -1809,6 +1832,7 @@ export class RdfReasoner {
           return { isEntailed: true, justifications: [[typeQuad as Quad]] };
         }
 
+        // Classification-based: asserted rdf:type A, A ⊑ B → inferred rdf:type B
         for (const assertedType of assertedTypes) {
           const hasNative = await this._hasNativeJustificationDirect(assertedType, objectIri);
           if (!hasNative) continue;
@@ -1822,6 +1846,18 @@ export class RdfReasoner {
             DataFactory.namedNode(assertedType),
           );
           return { isEntailed: true, justifications: [[typeQuad as Quad, ...subClassQuads]] };
+        }
+
+        // Realization-based: clash-path hook captured dep chain during tableau
+        const hasRealization = await this._hasJustificationByTypeDirect(
+          subjectIri, objectIri, RdfReasoner._ET_REALIZATION);
+        if (hasRealization) {
+          const ntriples = await this._getJustificationByTypeDirect(
+            subjectIri, objectIri, RdfReasoner._ET_REALIZATION);
+          const justQuads = this._parseNTriplesJustification(ntriples);
+          if (justQuads.length > 0) {
+            return { isEntailed: true, justifications: [justQuads] };
+          }
         }
       }
 
@@ -1839,7 +1875,18 @@ export class RdfReasoner {
             q => q.subject.value === subjectIri && q.predicate.value === OWL_SAME_AS && q.object.value === objectIri,
           )!]] };
         }
-        // No BlackBox probe for sameAs — synthesis or asserted only (Track A adds native cache)
+
+        // Native Realization cache: sameAs captured by clash-path hook
+        const hasNative = await this._hasJustificationByTypeDirect(
+          subjectIri, objectIri, RdfReasoner._ET_REALIZATION);
+        if (hasNative) {
+          const ntriples = await this._getJustificationByTypeDirect(
+            subjectIri, objectIri, RdfReasoner._ET_REALIZATION);
+          const justQuads = this._parseNTriplesJustification(ntriples);
+          if (justQuads.length > 0) {
+            return { isEntailed: true, justifications: [justQuads] };
+          }
+        }
         return { isEntailed: false, justifications: [] as Quad[][] };
       }
 
@@ -1852,14 +1899,43 @@ export class RdfReasoner {
       if (probeKind === "equivalentClass") {
         const just = this._synthesizeEquivalentClassJustification(allBase, subjectIri, objectIri);
         if (just) return { isEntailed: true, justifications: [just] };
-        // Track A will add native bidirectional subClassOf cache lookup here
+
+        // Native bidirectional subClassOf cache: A ≡ B iff A ⊑ B and B ⊑ A
+        const hasForward = await this._hasNativeJustificationDirect(subjectIri, objectIri);
+        const hasReverse = await this._hasNativeJustificationDirect(objectIri, subjectIri);
+        if (hasForward && hasReverse) {
+          const fwd = this._parseNTriplesJustification(
+            await this._getSubClassJustificationDirect(subjectIri, objectIri));
+          const rev = this._parseNTriplesJustification(
+            await this._getSubClassJustificationDirect(objectIri, subjectIri));
+          if (fwd.length > 0 && rev.length > 0) {
+            const seen = new Set<string>();
+            const combined: Quad[] = [];
+            for (const q of [...fwd, ...rev]) {
+              const k = `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`;
+              if (!seen.has(k)) { seen.add(k); combined.push(q); }
+            }
+            return { isEntailed: true, justifications: [combined] };
+          }
+        }
         return { isEntailed: false, justifications: [] as Quad[][] };
       }
 
       if (probeKind === "disjointWith") {
         const just = this._synthesizeDisjointWithJustification(allBase, subjectIri, objectIri);
         if (just) return { isEntailed: true, justifications: [just] };
-        // Track A will add native classification cache lookup here
+
+        // Native classification cache: disjointness stored as Classification entries
+        const hasNative = await this._hasJustificationByTypeDirect(
+          subjectIri, objectIri, RdfReasoner._ET_CLASSIFICATION);
+        if (hasNative) {
+          const ntriples = await this._getJustificationByTypeDirect(
+            subjectIri, objectIri, RdfReasoner._ET_CLASSIFICATION);
+          const justQuads = this._parseNTriplesJustification(ntriples);
+          if (justQuads.length > 0) {
+            return { isEntailed: true, justifications: [justQuads] };
+          }
+        }
         return { isEntailed: false, justifications: [] as Quad[][] };
       }
 

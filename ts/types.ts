@@ -273,4 +273,10 @@ export interface ExplainEntailmentOptions extends ExplainOptions {
    * Defaults to `true`.
    */
   objectIsClassLike?: boolean;
+  /**
+   * Only use the native dep-chain justification cache. Never fall back to the
+   * BlackBox algorithm (which reloads WASM and can hang in browser).
+   * If the native path misses, returns `isEntailed: true` with empty justifications.
+   */
+  nativeOnly?: boolean;
 }

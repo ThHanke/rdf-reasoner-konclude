@@ -20,5 +20,9 @@ EMSCRIPTEN_BINDINGS(konclude) {
         .function("isSatisfiableClass",               &KoncludeReasoner::isSatisfiableClass)
         .function("getSubClassJustification",         &KoncludeReasoner::getSubClassJustification)
         .function("hasNativeJustification",           &KoncludeReasoner::hasNativeJustification)
+        .function("getAxiomsForConceptTag",           &KoncludeReasoner::getAxiomsForConceptTag)
+        .function("getAxiomsForRoleTag",              &KoncludeReasoner::getAxiomsForRoleTag)
+        .function("getJustificationByType",           &KoncludeReasoner::getJustificationByType)
+        .function("hasJustificationByType",           &KoncludeReasoner::hasJustificationByType)
         .function("reset",                            &KoncludeReasoner::reset);
 }
