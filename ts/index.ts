@@ -1914,9 +1914,10 @@ export class RdfReasoner {
     const mode = opts?.justificationMode ?? (opts?.nativeOnly ? "causal" : "causal");
 
     const result = this._queue.then(async () => {
+      const ig = opts?.inferredGraph ?? INFERRED_GRAPH_IRI;
       const allBase = store.getQuads(null, null, null, null).filter(q => {
         const g = q.graph.value;
-        return g !== INFERRED_GRAPH_IRI && g !== HYPOTHETICAL_IRI;
+        return g !== ig && g !== HYPOTHETICAL_IRI;
       });
 
       const probeKind = classifyAxiom(predicateIri, objectIsClassLike);
@@ -2113,6 +2114,14 @@ export class RdfReasoner {
         );
         if (inferredGraph.length > 0 || assertedMatch) {
           return { isEntailed: true, justifications: [] as Quad[][] };
+        }
+        // buildInferredTripleBuffer suppresses X subClassOf owl:Nothing,
+        // so check satisfiability directly for that case.
+        if (objectIri === OWL_NOTHING && predicateIri === RDFS_SUB_CLASS_OF) {
+          const sat = await this._isSatisfiableClassDirect(subjectIri);
+          if (!sat) {
+            return { isEntailed: true, justifications: [] as Quad[][] };
+          }
         }
         return { isEntailed: false, justifications: [] as Quad[][] };
       }
@@ -2370,24 +2379,37 @@ export class RdfReasoner {
       const unsatIRIs = await this._getUnsatisfiableClassesInternal(store);
 
       // ── Step 4: warning justifications ────────────────────────────────────
+      // Native fast path: classification already ran (step 3), so the
+      // dep-chain cache contains clash justifications for unsatisfiable
+      // classes keyed as (C, owl:Nothing). Zero extra WASM reloads.
+      // Falls back to BlackBox only when native justification is absent.
       const warnings: ClassWarning[] = [];
       if (unsatIRIs.length > 0) {
-        const warnCands = makeCandidates();
-
         for (const classIRI of unsatIRIs) {
           if (maxWarn === 0) {
             warnings.push({ classIRI, justifications: [] });
             continue;
           }
 
+          // Try native justification first (O(1) lookup, no WASM reload)
+          const hasNative = await this._hasNativeJustificationDirect(classIRI, OWL_NOTHING);
+          if (hasNative) {
+            const ntriples = await this._getSubClassJustificationDirect(classIRI, OWL_NOTHING);
+            const justQuads = this._parseNTriplesJustification(ntriples);
+            if (justQuads.length > 0) {
+              warnings.push({ classIRI, justifications: [justQuads] });
+              continue;
+            }
+          }
+
+          // BlackBox fallback
+          const warnCands = makeCandidates();
+
           this._classifyCache = null;
           this._materializeCache = null;
           this._classifyPropertiesCache = null;
           this._consistencyCache = null;
 
-          // Use _checkUnsatisfiabilityDirect as oracle: buildInferredTripleBuffer
-          // suppresses `X rdfs:subClassOf owl:Nothing`, so _checkEntailmentDirect
-          // cannot detect per-class unsatisfiability.
           if (!(await this._checkUnsatisfiabilityDirect(warnCands, classIRI))) {
             warnings.push({ classIRI, justifications: [] });
             continue;
