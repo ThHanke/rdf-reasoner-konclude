@@ -121,6 +121,8 @@ function mockAlwaysConsistent() {
       simulateWorkerMessage({ id: req.id, result: false });
     } else if (req.method === "hasJustificationByType") {
       simulateWorkerMessage({ id: req.id, result: false });
+    } else if (req.method === "hasTripleJustification") {
+      simulateWorkerMessage({ id: req.id, result: false });
     } else if (req.method === "getInferredTripleBuffer") {
       simulateWorkerMessage({ id: req.id, result: buildCombinedBuffer([]) });
     }
@@ -142,6 +144,8 @@ function mockAlwaysInconsistent() {
     } else if (req.method === "hasNativeJustification") {
       simulateWorkerMessage({ id: req.id, result: false });
     } else if (req.method === "hasJustificationByType") {
+      simulateWorkerMessage({ id: req.id, result: false });
+    } else if (req.method === "hasTripleJustification") {
       simulateWorkerMessage({ id: req.id, result: false });
     }
   });
@@ -175,6 +179,8 @@ function mockEntailmentViaProbe(consistencyThreshold: number, isSatisfiableClass
     } else if (req.method === "hasNativeJustification") {
       simulateWorkerMessage({ id: req.id, result: false });
     } else if (req.method === "hasJustificationByType") {
+      simulateWorkerMessage({ id: req.id, result: false });
+    } else if (req.method === "hasTripleJustification") {
       simulateWorkerMessage({ id: req.id, result: false });
     } else if (req.method === "getSubClassJustification") {
       simulateWorkerMessage({ id: req.id, result: "" });
@@ -466,7 +472,6 @@ describe("RdfReasoner — explainEntailment", () => {
     const reasoner = await makeReadyReasoner();
     const fpProp = namedNode("http://example.org/hasMother");
     const owlFP = namedNode("http://www.w3.org/2002/07/owl#FunctionalProperty");
-    const owlSameAs = namedNode("http://www.w3.org/2002/07/owl#sameAs");
     const x = namedNode("http://example.org/x");
     const y = namedNode("http://example.org/y");
     const m = namedNode("http://example.org/Mary");
@@ -476,7 +481,15 @@ describe("RdfReasoner — explainEntailment", () => {
       quad(y, fpProp, m, defaultGraph()),
     ]);
 
-    mockAlwaysConsistent();
+    const fpJustNT = `<${fpProp.value}> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#FunctionalProperty> .\n<${x.value}> <${fpProp.value}> <${m.value}> .\n<${y.value}> <${fpProp.value}> <${m.value}> .\n`;
+    mocks.workerPostMessage.mockImplementation((msg: unknown) => {
+      const req = msg as { id: number; method: string; args: unknown[] };
+      if (req.method === "hasTripleJustification") {
+        simulateWorkerMessage({ id: req.id, result: true });
+      } else if (req.method === "lookupTripleJustification") {
+        simulateWorkerMessage({ id: req.id, result: fpJustNT });
+      }
+    });
 
     const result = await reasoner.explainEntailment(
       store,
@@ -501,7 +514,6 @@ describe("RdfReasoner — explainEntailment", () => {
     const reasoner = await makeReadyReasoner();
     const ifpProp = namedNode("http://example.org/hasSSN");
     const owlIFP = namedNode("http://www.w3.org/2002/07/owl#InverseFunctionalProperty");
-    const owlSameAs = namedNode("http://www.w3.org/2002/07/owl#sameAs");
     const alice2 = namedNode("http://example.org/alice2");
     const bob = namedNode("http://example.org/bob");
     const ssn = namedNode("http://example.org/ssn123");
@@ -511,7 +523,15 @@ describe("RdfReasoner — explainEntailment", () => {
       quad(ssn, ifpProp, bob, defaultGraph()),
     ]);
 
-    mockAlwaysConsistent();
+    const ifpJustNT = `<${ifpProp.value}> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#InverseFunctionalProperty> .\n<${ssn.value}> <${ifpProp.value}> <${alice2.value}> .\n<${ssn.value}> <${ifpProp.value}> <${bob.value}> .\n`;
+    mocks.workerPostMessage.mockImplementation((msg: unknown) => {
+      const req = msg as { id: number; method: string };
+      if (req.method === "hasTripleJustification") {
+        simulateWorkerMessage({ id: req.id, result: true });
+      } else if (req.method === "lookupTripleJustification") {
+        simulateWorkerMessage({ id: req.id, result: ifpJustNT });
+      }
+    });
 
     const result = await reasoner.explainEntailment(
       store,
@@ -563,7 +583,15 @@ describe("RdfReasoner — explainEntailment", () => {
       quad(p1, owlEP, p2, defaultGraph()),
     ]);
 
-    mockAlwaysConsistent();
+    const epJustNT = `<${p1.value}> <http://www.w3.org/2002/07/owl#equivalentProperty> <${p2.value}> .\n`;
+    mocks.workerPostMessage.mockImplementation((msg: unknown) => {
+      const req = msg as { id: number; method: string };
+      if (req.method === "hasTripleJustification") {
+        simulateWorkerMessage({ id: req.id, result: true });
+      } else if (req.method === "lookupTripleJustification") {
+        simulateWorkerMessage({ id: req.id, result: epJustNT });
+      }
+    });
 
     const result = await reasoner.explainEntailment(
       store,
@@ -584,14 +612,21 @@ describe("RdfReasoner — explainEntailment", () => {
 
   it("synthesizes equivalentProperty justification (reverse)", async () => {
     const reasoner = await makeReadyReasoner();
-    const owlEP = namedNode("http://www.w3.org/2002/07/owl#equivalentProperty");
     const p1 = namedNode("http://example.org/prop1");
     const p2 = namedNode("http://example.org/prop2");
     const store = new Store([
-      quad(p2, owlEP, p1, defaultGraph()),
+      quad(p2, namedNode("http://www.w3.org/2002/07/owl#equivalentProperty"), p1, defaultGraph()),
     ]);
 
-    mockAlwaysConsistent();
+    const epJustNT = `<${p1.value}> <http://www.w3.org/2002/07/owl#equivalentProperty> <${p2.value}> .\n`;
+    mocks.workerPostMessage.mockImplementation((msg: unknown) => {
+      const req = msg as { id: number; method: string };
+      if (req.method === "hasTripleJustification") {
+        simulateWorkerMessage({ id: req.id, result: true });
+      } else if (req.method === "lookupTripleJustification") {
+        simulateWorkerMessage({ id: req.id, result: epJustNT });
+      }
+    });
 
     const result = await reasoner.explainEntailment(
       store,
@@ -666,7 +701,15 @@ describe("RdfReasoner — explainEntailment", () => {
       quad(A, owlEC, B, defaultGraph()),
     ]);
 
-    mockAlwaysConsistent();
+    const ecJustNT = `<${A.value}> <http://www.w3.org/2002/07/owl#equivalentClass> <${B.value}> .\n`;
+    mocks.workerPostMessage.mockImplementation((msg: unknown) => {
+      const req = msg as { id: number; method: string };
+      if (req.method === "hasTripleJustification") {
+        simulateWorkerMessage({ id: req.id, result: true });
+      } else if (req.method === "lookupTripleJustification") {
+        simulateWorkerMessage({ id: req.id, result: ecJustNT });
+      }
+    });
 
     const result = await reasoner.explainEntailment(
       store,
@@ -756,6 +799,8 @@ describe("RdfReasoner — explainEntailment", () => {
         });
       } else if (req.method === "hasJustificationByType") {
         simulateWorkerMessage({ id: req.id, result: false });
+      } else if (req.method === "hasTripleJustification") {
+        simulateWorkerMessage({ id: req.id, result: false });
       }
     });
 
@@ -788,6 +833,8 @@ describe("RdfReasoner — explainEntailment", () => {
       if (req.method === "hasNativeJustification") {
         simulateWorkerMessage({ id: req.id, result: false });
       } else if (req.method === "hasJustificationByType") {
+        simulateWorkerMessage({ id: req.id, result: false });
+      } else if (req.method === "hasTripleJustification") {
         simulateWorkerMessage({ id: req.id, result: false });
       }
     });
@@ -827,6 +874,8 @@ describe("RdfReasoner — explainEntailment", () => {
           id: req.id,
           result: `<${A.value}> <http://www.w3.org/2002/07/owl#disjointWith> <${B.value}> .\n`,
         });
+      } else if (req.method === "hasTripleJustification") {
+        simulateWorkerMessage({ id: req.id, result: false });
       }
     });
 
@@ -866,6 +915,8 @@ describe("RdfReasoner — explainEntailment", () => {
           id: req.id,
           result: `<http://example.org/Student> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <${Person.value}> .\n`,
         });
+      } else if (req.method === "hasTripleJustification") {
+        simulateWorkerMessage({ id: req.id, result: false });
       }
     });
 
@@ -909,6 +960,8 @@ describe("RdfReasoner — explainEntailment", () => {
           id: req.id,
           result: `<${A.value}> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <${B.value}> .\n`,
         });
+      } else if (req.method === "hasTripleJustification") {
+        simulateWorkerMessage({ id: req.id, result: false });
       }
     });
 
