@@ -29,10 +29,11 @@ function isStore(input: unknown): input is Store {
 }
 
 export type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions, LaconicPart, LaconicJustification, LaconicExplainOptions } from "./types.js";
-export { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI } from "./types.js";
+export { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, KJ_NS, KJ_JUSTIFICATION, KJ_JUSTIFIES, KJ_AXIOM } from "./types.js";
 export { createInlineWorker } from "./inlineWorker.js";
 import type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions, LaconicPart, LaconicJustification, LaconicExplainOptions } from "./types.js";
-import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI } from "./types.js";
+import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, KJ_JUSTIFIES, KJ_AXIOM } from "./types.js";
+import { injectExplanationsFromBuffer, encodeStoreToBuffers, computeStoreFingerprintDirect } from "./n3Inject.js";
 import { buildEntailmentProbe, classifyAxiom, tripleKey as probeTripleKey } from "./entailmentProbe.js";
 import { computeLaconicAsync, groupQuadsIntoAxioms, splitAxiom, axiomKey } from "./laconicJustification.js";
 
@@ -111,6 +112,10 @@ export class RdfReasoner {
   private _materializeCache: { hash: string; result: void } | null = null;
   private _classifyPropertiesCache: { hash: string; result: void } | null = null;
   private _consistencyCache: { hash: string; result: boolean } | null = null;
+
+  // Cached explanation buffers — avoids WASM round-trip on cache-hit explanation requests.
+  private _lastExplBuffer: ArrayBuffer | null = null;
+  private _lastPropertyExplBuffer: ArrayBuffer | null = null;
   private _entailmentProbeCounter = 0;
 
   constructor(opts?: RdfReasonerOptions) {
@@ -205,6 +210,19 @@ export class RdfReasoner {
     });
   }
 
+  private async _ensureExplanationGraphFromBuffer(store: Store, bufferMethod: string): Promise<void> {
+    const explGraphNode = DataFactory.namedNode(EXPLANATION_GRAPH_IRI);
+    if (store.getQuads(null, null, null, explGraphNode).length > 0) return;
+    const isProperty = bufferMethod === "getPropertyTripleBuffer";
+    let resultBuf = isProperty ? this._lastPropertyExplBuffer : this._lastExplBuffer;
+    if (!resultBuf) {
+      resultBuf = (await this._call(bufferMethod, [true])) as ArrayBuffer;
+      if (isProperty) this._lastPropertyExplBuffer = resultBuf;
+      else this._lastExplBuffer = resultBuf;
+    }
+    injectExplanationsFromBuffer(store, resultBuf, EXPLANATION_GRAPH_IRI);
+  }
+
   // -------------------------------------------------------------------------
   // reason()
   // -------------------------------------------------------------------------
@@ -240,10 +258,14 @@ export class RdfReasoner {
     // custom inferredGraph. If the caller uses a non-default inferredGraph,
     // the cache may incorrectly report a hit when the inferred graph has
     // changed between calls. Acceptable for the current use-cases.
-    const fingerprint = computeStoreFingerprint(store.getQuads(null, null, null, null));
+    const fingerprint = computeStoreFingerprintDirect(store);
+    const wantExplanations = opts?.explanations === true;
     const result = this._queue.then(async () => {
       // Cache hit: same store content as last classify call
       if (this._classifyCache !== null && this._classifyCache.hash === fingerprint) {
+        if (wantExplanations) {
+          await this._ensureExplanationGraphFromBuffer(store, "getInferredTripleBuffer");
+        }
         return;
       }
 
@@ -252,24 +274,32 @@ export class RdfReasoner {
       );
       store.removeQuads(store.getQuads(null, null, null, inferredGraphNode));
 
-      const { tripleBuffer, strTableBuffer } = encodeToBuffers(store.getQuads(null, null, null, null));
+      const { tripleBuffer, strTableBuffer } = encodeStoreToBuffers(store);
 
       await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer, false], [tripleBuffer, strTableBuffer]);
-      // Always uses classification (TBox-only); opts.mode is reserved for future use.
       await this._call("classification", []);
 
-      const resultBuf = (await this._call("getInferredTripleBuffer", [])) as ArrayBuffer;
-      const inferredQuads = decodeBuffers(resultBuf);
+      const resultBuf = (await this._call("getInferredTripleBuffer", [wantExplanations])) as ArrayBuffer;
 
-      for (const q of inferredQuads) {
-        store.addQuad(
-          DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode),
-        );
+      if (wantExplanations) {
+        const decoded = decodeBuffers(resultBuf, { withJustifications: true });
+        for (const q of decoded.quads) {
+          store.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode));
+        }
+        injectExplanationsFromBuffer(store, resultBuf, EXPLANATION_GRAPH_IRI);
+        this._lastExplBuffer = resultBuf;
+      } else {
+        const inferredQuads = decodeBuffers(resultBuf);
+        for (const q of inferredQuads) {
+          store.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode));
+        }
+        this._lastExplBuffer = null;
       }
 
       this._classifyCache = { hash: fingerprint, result: undefined as void };
       this._materializeCache = null;
       this._classifyPropertiesCache = null;
+      this._lastPropertyExplBuffer = null;
     });
     this._queue = result.then(
       () => {},
@@ -365,22 +395,17 @@ export class RdfReasoner {
   checkConsistency(quads: Iterable<Quad>): Promise<boolean>;
   checkConsistency(input: Store | Iterable<Quad>): Promise<boolean> {
     const inputIsStore = isStore(input);
-    // Compute fingerprint before entering the queue (snapshot of current store state)
     const fingerprint = inputIsStore
-      ? computeStoreFingerprint((input as Store).getQuads(null, null, null, null))
+      ? computeStoreFingerprintDirect(input as Store)
       : null;
-    const quads = inputIsStore
-      ? (input as Store).getQuads(null, null, null, null)
-      : input as Iterable<Quad>;
-    // Pre-check: materialise quads once so we can scan and encode from the same array.
-    const quadsArray = Array.isArray(quads) ? quads as Quad[] : Array.from(quads);
     const result = this._queue.then(async () => {
-      // Cache hit: only available for Store-based calls
       if (fingerprint !== null && this._consistencyCache !== null && this._consistencyCache.hash === fingerprint) {
         return this._consistencyCache.result;
       }
 
-      const { tripleBuffer, strTableBuffer } = encodeToBuffers(quadsArray);
+      const { tripleBuffer, strTableBuffer } = inputIsStore
+        ? encodeStoreToBuffers(input as Store)
+        : encodeToBuffers(Array.isArray(input) ? input as Quad[] : Array.from(input as Iterable<Quad>));
       await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer, false], [tripleBuffer, strTableBuffer]);
       await this._call("classification", []);
       const consistent = (await this._call("consistency", [])) as boolean;
@@ -456,8 +481,9 @@ export class RdfReasoner {
     // custom inferredGraph. If the caller uses a non-default inferredGraph,
     // the cache may incorrectly report a hit when the inferred graph has
     // changed between calls. Acceptable for the current use-cases.
-    const fingerprint = computeStoreFingerprint(store.getQuads(null, null, null, null));
+    const fingerprint = computeStoreFingerprintDirect(store);
     const returnDelta = opts?.returnDelta === true;
+    const wantExplanations = opts?.explanations === true;
     const result = this._queue.then(async () => {
       const inferredGraphNode = DataFactory.namedNode(
         opts?.inferredGraph ?? INFERRED_GRAPH_IRI,
@@ -465,6 +491,9 @@ export class RdfReasoner {
 
       // Cache hit: same store content as last materialize call
       if (this._materializeCache !== null && this._materializeCache.hash === fingerprint) {
+        if (wantExplanations) {
+          await this._ensureExplanationGraphFromBuffer(store, "getInferredTripleBuffer");
+        }
         if (returnDelta) {
           return { delta: { added: [], removed: [] } as InferenceDelta };
         }
@@ -483,13 +512,23 @@ export class RdfReasoner {
 
       store.removeQuads(store.getQuads(null, null, null, inferredGraphNode));
 
-      const { tripleBuffer, strTableBuffer } = encodeToBuffers(store.getQuads(null, null, null, null));
+      const { tripleBuffer, strTableBuffer } = encodeStoreToBuffers(store);
 
       await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer, true], [tripleBuffer, strTableBuffer]);
       await this._call("realization", []);
 
-      const resultBuf = (await this._call("getInferredTripleBuffer", [])) as ArrayBuffer;
-      const allQuads = decodeBuffers(resultBuf);
+      const resultBuf = (await this._call("getInferredTripleBuffer", [wantExplanations])) as ArrayBuffer;
+
+      let allQuads: Quad[];
+      if (wantExplanations) {
+        const decoded = decodeBuffers(resultBuf, { withJustifications: true });
+        allQuads = decoded.quads;
+        injectExplanationsFromBuffer(store, resultBuf, EXPLANATION_GRAPH_IRI);
+        this._lastExplBuffer = resultBuf;
+      } else {
+        allQuads = decodeBuffers(resultBuf);
+        this._lastExplBuffer = null;
+      }
 
       const inferredQuads = opts?.includeClassHierarchy === true
         ? allQuads
@@ -508,6 +547,7 @@ export class RdfReasoner {
       this._materializeCache = { hash: fingerprint, result: undefined as void };
       this._classifyCache = null;
       this._classifyPropertiesCache = null;
+      this._lastPropertyExplBuffer = null;
 
       if (returnDelta) {
         // Build after set from what was just written.
@@ -600,10 +640,14 @@ export class RdfReasoner {
     // custom inferredGraph. If the caller uses a non-default inferredGraph,
     // the cache may incorrectly report a hit when the inferred graph has
     // changed between calls. Acceptable for the current use-cases.
-    const fingerprint = computeStoreFingerprint(store.getQuads(null, null, null, null));
+    const fingerprint = computeStoreFingerprintDirect(store);
+    const wantExplanations = opts?.explanations === true;
     const result = this._queue.then(async () => {
       // Cache hit: same store content as last classifyProperties call
       if (this._classifyPropertiesCache !== null && this._classifyPropertiesCache.hash === fingerprint) {
+        if (wantExplanations) {
+          await this._ensureExplanationGraphFromBuffer(store, "getPropertyTripleBuffer");
+        }
         return;
       }
 
@@ -612,23 +656,32 @@ export class RdfReasoner {
       );
       store.removeQuads(store.getQuads(null, null, null, inferredGraphNode));
 
-      const { tripleBuffer, strTableBuffer } = encodeToBuffers(store.getQuads(null, null, null, null));
+      const { tripleBuffer, strTableBuffer } = encodeStoreToBuffers(store);
 
       await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer, false], [tripleBuffer, strTableBuffer]);
       await this._call("classification", []);
 
-      const resultBuf = (await this._call("getPropertyTripleBuffer", [])) as ArrayBuffer;
-      const inferredQuads = decodeBuffers(resultBuf);
+      const resultBuf = (await this._call("getPropertyTripleBuffer", [wantExplanations])) as ArrayBuffer;
 
-      for (const q of inferredQuads) {
-        store.addQuad(
-          DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode),
-        );
+      if (wantExplanations) {
+        const decoded = decodeBuffers(resultBuf, { withJustifications: true });
+        for (const q of decoded.quads) {
+          store.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode));
+        }
+        injectExplanationsFromBuffer(store, resultBuf, EXPLANATION_GRAPH_IRI);
+        this._lastPropertyExplBuffer = resultBuf;
+      } else {
+        const inferredQuads = decodeBuffers(resultBuf);
+        for (const q of inferredQuads) {
+          store.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode));
+        }
+        this._lastPropertyExplBuffer = null;
       }
 
       this._classifyPropertiesCache = { hash: fingerprint, result: undefined as void };
       this._classifyCache = null;
       this._materializeCache = null;
+      this._lastExplBuffer = null;
     });
     this._queue = result.then(
       () => {},
@@ -679,7 +732,7 @@ export class RdfReasoner {
     if (this._classifyCache?.hash === fingerprint) return;
     const ig = DataFactory.namedNode(inferredGraph ?? INFERRED_GRAPH_IRI);
     store.removeQuads(store.getQuads(null, null, null, ig));
-    const { tripleBuffer, strTableBuffer } = encodeToBuffers(store.getQuads(null, null, null, null));
+    const { tripleBuffer, strTableBuffer } = encodeStoreToBuffers(store);
     await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer, false], [tripleBuffer, strTableBuffer]);
     await this._call("classification", []);
     const buf = (await this._call("getInferredTripleBuffer", [])) as ArrayBuffer;
@@ -691,6 +744,8 @@ export class RdfReasoner {
     this._classifyCache = { hash: fingerprint, result: undefined as void };
     this._materializeCache = null;           // cross-invalidate
     this._classifyPropertiesCache = null;    // cross-invalidate
+    this._lastExplBuffer = null;
+    this._lastPropertyExplBuffer = null;
   }
 
   private async _materializeInline(store: Store, fingerprint: string, inferredGraph?: string): Promise<void> {
@@ -699,7 +754,7 @@ export class RdfReasoner {
     store.removeQuads(store.getQuads(null, null, null, ig));
     // Capture base quads BEFORE writing inferred quads so someValuesFrom scan
     // only sees the original store contents.
-    const { tripleBuffer, strTableBuffer } = encodeToBuffers(store.getQuads(null, null, null, null));
+    const { tripleBuffer, strTableBuffer } = encodeStoreToBuffers(store);
     await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer, true], [tripleBuffer, strTableBuffer]);
     await this._call("realization", []);
     const buf = (await this._call("getInferredTripleBuffer", [])) as ArrayBuffer;
@@ -710,13 +765,15 @@ export class RdfReasoner {
     this._materializeCache = { hash: fingerprint, result: undefined as void };
     this._classifyCache = null;              // cross-invalidate
     this._classifyPropertiesCache = null;    // cross-invalidate
+    this._lastExplBuffer = null;
+    this._lastPropertyExplBuffer = null;
   }
 
   private async _classifyPropertiesInline(store: Store, fingerprint: string, inferredGraph?: string): Promise<void> {
     if (this._classifyPropertiesCache?.hash === fingerprint) return;
     const ig = DataFactory.namedNode(inferredGraph ?? INFERRED_GRAPH_IRI);
     store.removeQuads(store.getQuads(null, null, null, ig));
-    const { tripleBuffer, strTableBuffer } = encodeToBuffers(store.getQuads(null, null, null, null));
+    const { tripleBuffer, strTableBuffer } = encodeStoreToBuffers(store);
     await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer, false], [tripleBuffer, strTableBuffer]);
     await this._call("classification", []);
     const buf = (await this._call("getPropertyTripleBuffer", [])) as ArrayBuffer;
@@ -725,6 +782,8 @@ export class RdfReasoner {
     this._classifyPropertiesCache = { hash: fingerprint, result: undefined as void };
     this._classifyCache = null;              // cross-invalidate
     this._materializeCache = null;           // cross-invalidate
+    this._lastExplBuffer = null;
+    this._lastPropertyExplBuffer = null;
   }
 
   // -------------------------------------------------------------------------
@@ -738,11 +797,11 @@ export class RdfReasoner {
    * _classifyInline).  Must be called from inside a _queue slot only.
    */
   private async _getUnsatisfiableClassesInternal(store: Store, inferredGraph?: string): Promise<string[]> {
-    const fingerprint = computeStoreFingerprint(store.getQuads(null, null, null, null));
+    const fingerprint = computeStoreFingerprintDirect(store);
     if (this._classifyCache?.hash !== fingerprint) {
       const ig = DataFactory.namedNode(inferredGraph ?? INFERRED_GRAPH_IRI);
       store.removeQuads(store.getQuads(null, null, null, ig));
-      const { tripleBuffer, strTableBuffer } = encodeToBuffers(store.getQuads(null, null, null, null));
+      const { tripleBuffer, strTableBuffer } = encodeStoreToBuffers(store);
       await this._callDirect("loadTripleBuffer", [tripleBuffer, strTableBuffer, false], [tripleBuffer, strTableBuffer]);
       await this._callDirect("classification", []);
       const buf = (await this._callDirect("getInferredTripleBuffer", [])) as ArrayBuffer;
@@ -815,7 +874,7 @@ export class RdfReasoner {
 
     const result = this._queue.then(async () => {
       const ig = DataFactory.namedNode(igIri);
-      const fingerprint = computeStoreFingerprint(store.getQuads(null, null, null, null));
+      const fingerprint = computeStoreFingerprintDirect(store);
 
       // Determine which operations are needed
       const needsClassify = axioms.some(a => this._opForPredicate(a.predicate.value) === "classify");
@@ -963,6 +1022,8 @@ export class RdfReasoner {
       this._classifyCache = null;
       this._materializeCache = null;
       this._classifyPropertiesCache = null;
+      this._lastExplBuffer = null;
+      this._lastPropertyExplBuffer = null;
       this._consistencyCache = null;
 
       return { added, removed };
@@ -1120,12 +1181,26 @@ export class RdfReasoner {
     return (await this._callDirect("hasJustificationByType", [subIri, superIri, type])) as boolean;
   }
 
-  private async _lookupTripleJustificationDirect(sub: string, pred: string, obj: string): Promise<string> {
-    return (await this._callDirect("lookupTripleJustification", [sub, pred, obj])) as string;
-  }
+  private _lookupJustificationFromStore(store: Store, sub: string, pred: string, obj: string): Quad[] | null {
+    const explGraphNode = DataFactory.namedNode(EXPLANATION_GRAPH_IRI);
+    const quotedTriple = DataFactory.quad(
+      DataFactory.namedNode(sub),
+      DataFactory.namedNode(pred),
+      DataFactory.namedNode(obj),
+    );
+    const justifiesMatches = store.getQuads(null, DataFactory.namedNode(KJ_JUSTIFIES), quotedTriple as any, explGraphNode);
+    if (justifiesMatches.length === 0) return null;
 
-  private async _hasTripleJustificationDirect(sub: string, pred: string, obj: string): Promise<boolean> {
-    return (await this._callDirect("hasTripleJustification", [sub, pred, obj])) as boolean;
+    const axiomQuads: Quad[] = [];
+    for (const jMatch of justifiesMatches) {
+      const axioms = store.getQuads(jMatch.subject, DataFactory.namedNode(KJ_AXIOM), null, explGraphNode);
+      for (const a of axioms) {
+        if ((a.object as any).termType === "Quad") {
+          axiomQuads.push(a.object as unknown as Quad);
+        }
+      }
+    }
+    return axiomQuads;
   }
 
   private _parseNTriplesJustification(ntriples: string): Quad[] {
@@ -1221,6 +1296,8 @@ export class RdfReasoner {
       this._classifyCache = null;
       this._materializeCache = null;
       this._classifyPropertiesCache = null;
+      this._lastExplBuffer = null;
+      this._lastPropertyExplBuffer = null;
       this._consistencyCache = null;
 
       // Fast-path: axiom not entailed at all
@@ -1353,7 +1430,7 @@ export class RdfReasoner {
       });
 
       // Fast-path: check consistency using existing cache or direct Worker call
-      const fingerprint = computeStoreFingerprint(store.getQuads(null, null, null, null));
+      const fingerprint = computeStoreFingerprintDirect(store);
       let consistent: boolean;
       if (this._consistencyCache?.hash === fingerprint) {
         consistent = this._consistencyCache.result;
@@ -1366,6 +1443,8 @@ export class RdfReasoner {
       this._classifyCache = null;
       this._materializeCache = null;
       this._classifyPropertiesCache = null;
+      this._lastExplBuffer = null;
+      this._lastPropertyExplBuffer = null;
 
       if (consistent) return [];
 
@@ -1387,6 +1466,8 @@ export class RdfReasoner {
       this._classifyCache = null;
       this._materializeCache = null;
       this._classifyPropertiesCache = null;
+      this._lastExplBuffer = null;
+      this._lastPropertyExplBuffer = null;
       this._consistencyCache = null;
 
       // Verify full candidate set is indeed inconsistent (axiomFilter may have changed the set)
@@ -1493,7 +1574,7 @@ export class RdfReasoner {
         return g !== ig && g !== HYPOTHETICAL_IRI;
       });
 
-      const fingerprint = computeStoreFingerprint(store.getQuads(null, null, null, null));
+      const fingerprint = computeStoreFingerprintDirect(store);
       let consistent: boolean;
       if (this._consistencyCache?.hash === fingerprint) {
         consistent = this._consistencyCache.result;
@@ -1505,6 +1586,8 @@ export class RdfReasoner {
       this._classifyCache = null;
       this._materializeCache = null;
       this._classifyPropertiesCache = null;
+      this._lastExplBuffer = null;
+      this._lastPropertyExplBuffer = null;
 
       if (consistent) return [];
 
@@ -1521,6 +1604,8 @@ export class RdfReasoner {
       this._classifyCache = null;
       this._materializeCache = null;
       this._classifyPropertiesCache = null;
+      this._lastExplBuffer = null;
+      this._lastPropertyExplBuffer = null;
       this._consistencyCache = null;
 
       if (!(await this._checkInconsistencyDirect(allCandidates))) return [];
@@ -1700,14 +1785,12 @@ export class RdfReasoner {
         return { isEntailed: false, justifications: [] as Quad[][] };
       }
 
-      // ── Triple-keyed cache lookup (universal fast path) ──────────────
-      // Every inferred triple with a justification recorded at emission time
-      // resolves in one call — no probe-kind routing, no store scanning.
+      // ── Store-based justification lookup (universal fast path) ──────
+      // Explanation graph contains kj:justifies quads linking justification
+      // nodes to inferred quoted triples. One Store query, no WASM round-trip.
       if (mode === "causal") {
-        const hasCached = await this._hasTripleJustificationDirect(subjectIri, predicateIri, objectIri);
-        if (hasCached) {
-          const ntriples = await this._lookupTripleJustificationDirect(subjectIri, predicateIri, objectIri);
-          const justQuads = this._parseNTriplesJustification(ntriples);
+        const justQuads = this._lookupJustificationFromStore(store, subjectIri, predicateIri, objectIri);
+        if (justQuads !== null) {
           if (justQuads.length > 0) {
             return { isEntailed: true, justifications: [justQuads] };
           }
@@ -1715,7 +1798,7 @@ export class RdfReasoner {
         }
       }
 
-      // ── Legacy fast path (fallback for triples not in JustificationTripleCache) ──
+      // ── Dep-chain fallback (when no Store justification found) ──
       // Uses the dep-chain cache from a prior classify()/reason() call.
       // Zero WASM reloads — just O(1) lookups on the existing state.
 
@@ -1768,11 +1851,8 @@ export class RdfReasoner {
         for (const inferredType of inferredTypes) {
           const scNtriples = await this._getSubClassJustificationDirect(inferredType, objectIri);
           if (scNtriples.length === 0) continue;
-          const hasTJ = await this._hasTripleJustificationDirect(subjectIri, RDF_TYPE, inferredType);
-          if (!hasTJ) continue;
-          const tjNtriples = await this._lookupTripleJustificationDirect(subjectIri, RDF_TYPE, inferredType);
-          const tjQuads = this._parseNTriplesJustification(tjNtriples);
-          if (tjQuads.length === 0) continue;
+          const tjQuads = this._lookupJustificationFromStore(store, subjectIri, RDF_TYPE, inferredType);
+          if (!tjQuads || tjQuads.length === 0) continue;
           const scQuads = this._parseNTriplesJustification(scNtriples);
           if (scQuads.length === 0) continue;
           return { isEntailed: true, justifications: [[...tjQuads, ...scQuads]] };
@@ -2063,6 +2143,8 @@ export class RdfReasoner {
       this._classifyCache = null;
       this._materializeCache = null;
       this._classifyPropertiesCache = null;
+      this._lastExplBuffer = null;
+      this._lastPropertyExplBuffer = null;
       this._consistencyCache = null;
 
       // Partition into justification candidates vs background declarations
@@ -2194,7 +2276,7 @@ export class RdfReasoner {
       });
 
       // ── Step 1: consistency ───────────────────────────────────────────────
-      const fingerprint = computeStoreFingerprint(store.getQuads(null, null, null, null));
+      const fingerprint = computeStoreFingerprintDirect(store);
       let consistent: boolean;
       if (this._consistencyCache?.hash === fingerprint) {
         consistent = this._consistencyCache.result;

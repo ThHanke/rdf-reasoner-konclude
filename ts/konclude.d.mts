@@ -13,8 +13,8 @@ export interface KoncludeReasonerInstance {
   realization(): boolean;
   consistency(): boolean;
   processorCount(): number;
-  buildInferredTripleBuffer(): number;
-  buildPropertyTripleBuffer(): number;
+  buildInferredTripleBuffer(withExplanations?: boolean): number;
+  buildPropertyTripleBuffer(withExplanations?: boolean): number;
   getInferredTripleBufferPtr(): number;
   buildUnsatisfiableClassBuffer(): string;
   isSubClassOf(subIri: string, superIri: string): boolean;
@@ -26,8 +26,6 @@ export interface KoncludeReasonerInstance {
   getAxiomsForRoleTag(tag: number): string;
   getJustificationByType(subIri: string, superIri: string, type: number): string;
   hasJustificationByType(subIri: string, superIri: string, type: number): boolean;
-  lookupTripleJustification(sub: string, pred: string, obj: string): string;
-  hasTripleJustification(sub: string, pred: string, obj: string): boolean;
   reset(): void;
   /** Release Embind-managed C++ memory. Must be called when done. */
   delete(): void;

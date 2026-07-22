@@ -82,7 +82,7 @@ function avg(arr) {
   return Math.round(arr.reduce((a, b) => a + b, 0) / arr.length);
 }
 
-async function benchOne(RdfReasoner, INFERRED_GRAPH_IRI, store, abox) {
+async function benchOne(RdfReasoner, INFERRED_GRAPH_IRI, EXPLANATION_GRAPH_IRI, store, abox) {
   const reasoner = new RdfReasoner();
   await reasoner.ready;
 
@@ -98,9 +98,35 @@ async function benchOne(RdfReasoner, INFERRED_GRAPH_IRI, store, abox) {
     const t1 = performance.now();
 
     const inferredCount = store.getQuads(null, null, null, DataFactory.namedNode(INFERRED_GRAPH_IRI)).length;
+
+    // Explanation overhead: re-run with explanations on a fresh store clone
+    let explMs = null;
+    let explQuads = null;
+    try {
+      const explStore = new Store(store.getQuads(null, null, null, null).filter(
+        q => q.graph.value !== INFERRED_GRAPH_IRI && q.graph.value !== EXPLANATION_GRAPH_IRI,
+      ));
+      const reasoner2 = new RdfReasoner();
+      await reasoner2.ready;
+      const te0 = performance.now();
+      if (abox) {
+        await reasoner2.materialize(explStore, { includeClassHierarchy: true, explanations: true });
+      } else {
+        await reasoner2.classify(explStore, { explanations: true });
+      }
+      const te1 = performance.now();
+      explMs = Math.round(te1 - te0);
+      explQuads = explStore.getQuads(null, null, null, DataFactory.namedNode(EXPLANATION_GRAPH_IRI)).length;
+      reasoner2.terminate();
+    } catch {
+      // exportAllJustifications may not exist in older WASM builds
+    }
+
     return {
       totalMs: Math.round(t1 - t0),
       inferredTriples: inferredCount,
+      explMs,
+      explQuads,
       ok: true,
     };
   } catch (e) {
@@ -124,7 +150,7 @@ export async function benchAll(cases = TS_CASES, opts = { warmup: 2, runs: 5 }) 
 
   globalThis.Worker = NodeWorkerShim;
 
-  const { RdfReasoner, INFERRED_GRAPH_IRI } = await import(DIST_INDEX);
+  const { RdfReasoner, INFERRED_GRAPH_IRI, EXPLANATION_GRAPH_IRI } = await import(DIST_INDEX);
 
   const results = [];
 
@@ -154,7 +180,7 @@ export async function benchAll(cases = TS_CASES, opts = { warmup: 2, runs: 5 }) 
     async function runOnce() {
       // Clone base store for each run so inferred triples don't accumulate across runs
       const store = new Store(baseStore.getQuads(null, null, null, null));
-      return benchOne(RdfReasoner, INFERRED_GRAPH_IRI, store, c.abox);
+      return benchOne(RdfReasoner, INFERRED_GRAPH_IRI, EXPLANATION_GRAPH_IRI, store, c.abox);
     }
 
     for (let i = 0; i < opts.warmup; i++) {
@@ -174,6 +200,9 @@ export async function benchAll(cases = TS_CASES, opts = { warmup: 2, runs: 5 }) 
     }
 
     const allMs = runs.map(r => r.totalMs);
+    const explMs = runs[0].explMs;
+    const explQuads = runs[0].explQuads;
+    const explOverhead = explMs != null ? Math.round(((explMs - avg(allMs)) / avg(allMs)) * 100) : null;
     const result = {
       ok: true,
       totalMs: avg(allMs),
@@ -181,9 +210,16 @@ export async function benchAll(cases = TS_CASES, opts = { warmup: 2, runs: 5 }) 
       minMs: Math.min(...allMs),
       maxMs: Math.max(...allMs),
       inferredTriples: runs[0].inferredTriples,
+      explMs,
+      explQuads,
+      explOverhead,
     };
 
-    process.stderr.write(`avg ${result.totalMs} ms, median ${result.medianMs} ms, min ${result.minMs}, max ${result.maxMs} (inferred: ${result.inferredTriples})\n`);
+    let explInfo = '';
+    if (explMs != null) {
+      explInfo = `, expl: ${explMs} ms (+${explOverhead}%, ${explQuads} quads)`;
+    }
+    process.stderr.write(`avg ${result.totalMs} ms, median ${result.medianMs} ms, min ${result.minMs}, max ${result.maxMs} (inferred: ${result.inferredTriples}${explInfo})\n`);
     results.push({ ...c, tripleCount, result });
   }
 
