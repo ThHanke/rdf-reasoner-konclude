@@ -910,6 +910,8 @@ struct KoncludeReasoner::Impl {
     std::vector<std::tuple<uint32_t,uint32_t,uint32_t>> emitAxiomIndicesForConceptTag(int64_t tag, InternTable& intern);
     std::vector<std::tuple<uint32_t,uint32_t,uint32_t>> emitAxiomIndicesForRoleTag(int64_t tag, InternTable& intern);
 
+    std::vector<std::tuple<uint32_t,uint32_t,uint32_t>> parseNTriplesToAxiomIndices(
+            const std::string& ntriples, InternTable& intern);
 };
 
 // ─── KoncludeReasoner public API ──────────────────────────────────────────────
@@ -2325,6 +2327,35 @@ KoncludeReasoner::Impl::emitAxiomIndicesForRoleTag(int64_t tag, InternTable& int
 //
 // Assembles a combined output buffer:
 //   [strTableLen:u32][strTable...][tripleBuffer...]
+std::vector<std::tuple<uint32_t,uint32_t,uint32_t>>
+KoncludeReasoner::Impl::parseNTriplesToAxiomIndices(
+        const std::string& ntriples, InternTable& intern) {
+    std::vector<std::tuple<uint32_t,uint32_t,uint32_t>> result;
+    size_t pos = 0;
+    while (pos < ntriples.size()) {
+        size_t lineEnd = ntriples.find('\n', pos);
+        if (lineEnd == std::string::npos) lineEnd = ntriples.size();
+        std::string line = ntriples.substr(pos, lineEnd - pos);
+        pos = lineEnd + 1;
+        if (line.empty() || line[0] != '<') continue;
+        size_t s1 = line.find('>');
+        if (s1 == std::string::npos) continue;
+        size_t p0 = line.find('<', s1 + 1);
+        if (p0 == std::string::npos) continue;
+        size_t p1 = line.find('>', p0);
+        if (p1 == std::string::npos) continue;
+        size_t o0 = line.find('<', p1 + 1);
+        if (o0 == std::string::npos) continue;
+        size_t o1 = line.find('>', o0);
+        if (o1 == std::string::npos) continue;
+        std::string s = line.substr(1, s1 - 1);
+        std::string p = line.substr(p0 + 1, p1 - p0 - 1);
+        std::string o = line.substr(o0 + 1, o1 - o0 - 1);
+        result.emplace_back(intern.intern(s), intern.intern(p), intern.intern(o));
+    }
+    return result;
+}
+
 // where strTable = InternTable::build() and tripleBuffer = [s:u32,p:u32,o:u32,...].
 //
 // Returns total byte length; 0 if not classified.
@@ -2604,6 +2635,7 @@ int KoncludeReasoner::buildInferredTripleBuffer(bool withExplanations) {
                                 tripleIds->push_back(cId);
                                 // Record justification
                                 if (withExpl && impl && indiIriPtr) {
+                                    bool found = false;
                                     auto cit = impl->mConceptByIri.find(iri);
                                     if (cit != impl->mConceptByIri.end()) {
                                         int64_t classTag = cit->second->getConceptTag();
@@ -2611,6 +2643,7 @@ int KoncludeReasoner::buildInferredTripleBuffer(bool withExplanations) {
                                             classTag, classTag, JustificationCache::Realization);
                                         if (depTags && !depTags->empty()) {
                                             collectJustFromDepTags(tripleIdx, depTags, false);
+                                            found = true;
                                         } else {
                                             int64_t targetTag = classTag;
                                             for (auto& [assertedIri, concept] : impl->mConceptByIri) {
@@ -2619,8 +2652,38 @@ int KoncludeReasoner::buildInferredTripleBuffer(bool withExplanations) {
                                                 const auto* scDeps = JustificationCache::instance().lookup(aTag, targetTag);
                                                 if (scDeps && !scDeps->empty()) {
                                                     collectJustFromDepTags(tripleIdx, scDeps, false);
+                                                    found = true;
                                                     break;
                                                 }
+                                            }
+                                        }
+                                    }
+                                    if (!found) {
+                                        static const std::string rdfTypeIri = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+                                        auto wkKey = Impl::wkJustKey(*indiIriPtr, rdfTypeIri, iri);
+                                        auto wkIt = impl->mWorkaroundJustifications.find(wkKey);
+                                        if (wkIt != impl->mWorkaroundJustifications.end() && !wkIt->second.empty()) {
+                                            auto wkAxioms = impl->parseNTriplesToAxiomIndices(wkIt->second, *intern);
+                                            if (!wkAxioms.empty()) {
+                                                std::vector<int64_t> dummyTags;
+                                                uint64_t hash = hashDepTags(dummyTags);
+                                                for (auto& [s,p,o] : wkAxioms) {
+                                                    hash ^= (static_cast<uint64_t>(s) * 2654435761u) ^ (static_cast<uint64_t>(p) * 40503u) ^ o;
+                                                }
+                                                auto [it2, inserted] = justDedup->emplace(hash, static_cast<uint32_t>(justEntries->size()));
+                                                uint32_t justIdx = it2->second;
+                                                if (inserted) {
+                                                    JustEntry entry;
+                                                    entry.hash = hash;
+                                                    for (auto& [s,p,o] : wkAxioms) {
+                                                        auto akey = std::make_tuple(s,p,o);
+                                                        auto [ait, ainst] = axiomDedupMap->emplace(akey, static_cast<uint32_t>(axiomTriples->size()));
+                                                        entry.axiomIndices.push_back(ait->second);
+                                                        if (ainst) axiomTriples->emplace_back(s,p,o);
+                                                    }
+                                                    justEntries->push_back(std::move(entry));
+                                                }
+                                                tripleMappings->push_back({tripleIdx, justIdx});
                                             }
                                         }
                                     }
@@ -2833,13 +2896,43 @@ int KoncludeReasoner::buildInferredTripleBuffer(bool withExplanations) {
             }
         }
 
+        auto emitWorkaroundJust = [&](uint32_t tripleIdx, const std::string& indiIri, const std::string& classIri) {
+            if (!withExplanations) return;
+            static const std::string rdfTypeIri = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+            auto wkKey = Impl::wkJustKey(indiIri, rdfTypeIri, classIri);
+            auto wkIt = mImpl->mWorkaroundJustifications.find(wkKey);
+            if (wkIt == mImpl->mWorkaroundJustifications.end() || wkIt->second.empty()) return;
+            auto wkAxioms = mImpl->parseNTriplesToAxiomIndices(wkIt->second, intern);
+            if (wkAxioms.empty()) return;
+            uint64_t hash = 0xcbf29ce484222325ULL;
+            for (auto& [s,p,o] : wkAxioms) {
+                hash ^= (static_cast<uint64_t>(s) * 2654435761u) ^ (static_cast<uint64_t>(p) * 40503u) ^ o;
+                hash *= 0x100000001b3ULL;
+            }
+            auto [it2, inserted] = justDedup.emplace(hash, static_cast<uint32_t>(justEntries.size()));
+            uint32_t justIdx = it2->second;
+            if (inserted) {
+                JustEntry entry;
+                entry.hash = hash;
+                for (auto& [s,p,o] : wkAxioms) {
+                    auto akey = std::make_tuple(s,p,o);
+                    auto [ait, ainst] = axiomDedupMap.emplace(akey, static_cast<uint32_t>(axiomTriples.size()));
+                    entry.axiomIndices.push_back(ait->second);
+                    if (ainst) axiomTriples.emplace_back(s,p,o);
+                }
+                justEntries.push_back(std::move(entry));
+            }
+            tripleMappings.push_back({tripleIdx, justIdx});
+        };
+
         // Unit 4 (plan-048): owl:oneOf → member rdf:type class
         if (!mImpl->mOneOfMemberships.empty()) {
             static const std::string rdfTypeStr =
                 "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
             uint32_t pType = intern.intern(rdfTypeStr);
             for (const auto& [classIri, memberIri] : mImpl->mOneOfMemberships) {
-                emitTriple(intern.intern(memberIri), pType, intern.intern(classIri));
+                uint32_t tIdx = emitTriple(intern.intern(memberIri), pType, intern.intern(classIri));
+                emitWorkaroundJust(tIdx, memberIri, classIri);
             }
         }
 
@@ -2849,7 +2942,8 @@ int KoncludeReasoner::buildInferredTripleBuffer(bool withExplanations) {
                 "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
             uint32_t pType = intern.intern(rdfTypeStr3);
             for (const auto& [indiIri, classIri] : mImpl->mIntersectionOfTypes) {
-                emitTriple(intern.intern(indiIri), pType, intern.intern(classIri));
+                uint32_t tIdx = emitTriple(intern.intern(indiIri), pType, intern.intern(classIri));
+                emitWorkaroundJust(tIdx, indiIri, classIri);
             }
         }
 
@@ -2859,7 +2953,8 @@ int KoncludeReasoner::buildInferredTripleBuffer(bool withExplanations) {
                 "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
             uint32_t pType = intern.intern(rdfTypeStr4);
             for (const auto& [indiIri, classIri] : mImpl->mHasSelfTypes) {
-                emitTriple(intern.intern(indiIri), pType, intern.intern(classIri));
+                uint32_t tIdx = emitTriple(intern.intern(indiIri), pType, intern.intern(classIri));
+                emitWorkaroundJust(tIdx, indiIri, classIri);
             }
         }
 
@@ -3027,7 +3122,7 @@ int KoncludeReasoner::buildInferredTripleBuffer(bool withExplanations) {
     size_t totalLen = 4 + strTableLen + tripleIds.size() * 4;
 
     if (withExplanations) {
-        totalLen += 4; // tripleCount sentinel
+        totalLen += 8; // magic marker (0xDEADBEEF) + tripleCount
         totalLen += 4 + axiomTriples.size() * 12; // axiomCount + axiom triples
         // justCount + per-entry: hashHigh(4) + hashLow(4) + numAxioms(4) + axiomIndices(4 each)
         totalLen += 4;
@@ -3049,7 +3144,7 @@ int KoncludeReasoner::buildInferredTripleBuffer(bool withExplanations) {
     }
 
     if (withExplanations) {
-        // tripleCount sentinel
+        pu32(p, 0xDEADBEEFu); // magic marker
         pu32(p, tripleCount);
 
         // Axiom section
@@ -3259,7 +3354,7 @@ int KoncludeReasoner::buildPropertyTripleBuffer(bool withExplanations) {
     size_t totalLen = 4 + strTableLen + tripleIds.size() * 4;
 
     if (withExplanations) {
-        totalLen += 4; // tripleCount sentinel
+        totalLen += 8; // magic marker + tripleCount
         totalLen += 4 + axiomTriples.size() * 12;
         totalLen += 4;
         for (const auto& je : justEntries) {
@@ -3280,6 +3375,7 @@ int KoncludeReasoner::buildPropertyTripleBuffer(bool withExplanations) {
     }
 
     if (withExplanations) {
+        pu32(p, 0xDEADBEEFu);
         pu32(p, tripleCount);
         pu32(p, static_cast<uint32_t>(axiomTriples.size()));
         for (const auto& [s, pr, o] : axiomTriples) {
