@@ -26,6 +26,8 @@ export interface KoncludeReasonerInstance {
   getAxiomsForRoleTag(tag: number): string;
   getJustificationByType(subIri: string, superIri: string, type: number): string;
   hasJustificationByType(subIri: string, superIri: string, type: number): boolean;
+  lookupTripleJustification(sub: string, pred: string, obj: string): string;
+  hasTripleJustification(sub: string, pred: string, obj: string): boolean;
   reset(): void;
   /** Release Embind-managed C++ memory. Must be called when done. */
   delete(): void;

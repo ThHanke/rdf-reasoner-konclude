@@ -55,6 +55,10 @@ public:
     std::string getJustificationByType(const std::string& subIri, const std::string& superIri, int type);
     bool hasJustificationByType(const std::string& subIri, const std::string& superIri, int type);
 
+    // Triple-keyed justification cache — IRI-based lookup populated at emission time
+    std::string lookupTripleJustification(const std::string& sub, const std::string& pred, const std::string& obj);
+    bool hasTripleJustification(const std::string& sub, const std::string& pred, const std::string& obj);
+
     // Axiom reverse mapping — convert concept/role tags back to source axiom NTriples
     std::string getAxiomsForConceptTag(int64_t tag);
     std::string getAxiomsForRoleTag(int64_t tag);
