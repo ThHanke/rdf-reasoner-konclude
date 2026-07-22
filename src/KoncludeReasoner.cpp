@@ -2588,6 +2588,8 @@ int KoncludeReasoner::buildInferredTripleBuffer(bool withExplanations) {
                     KoncludeReasoner::Impl* impl;
                     const std::string* indiIriPtr;
                     bool withExpl;
+                    CSameRealization* sameReal = nullptr;
+                    CIndividualVector* indiVecSameAs = nullptr;
                     // Justification collection pointers (only used when withExpl)
                     std::unordered_map<std::tuple<uint32_t,uint32_t,uint32_t>, uint32_t, TupleHash3>* axiomDedupMap;
                     std::vector<std::tuple<uint32_t,uint32_t,uint32_t>>* axiomTriples;
@@ -2618,6 +2620,31 @@ int KoncludeReasoner::buildInferredTripleBuffer(bool withExplanations) {
                             justEntries->push_back(std::move(entry));
                         }
                         tripleMappings->push_back({tripleIdx, justIdx});
+                    }
+
+                    bool emitNTriplesJust(uint32_t tripleIdx, const std::string& ntJust) {
+                        auto wkAxioms = impl->parseNTriplesToAxiomIndices(ntJust, *intern);
+                        if (wkAxioms.empty()) return false;
+                        std::vector<int64_t> dummyTags;
+                        uint64_t hash = hashDepTags(dummyTags);
+                        for (auto& [s,p,o] : wkAxioms) {
+                            hash ^= (static_cast<uint64_t>(s) * 2654435761u) ^ (static_cast<uint64_t>(p) * 40503u) ^ o;
+                        }
+                        auto [it2, inserted] = justDedup->emplace(hash, static_cast<uint32_t>(justEntries->size()));
+                        uint32_t justIdx = it2->second;
+                        if (inserted) {
+                            JustEntry entry;
+                            entry.hash = hash;
+                            for (auto& [s,p,o] : wkAxioms) {
+                                auto akey = std::make_tuple(s,p,o);
+                                auto [ait, ainst] = axiomDedupMap->emplace(akey, static_cast<uint32_t>(axiomTriples->size()));
+                                entry.axiomIndices.push_back(ait->second);
+                                if (ainst) axiomTriples->emplace_back(s,p,o);
+                            }
+                            justEntries->push_back(std::move(entry));
+                        }
+                        tripleMappings->push_back({tripleIdx, justIdx});
+                        return true;
                     }
 
                     bool visitType(CConceptInstantiatedItem* item, CConceptRealization* cr) override {
@@ -2663,27 +2690,67 @@ int KoncludeReasoner::buildInferredTripleBuffer(bool withExplanations) {
                                         auto wkKey = Impl::wkJustKey(*indiIriPtr, rdfTypeIri, iri);
                                         auto wkIt = impl->mWorkaroundJustifications.find(wkKey);
                                         if (wkIt != impl->mWorkaroundJustifications.end() && !wkIt->second.empty()) {
-                                            auto wkAxioms = impl->parseNTriplesToAxiomIndices(wkIt->second, *intern);
-                                            if (!wkAxioms.empty()) {
-                                                std::vector<int64_t> dummyTags;
-                                                uint64_t hash = hashDepTags(dummyTags);
-                                                for (auto& [s,p,o] : wkAxioms) {
-                                                    hash ^= (static_cast<uint64_t>(s) * 2654435761u) ^ (static_cast<uint64_t>(p) * 40503u) ^ o;
+                                            found = emitNTriplesJust(tripleIdx, wkIt->second);
+                                        }
+                                    }
+                                    // Fallback: taxonomy subclass chain from intermediate type
+                                    if (!found) {
+                                        CTaxonomy* tax = impl->mOntology ? impl->mOntology->getConceptTaxonomy() : nullptr;
+                                        if (tax) {
+                                            auto targetIt = impl->mConceptByIri.find(iri);
+                                            if (targetIt != impl->mConceptByIri.end()) {
+                                                CConcept* targetConcept = targetIt->second;
+                                                for (auto& [aIri, aConcept] : impl->mConceptByIri) {
+                                                    if (aIri == iri) continue;
+                                                    if (!tax->isSubsumption(aConcept, targetConcept)) continue;
+                                                    std::string chain = impl->getSubClassJustification(aIri, iri);
+                                                    if (chain.empty()) continue;
+                                                    static const std::string rt = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+                                                    std::string nt = "<" + *indiIriPtr + "> <" + rt + "> <" + aIri + "> .\n" + chain;
+                                                    found = emitNTriplesJust(tripleIdx, nt);
+                                                    if (found) break;
                                                 }
-                                                auto [it2, inserted] = justDedup->emplace(hash, static_cast<uint32_t>(justEntries->size()));
-                                                uint32_t justIdx = it2->second;
-                                                if (inserted) {
-                                                    JustEntry entry;
-                                                    entry.hash = hash;
-                                                    for (auto& [s,p,o] : wkAxioms) {
-                                                        auto akey = std::make_tuple(s,p,o);
-                                                        auto [ait, ainst] = axiomDedupMap->emplace(akey, static_cast<uint32_t>(axiomTriples->size()));
-                                                        entry.axiomIndices.push_back(ait->second);
-                                                        if (ainst) axiomTriples->emplace_back(s,p,o);
+                                            }
+                                        }
+                                    }
+                                    // Fallback: sameAs type propagation
+                                    if (!found && sameReal && indiVecSameAs) {
+                                        CIndividual* srcIndi = nullptr;
+                                        for (qint64 ii = 0; ii < indiVecSameAs->getItemCount(); ++ii) {
+                                            CIndividual* ci = indiVecSameAs->getData(ii);
+                                            if (!ci) continue;
+                                            QString q = CIRIName::getRecentIRIName(ci->getIndividualNameLinker());
+                                            if (!q.empty() && std::string(q) == *indiIriPtr) { srcIndi = ci; break; }
+                                        }
+                                        if (srcIndi) {
+                                            struct SPV : CSameRealizationIndividualVisitor {
+                                                std::vector<std::string> partnerIris;
+                                                CIndividualVector* iv;
+                                                const std::string* self;
+                                                bool visitIndividual(const CIndividualReference& ref, CSameRealization*) override {
+                                                    qint64 id = ref.getIndividualID();
+                                                    if (id < 0 || id >= iv->getItemCount()) return true;
+                                                    CIndividual* ind = iv->getData(id);
+                                                    if (!ind) return true;
+                                                    QString q = CIRIName::getRecentIRIName(ind->getIndividualNameLinker());
+                                                    if (!q.empty()) {
+                                                        std::string s(q);
+                                                        if (s != *self) partnerIris.push_back(std::move(s));
                                                     }
-                                                    justEntries->push_back(std::move(entry));
+                                                    return true;
                                                 }
-                                                tripleMappings->push_back({tripleIdx, justIdx});
+                                            };
+                                            SPV spv;
+                                            spv.iv = indiVecSameAs;
+                                            spv.self = indiIriPtr;
+                                            sameReal->visitSameIndividuals(srcIndi, &spv);
+                                            if (!spv.partnerIris.empty()) {
+                                                static const std::string owlSameAsIri = "http://www.w3.org/2002/07/owl#sameAs";
+                                                static const std::string rt2 = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+                                                const std::string& partner = spv.partnerIris[0];
+                                                std::string nt = "<" + *indiIriPtr + "> <" + owlSameAsIri + "> <" + partner + "> .\n";
+                                                nt += "<" + partner + "> <" + rt2 + "> <" + iri + "> .\n";
+                                                found = emitNTriplesJust(tripleIdx, nt);
                                             }
                                         }
                                     }
@@ -2704,6 +2771,8 @@ int KoncludeReasoner::buildInferredTripleBuffer(bool withExplanations) {
                 tv.impl        = mImpl;
                 tv.indiIriPtr  = nullptr;
                 tv.withExpl    = withExplanations;
+                tv.sameReal    = real->getSameRealization();
+                tv.indiVecSameAs = indiVec;
                 tv.axiomDedupMap = &axiomDedupMap;
                 tv.axiomTriples  = &axiomTriples;
                 tv.justDedup     = &justDedup;

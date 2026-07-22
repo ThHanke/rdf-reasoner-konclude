@@ -84,6 +84,13 @@ const RDFS_CLASS = "http://www.w3.org/2000/01/rdf-schema#Class";
 const OWL_THING = "http://www.w3.org/2002/07/owl#Thing";
 const OWL_NOTHING = "http://www.w3.org/2002/07/owl#Nothing";
 const OWL_SAME_AS = "http://www.w3.org/2002/07/owl#sameAs";
+const RDFS_DOMAIN = "http://www.w3.org/2000/01/rdf-schema#domain";
+const RDFS_RANGE = "http://www.w3.org/2000/01/rdf-schema#range";
+const OWL_ON_PROPERTY = "http://www.w3.org/2002/07/owl#onProperty";
+const OWL_SOME_VALUES_FROM = "http://www.w3.org/2002/07/owl#someValuesFrom";
+const OWL_ALL_VALUES_FROM = "http://www.w3.org/2002/07/owl#allValuesFrom";
+const OWL_HAS_VALUE = "http://www.w3.org/2002/07/owl#hasValue";
+const OWL_INVERSE_OF = "http://www.w3.org/2002/07/owl#inverseOf";
 // ---------------------------------------------------------------------------
 // RdfReasoner
 // ---------------------------------------------------------------------------
@@ -1829,8 +1836,6 @@ export class RdfReasoner {
 
         // Classification-based: asserted rdf:type A, A ⊑ B → inferred rdf:type B
         for (const assertedType of assertedTypes) {
-          const hasNative = await this._hasNativeJustificationDirect(assertedType, objectIri);
-          if (!hasNative) continue;
           const ntriples = await this._getSubClassJustificationDirect(assertedType, objectIri);
           if (ntriples.length === 0) continue;
           const subClassQuads = this._parseNTriplesJustification(ntriples);
@@ -1871,23 +1876,149 @@ export class RdfReasoner {
         }
 
         // sameAs type propagation: subject sameAs partner, partner rdf:type object
+        // Check full store (including inferred graph) for partner types
         const sameAsPartners = [
-          ...allBase.filter(q => q.subject.value === subjectIri && q.predicate.value === OWL_SAME_AS).map(q => q.object.value),
-          ...allBase.filter(q => q.object.value === subjectIri && q.predicate.value === OWL_SAME_AS).map(q => q.subject.value),
+          ...store.getQuads(subjectIri, OWL_SAME_AS, null, null).map(q => q.object.value),
+          ...store.getQuads(null, OWL_SAME_AS, subjectIri, null).map(q => q.subject.value),
         ];
         for (const partner of sameAsPartners) {
-          const partnerHasType = allBase.some(
-            q => q.subject.value === partner && q.predicate.value === RDF_TYPE && q.object.value === objectIri,
-          );
-          if (partnerHasType) {
-            const sameAsQuad = allBase.find(
-              q => (q.subject.value === subjectIri && q.predicate.value === OWL_SAME_AS && q.object.value === partner) ||
-                   (q.subject.value === partner && q.predicate.value === OWL_SAME_AS && q.object.value === subjectIri),
-            )!;
-            const typeQuad = allBase.find(
-              q => q.subject.value === partner && q.predicate.value === RDF_TYPE && q.object.value === objectIri,
-            )!;
-            return { isEntailed: true, justifications: [[sameAsQuad as Quad, typeQuad as Quad]] };
+          const typeQuads = store.getQuads(partner, RDF_TYPE, objectIri, null);
+          if (typeQuads.length > 0) {
+            const sameAsQuad = store.getQuads(subjectIri, OWL_SAME_AS, partner, null)[0]
+              ?? store.getQuads(partner, OWL_SAME_AS, subjectIri, null)[0];
+            if (sameAsQuad) {
+              return { isEntailed: true, justifications: [[sameAsQuad as Quad, typeQuads[0] as Quad]] };
+            }
+          }
+        }
+
+        // N3 Store-based fallbacks: derive justification from input ontology structure
+
+        // Domain: indi <prop> obj, prop rdfs:domain targetClass
+        const propAssertions = allBase.filter(
+          q => q.subject.value === subjectIri && q.predicate.value !== RDF_TYPE,
+        );
+        for (const pa of propAssertions) {
+          const domainQuads = store.getQuads(pa.predicate.value, RDFS_DOMAIN, objectIri, null);
+          if (domainQuads.length > 0) {
+            return { isEntailed: true, justifications: [[pa as Quad, domainQuads[0] as Quad]] };
+          }
+        }
+
+        // Range: obj <prop> indi, prop rdfs:range targetClass
+        const asObject = allBase.filter(
+          q => q.object.value === subjectIri && q.predicate.value !== RDF_TYPE,
+        );
+        for (const pa of asObject) {
+          const rangeQuads = store.getQuads(pa.predicate.value, RDFS_RANGE, objectIri, null);
+          if (rangeQuads.length > 0) {
+            return { isEntailed: true, justifications: [[pa as Quad, rangeQuads[0] as Quad]] };
+          }
+        }
+
+        // Restriction-based: find equivalentClass restrictions in input ontology
+        const equivRestrictions = store.getQuads(objectIri, OWL_EQUIVALENT_CLASS, null, null)
+          .filter(q => q.object.termType === "BlankNode");
+        for (const eqQuad of equivRestrictions) {
+          const bnode = eqQuad.object;
+          const onPropQuads = store.getQuads(bnode, OWL_ON_PROPERTY, null, null);
+          if (onPropQuads.length === 0) continue;
+          const propTerm = onPropQuads[0].object;
+          const propIri = propTerm.value;
+
+          // someValuesFrom: indi <prop> filler, filler rdf:type fillerClass
+          const svfQuads = store.getQuads(bnode, OWL_SOME_VALUES_FROM, null, null);
+          if (svfQuads.length > 0) {
+            const fillerClass = svfQuads[0].object.value;
+            for (const pa2 of store.getQuads(subjectIri, propIri, null, null)) {
+              const fillerTypes = store.getQuads(pa2.object, RDF_TYPE, fillerClass, null);
+              if (fillerTypes.length > 0) {
+                return { isEntailed: true, justifications: [[pa2 as Quad, fillerTypes[0] as Quad]] };
+              }
+            }
+            // Check inverse property: filler <invProp> indi
+            const invQuads = store.getQuads(propTerm, OWL_INVERSE_OF, null, null);
+            const invRevQuads = store.getQuads(null, OWL_INVERSE_OF, propTerm, null);
+            const invProps = [
+              ...invQuads.map(q => q.object),
+              ...invRevQuads.map(q => q.subject),
+            ];
+            for (const invPropTerm of invProps) {
+              for (const pa2 of store.getQuads(null, invPropTerm, subjectIri, null)) {
+                const fillerTypes = store.getQuads(pa2.subject, RDF_TYPE, fillerClass, null);
+                if (fillerTypes.length > 0) {
+                  return { isEntailed: true, justifications: [[pa2 as Quad, fillerTypes[0] as Quad]] };
+                }
+              }
+            }
+          }
+
+          // hasValue: indi <prop> value (or value <invProp> indi)
+          const hvQuads = store.getQuads(bnode, OWL_HAS_VALUE, null, null);
+          if (hvQuads.length > 0) {
+            const valTerm = hvQuads[0].object;
+            const directMatch = store.getQuads(subjectIri, propIri, valTerm, null);
+            if (directMatch.length > 0) {
+              return { isEntailed: true, justifications: [[directMatch[0] as Quad]] };
+            }
+            // Inverse: val <invProp> indi
+            const invQuads2 = store.getQuads(propTerm, OWL_INVERSE_OF, null, null);
+            const invRevQuads2 = store.getQuads(null, OWL_INVERSE_OF, propTerm, null);
+            const invProps2 = [
+              ...invQuads2.map(q => q.object),
+              ...invRevQuads2.map(q => q.subject),
+            ];
+            for (const invPropTerm of invProps2) {
+              const invMatch = store.getQuads(valTerm, invPropTerm, subjectIri, null);
+              if (invMatch.length > 0) {
+                const invOfQuad = store.getQuads(propTerm, OWL_INVERSE_OF, invPropTerm, null)[0]
+                  ?? store.getQuads(invPropTerm, OWL_INVERSE_OF, propTerm, null)[0];
+                return { isEntailed: true, justifications: [[invOfQuad as Quad, invMatch[0] as Quad]] };
+              }
+            }
+          }
+        }
+
+        // Reverse someValuesFrom filler typing: Y rdf:type restrictionClass,
+        // Y <prop> indi, restrictionClass equiv someValuesFrom prop targetClass → indi rdf:type target
+        const svfFillerRestrictions = store.getQuads(null, OWL_SOME_VALUES_FROM, objectIri, null);
+        for (const svfQ of svfFillerRestrictions) {
+          const rBnode = svfQ.subject;
+          const opQ = store.getQuads(rBnode, OWL_ON_PROPERTY, null, null);
+          if (opQ.length === 0) continue;
+          const propIri2 = opQ[0].object.value;
+          const ecQuads = store.getQuads(null, OWL_EQUIVALENT_CLASS, rBnode, null);
+          for (const ecQ of ecQuads) {
+            const rClassName = ecQ.subject.value;
+            const pointingToIndi = store.getQuads(null, propIri2, subjectIri, null);
+            for (const ptQ of pointingToIndi) {
+              const yTypes = store.getQuads(ptQ.subject, RDF_TYPE, rClassName, null);
+              if (yTypes.length > 0) {
+                return { isEntailed: true, justifications: [[ptQ as Quad, yTypes[0] as Quad]] };
+              }
+            }
+          }
+        }
+
+        // Subclass chain from inferred type: indi rdf:type A (inferred), A ⊑ target
+        // Derive A's justification from domain/range in input
+        for (const inferredType of inferredTypes) {
+          const scNtriples2 = await this._getSubClassJustificationDirect(inferredType, objectIri);
+          if (scNtriples2.length === 0) continue;
+          const scQuads2 = this._parseNTriplesJustification(scNtriples2);
+          if (scQuads2.length === 0) continue;
+          // Try to derive justification for the intermediate inferred type
+          for (const pa3 of propAssertions) {
+            const domQ = store.getQuads(pa3.predicate.value, RDFS_DOMAIN, inferredType, null);
+            if (domQ.length > 0) {
+              return { isEntailed: true, justifications: [[pa3 as Quad, domQ[0] as Quad, ...scQuads2]] };
+            }
+          }
+          for (const pa3 of asObject) {
+            const rngQ = store.getQuads(pa3.predicate.value, RDFS_RANGE, inferredType, null);
+            if (rngQ.length > 0) {
+              return { isEntailed: true, justifications: [[pa3 as Quad, rngQ[0] as Quad, ...scQuads2]] };
+            }
           }
         }
 

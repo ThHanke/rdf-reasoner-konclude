@@ -353,7 +353,7 @@ export function injectInferredFromBuffer(
   const rawStrings = parseStringTable(combined, 4, strTableLen);
 
   // Find triple count: scan for magic marker or use remaining bytes
-  let tripleCount: number;
+  let tripleCount = 0;
   let foundMagic = false;
   for (let off = tripleStart; off + 8 <= combined.byteLength; off += 4) {
     if (dv.getUint32(off, true) === 0xDEADBEEF) {
