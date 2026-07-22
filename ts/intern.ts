@@ -134,24 +134,25 @@ export function decodeBuffers(combined: ArrayBuffer, opts?: { withJustifications
   const strTableLen = dv.getUint32(0, true);
   const tripleStart = 4 + strTableLen;
 
+  if (tripleStart > combined.byteLength) return wantJust ? { quads: [], justifications: emptyJust } : [];
+
   if (strTableLen < 4) return wantJust ? { quads: [], justifications: emptyJust } : [];
 
   const rawStrings = parseStringTable(combined, 4, strTableLen);
 
   // Without justifications: triple data fills remaining bytes (legacy format).
-  // With justifications: [triples][tripleCount:u32][axiomCount:u32][axioms]
+  // With justifications: [triples][0xDEADBEEF:u32][tripleCount:u32][axiomCount:u32][axioms]
   //   [justCount:u32][justEntries...][mappingCount:u32][mappings...]
   let tripleCount: number;
   if (!wantJust) {
     tripleCount = Math.floor((combined.byteLength - tripleStart) / 12);
   } else {
-    // Self-referential sentinel: at offset tripleStart + c*12, u32 value === c.
-    const maxTriples = Math.floor((combined.byteLength - tripleStart) / 12);
+    // Scan for magic marker 0xDEADBEEF followed by tripleCount.
+    const MAGIC = 0xDEADBEEF;
     tripleCount = 0;
-    for (let c = maxTriples; c >= 0; c--) {
-      const sentinelOff = tripleStart + c * 12;
-      if (sentinelOff + 4 <= combined.byteLength && dv.getUint32(sentinelOff, true) === c) {
-        tripleCount = c;
+    for (let off = tripleStart; off + 8 <= combined.byteLength; off += 4) {
+      if (dv.getUint32(off, true) === MAGIC) {
+        tripleCount = (off - tripleStart) / 12;
         break;
       }
     }
@@ -160,11 +161,12 @@ export function decodeBuffers(combined: ArrayBuffer, opts?: { withJustifications
   const quads = decodeTriples(combined, tripleStart, tripleCount, rawStrings);
   if (!wantJust) return quads;
 
-  let off = tripleStart + tripleCount * 12 + 4; // skip past sentinel
+  let off = tripleStart + tripleCount * 12 + 8; // skip past magic marker + tripleCount
   if (off + 4 > combined.byteLength) return { quads, justifications: emptyJust };
 
   // Axiom triples
   const axiomCount = dv.getUint32(off, true); off += 4;
+  if (off + axiomCount * 12 > combined.byteLength) return { quads, justifications: emptyJust };
   const axioms = decodeTriples(combined, off, axiomCount, rawStrings);
   off += axiomCount * 12;
 
