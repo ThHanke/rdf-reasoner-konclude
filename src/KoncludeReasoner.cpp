@@ -1168,6 +1168,7 @@ void KoncludeReasoner::loadTripleBuffer(int triplePtr, int tripleCount, int strT
         static const char s_first[]   = "http://www.w3.org/1999/02/22-rdf-syntax-ns#first";
         static const char s_rest[]    = "http://www.w3.org/1999/02/22-rdf-syntax-ns#rest";
         static const char s_nil[]     = "http://www.w3.org/1999/02/22-rdf-syntax-ns#nil";
+        static const char s_invOf[]   = "http://www.w3.org/2002/07/owl#inverseOf";
 
         uint32_t domIdx   = findTermIdx(s_domain,  sizeof(s_domain)  - 1);
         uint32_t rngIdx   = findTermIdx(s_range,   sizeof(s_range)   - 1);
@@ -1184,8 +1185,21 @@ void KoncludeReasoner::loadTripleBuffer(int triplePtr, int tripleCount, int strT
         uint32_t firstIdx = findTermIdx(s_first,   sizeof(s_first)  - 1);
         uint32_t restLIdx = findTermIdx(s_rest,    sizeof(s_rest)   - 1);
         uint32_t nilIdx   = findTermIdx(s_nil,     sizeof(s_nil)    - 1);
+        uint32_t invOfIdx = findTermIdx(s_invOf,   sizeof(s_invOf)  - 1);
 
         static const std::string rdfTypeStr = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+
+        // Build inverse property map: propTermIdx → inverseTermIdx (bidirectional)
+        std::unordered_map<uint32_t, uint32_t> inverseMap;
+        if (invOfIdx != UINT32_MAX) {
+            for (int i = 0; i < tripleCount; ++i) {
+                uint32_t s = triples[i*3+0], p = triples[i*3+1], o = triples[i*3+2];
+                if (p != invOfIdx || !isNamedNode(s) || !isNamedNode(o)) continue;
+                uint32_t si = s & 0x3FFFFFFFu, oi = o & 0x3FFFFFFFu;
+                inverseMap[si] = oi;
+                inverseMap[oi] = si;
+            }
+        }
 
         // Build triple indices for O(1) lookup
         // spo[s] = list of (p, o) — all triples with given subject
@@ -1282,8 +1296,11 @@ void KoncludeReasoner::loadTripleBuffer(int triplePtr, int tripleCount, int strT
                     std::string propIri(terms[ri.propIdx].ptr, terms[ri.propIdx].len);
 
                     // hasValue: indi <prop> <value> → indi rdf:type classIri
+                    // Also handles inverse: if prop has inverse invProp,
+                    // then <value> <invProp> <indi> also satisfies the restriction.
                     if (ri.hvIdx != UINT32_MAX) {
                         std::string valIri(terms[ri.hvIdx].ptr, terms[ri.hvIdx].len);
+                        // Direct: indi <prop> value
                         for (int i = 0; i < tripleCount; ++i) {
                             uint32_t s = triples[i*3+0], p = triples[i*3+1], o = triples[i*3+2];
                             if (!isNamedNode(s) || (p & 0x3FFFFFFFu) != ri.propIdx) continue;
@@ -1294,6 +1311,24 @@ void KoncludeReasoner::loadTripleBuffer(int triplePtr, int tripleCount, int strT
                             auto key = Impl::wkJustKey(indiIri, rdfTypeStr, classIri);
                             if (mImpl->mWorkaroundJustifications.find(key) == mImpl->mWorkaroundJustifications.end())
                                 mImpl->mWorkaroundJustifications[key] = just;
+                        }
+                        // Inverse: value <invProp> indi → indi rdf:type classIri
+                        auto invIt = inverseMap.find(ri.propIdx);
+                        if (invIt != inverseMap.end()) {
+                            uint32_t invPropIdx = invIt->second;
+                            std::string invPropIri(terms[invPropIdx].ptr, terms[invPropIdx].len);
+                            for (int i = 0; i < tripleCount; ++i) {
+                                uint32_t s = triples[i*3+0], p = triples[i*3+1], o = triples[i*3+2];
+                                if ((p & 0x3FFFFFFFu) != invPropIdx) continue;
+                                if ((s & 0x3FFFFFFFu) != ri.hvIdx) continue;
+                                if (!isNamedNode(o)) continue;
+                                std::string indiIri = iriStr(o);
+                                std::string just = "<" + propIri + "> <http://www.w3.org/2002/07/owl#inverseOf> <" + invPropIri + "> .\n";
+                                just += "<" + valIri + "> <" + invPropIri + "> <" + indiIri + "> .\n";
+                                auto key = Impl::wkJustKey(indiIri, rdfTypeStr, classIri);
+                                if (mImpl->mWorkaroundJustifications.find(key) == mImpl->mWorkaroundJustifications.end())
+                                    mImpl->mWorkaroundJustifications[key] = just;
+                            }
                         }
                     }
 
@@ -1335,6 +1370,55 @@ void KoncludeReasoner::loadTripleBuffer(int triplePtr, int tripleCount, int strT
                                 auto key = Impl::wkJustKey(fillerIri, rdfTypeStr, avfIri);
                                 if (mImpl->mWorkaroundJustifications.find(key) == mImpl->mWorkaroundJustifications.end())
                                     mImpl->mWorkaroundJustifications[key] = just;
+                            }
+                        }
+                    }
+
+                    // someValuesFrom backward: indi <prop> target, target rdf:type fillerClass
+                    //   → indi rdf:type classIri
+                    // Also handles inverse: if prop has inverse invProp,
+                    //   target <invProp> indi also satisfies the restriction.
+                    if (ri.svfClassIdx != UINT32_MAX && rdfTIdx != UINT32_MAX) {
+                        std::string svfIri(terms[ri.svfClassIdx].ptr, terms[ri.svfClassIdx].len);
+                        // Collect targets typed as the filler class
+                        std::unordered_set<uint32_t> fillerTyped;
+                        for (int i = 0; i < tripleCount; ++i) {
+                            uint32_t s = triples[i*3+0], p = triples[i*3+1], o = triples[i*3+2];
+                            if (p != rdfTIdx || !isNamedNode(s)) continue;
+                            if ((o & 0x3FFFFFFFu) == ri.svfClassIdx) fillerTyped.insert(s & 0x3FFFFFFFu);
+                        }
+                        if (!fillerTyped.empty()) {
+                            // Direct: indi <prop> target
+                            for (int i = 0; i < tripleCount; ++i) {
+                                uint32_t s = triples[i*3+0], p = triples[i*3+1], o = triples[i*3+2];
+                                if (!isNamedNode(s) || (p & 0x3FFFFFFFu) != ri.propIdx || !isNamedNode(o)) continue;
+                                if (!fillerTyped.count(o & 0x3FFFFFFFu)) continue;
+                                std::string indiIri = iriStr(s);
+                                std::string targetIri = iriStr(o);
+                                std::string just = "<" + indiIri + "> <" + propIri + "> <" + targetIri + "> .\n";
+                                just += "<" + targetIri + "> <" + rdfTypeStr + "> <" + svfIri + "> .\n";
+                                auto key = Impl::wkJustKey(indiIri, rdfTypeStr, classIri);
+                                if (mImpl->mWorkaroundJustifications.find(key) == mImpl->mWorkaroundJustifications.end())
+                                    mImpl->mWorkaroundJustifications[key] = just;
+                            }
+                            // Inverse: target <invProp> indi → indi <prop> target (inferred)
+                            auto invIt2 = inverseMap.find(ri.propIdx);
+                            if (invIt2 != inverseMap.end()) {
+                                uint32_t invPropIdx2 = invIt2->second;
+                                std::string invPropIri2(terms[invPropIdx2].ptr, terms[invPropIdx2].len);
+                                for (int i = 0; i < tripleCount; ++i) {
+                                    uint32_t s = triples[i*3+0], p = triples[i*3+1], o = triples[i*3+2];
+                                    if ((p & 0x3FFFFFFFu) != invPropIdx2 || !isNamedNode(s) || !isNamedNode(o)) continue;
+                                    if (!fillerTyped.count(s & 0x3FFFFFFFu)) continue;
+                                    std::string indiIri = iriStr(o);
+                                    std::string targetIri = iriStr(s);
+                                    std::string just = "<" + propIri + "> <http://www.w3.org/2002/07/owl#inverseOf> <" + invPropIri2 + "> .\n";
+                                    just += "<" + targetIri + "> <" + invPropIri2 + "> <" + indiIri + "> .\n";
+                                    just += "<" + targetIri + "> <" + rdfTypeStr + "> <" + svfIri + "> .\n";
+                                    auto key = Impl::wkJustKey(indiIri, rdfTypeStr, classIri);
+                                    if (mImpl->mWorkaroundJustifications.find(key) == mImpl->mWorkaroundJustifications.end())
+                                        mImpl->mWorkaroundJustifications[key] = just;
+                                }
                             }
                         }
                     }
@@ -2266,14 +2350,22 @@ int KoncludeReasoner::buildInferredTripleBuffer() {
                                                     just += impl->resolveDepTagsToNTriples(*scDeps);
                                                     break;
                                                 }
-                                                // 2. Taxonomy + workaround: intermediate type from domain/range/restriction
+                                                // 2. Taxonomy subsumption: intermediate type A ⊑ target
                                                 if (taxonomy && taxonomy->isSubsumption(concept, cit2->second)) {
+                                                    // 2a. Workaround-based intermediate type
                                                     auto wkKey = Impl::wkJustKey(*indiIriPtr, rdfTypeIri, assertedIri);
                                                     auto wkIt = impl->mWorkaroundJustifications.find(wkKey);
                                                     if (wkIt != impl->mWorkaroundJustifications.end()) {
                                                         just = wkIt->second;
                                                         std::string chainJust = impl->getSubClassJustification(assertedIri, iri);
                                                         if (!chainJust.empty()) just += chainJust;
+                                                        break;
+                                                    }
+                                                    // 2b. Subclass chain only (asserted or other intermediate type)
+                                                    std::string chainJust = impl->getSubClassJustification(assertedIri, iri);
+                                                    if (!chainJust.empty()) {
+                                                        just = "<" + *indiIriPtr + "> <" + rdfTypeIri + "> <" + assertedIri + "> .\n";
+                                                        just += chainJust;
                                                         break;
                                                     }
                                                 }

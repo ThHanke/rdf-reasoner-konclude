@@ -5,6 +5,7 @@ build:
 
 build-wasm:
 	docker compose run --rm build
+	npm run patch-wasm
 
 test:
 	npm test
