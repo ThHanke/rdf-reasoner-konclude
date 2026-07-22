@@ -1,0 +1,86 @@
+@prefix ex: <http://example.com/reasoning-demo#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<http://example.com/reasoning-demo> a owl:Ontology ;
+    rdfs:label "Reasoning Demo Ontology" .
+
+ex:Person a owl:Class .
+ex:Employee a owl:Class ; rdfs:subClassOf ex:Person .
+ex:Manager a owl:Class ; rdfs:subClassOf ex:Employee .
+ex:Executive a owl:Class ; rdfs:subClassOf ex:Manager .
+
+ex:knows a owl:ObjectProperty ; rdfs:domain ex:Person ; rdfs:range ex:Person .
+ex:hasFriend a owl:ObjectProperty ; rdfs:subPropertyOf ex:knows .
+ex:manages a owl:ObjectProperty ; rdfs:domain ex:Manager ; rdfs:range ex:Employee .
+ex:isManagedBy a owl:ObjectProperty ; owl:inverseOf ex:manages .
+ex:isColleagueOf a owl:ObjectProperty, owl:SymmetricProperty .
+ex:hasSupervisor a owl:ObjectProperty, owl:TransitiveProperty .
+
+ex:alice a owl:NamedIndividual, ex:Executive .
+ex:bob a owl:NamedIndividual, ex:Employee .
+ex:carol a owl:NamedIndividual, ex:Employee .
+ex:dave a owl:NamedIndividual .
+
+ex:alice ex:hasFriend ex:bob .
+ex:alice ex:manages ex:carol .
+ex:dave ex:manages ex:bob .
+ex:bob ex:isColleagueOf ex:carol .
+ex:carol ex:hasSupervisor ex:bob .
+ex:bob ex:hasSupervisor ex:alice .
+
+ex:Project a owl:Class .
+ex:worksOn a owl:ObjectProperty ; rdfs:domain ex:Employee ; rdfs:range ex:Project .
+
+ex:ProjectContributor a owl:Class ;
+    owl:equivalentClass [
+        a owl:Restriction ;
+        owl:onProperty ex:worksOn ;
+        owl:someValuesFrom ex:Project
+    ] .
+
+ex:DirectReport a owl:Class ;
+    owl:equivalentClass [
+        a owl:Restriction ;
+        owl:onProperty ex:isManagedBy ;
+        owl:hasValue ex:alice
+    ] .
+
+ex:DirectorRole a owl:Class ;
+    owl:equivalentClass [
+        a owl:Restriction ;
+        owl:onProperty ex:manages ;
+        owl:allValuesFrom ex:Manager
+    ] .
+
+ex:projectAlpha a owl:NamedIndividual, ex:Project .
+ex:alice ex:worksOn ex:projectAlpha .
+ex:carol ex:worksOn ex:projectAlpha .
+
+ex:TeamLead a owl:Class ;
+    owl:equivalentClass [
+        a owl:Class ;
+        owl:intersectionOf (
+            [ a owl:Restriction ; owl:onProperty ex:manages ; owl:someValuesFrom ex:Manager ]
+            [ a owl:Restriction ; owl:onProperty ex:manages ; owl:someValuesFrom ex:Employee ]
+        )
+    ] .
+
+ex:eve a owl:NamedIndividual, ex:Employee .
+ex:dave ex:manages ex:eve .
+
+ex:Contractor a owl:Class ; owl:disjointWith ex:Employee .
+ex:NonEmployee a owl:Class ;
+    owl:equivalentClass [ a owl:Class ; owl:complementOf ex:Employee ] .
+ex:frank a owl:NamedIndividual, ex:Contractor .
+
+ex:hasGrandManager a owl:ObjectProperty ;
+    owl:propertyChainAxiom ( ex:hasSupervisor ex:hasSupervisor ) .
+
+ex:LeadershipTeam a owl:Class ;
+    owl:equivalentClass [ a owl:Class ; owl:unionOf ( ex:Executive ex:Manager ) ] .
+
+ex:aliceCEO a owl:NamedIndividual ; owl:sameAs ex:alice .
+ex:frank owl:differentFrom ex:alice .

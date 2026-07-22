@@ -1,6 +1,6 @@
 {
   "name": "rdf-reasoner-konclude",
-  "version": "0.6.5",
+  "version": "0.6.6",
   "description": "OWL-DL tableau reasoning via Konclude compiled to WebAssembly. Async TypeScript API — pass an N3.js Store, get inferred triples back. Uses RDF.js Quad types throughout.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -53,7 +53,7 @@
     "@types/node": "^20.0.0",
     "n3": "^1.22.0",
     "typescript": "^5.4.5",
-    "vite": "^5.4.21",
+    "vite": "^8.1.5",
     "vitest": "^4.0.0"
   },
   "license": "LGPL-3.0-or-later",

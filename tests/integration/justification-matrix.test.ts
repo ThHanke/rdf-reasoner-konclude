@@ -58,6 +58,7 @@ function classifyPredicate(pred: string): string | null {
 async function auditOntology(
   fixtureName: string,
   reasoner: RdfReasoner,
+  opts?: { useMaterialize?: boolean },
 ): Promise<AuditResult[]> {
   const quads = fixtureName.endsWith(".ttl")
     ? loadTurtle(fixtureName)
@@ -65,7 +66,11 @@ async function auditOntology(
   const store = new Store();
   store.addQuads(quads);
 
-  await reasoner.reason(store);
+  if (opts?.useMaterialize) {
+    await reasoner.materialize(store);
+  } else {
+    await reasoner.reason(store);
+  }
 
   const inferredQuads = store.getQuads(
     null, null, null, DataFactory.namedNode(INFERRED),
@@ -224,6 +229,18 @@ describe.skipIf(!wasmExists)("Justification coverage audit", () => {
     const partial = nonThing.filter(r => r.status === "PARTIAL");
     expect(missing.length, `${missing.length} triples not detected as entailed`).toBe(0);
     expect(partial.length, `${partial.length} triples entailed but missing justification axioms:\n${partial.map(p => `  [PARTIAL] ${p.triple}`).join("\n")}`).toBe(0);
+  }, 120000);
+
+  it("reasoning-demo (restrictions + inverse + someValuesFrom): every inferred rdf:type has justification", async () => {
+    const results = await auditOntology("reasoning-demo.ttl", reasoner, { useMaterialize: true });
+    printSummary("reasoning-demo", results);
+
+    const typeResults = results.filter(r => r.predicate === "type");
+    const nonThing = typeResults.filter(r => !r.triple.endsWith(`${OWL}Thing`));
+    const missing = nonThing.filter(r => r.status === "MISSING");
+    const partial = nonThing.filter(r => r.status === "PARTIAL");
+    expect(missing.length, `${missing.length} type triples not detected as entailed`).toBe(0);
+    expect(partial.length, `${partial.length} type triples entailed but missing justification axioms:\n${partial.map(p => `  [PARTIAL] ${p.triple}`).join("\n")}`).toBe(0);
   }, 120000);
 
   // class-collections skipped: ALIF+ hang on unionOf causes timeout
