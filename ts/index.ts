@@ -1790,6 +1790,27 @@ export class RdfReasoner {
           }
         }
 
+        // sameAs type propagation: subject sameAs partner, partner rdf:type object
+        const sameAsPartners = [
+          ...allBase.filter(q => q.subject.value === subjectIri && q.predicate.value === OWL_SAME_AS).map(q => q.object.value),
+          ...allBase.filter(q => q.object.value === subjectIri && q.predicate.value === OWL_SAME_AS).map(q => q.subject.value),
+        ];
+        for (const partner of sameAsPartners) {
+          const partnerHasType = allBase.some(
+            q => q.subject.value === partner && q.predicate.value === RDF_TYPE && q.object.value === objectIri,
+          );
+          if (partnerHasType) {
+            const sameAsQuad = allBase.find(
+              q => (q.subject.value === subjectIri && q.predicate.value === OWL_SAME_AS && q.object.value === partner) ||
+                   (q.subject.value === partner && q.predicate.value === OWL_SAME_AS && q.object.value === subjectIri),
+            )!;
+            const typeQuad = allBase.find(
+              q => q.subject.value === partner && q.predicate.value === RDF_TYPE && q.object.value === objectIri,
+            )!;
+            return { isEntailed: true, justifications: [[sameAsQuad as Quad, typeQuad as Quad]] };
+          }
+        }
+
       }
 
       // ── TS synthesis path ────────────────────────────────────────────
