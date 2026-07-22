@@ -46,6 +46,8 @@ interface KoncludeReasonerInstance {
   getAxiomsForRoleTag(tag: number): string;
   getJustificationByType(sub: string, sup: string, type: number): string;
   hasJustificationByType(sub: string, sup: string, type: number): boolean;
+  lookupTripleJustification(sub: string, pred: string, obj: string): string;
+  hasTripleJustification(sub: string, pred: string, obj: string): boolean;
   delete?(): void;
 }
 
@@ -186,6 +188,12 @@ export function createInlineWorker(koncludeModuleUrl: string | URL): Worker {
           break;
         case "hasJustificationByType":
           result = r.hasJustificationByType(args[0] as string, args[1] as string, args[2] as number);
+          break;
+        case "lookupTripleJustification":
+          result = r.lookupTripleJustification(args[0] as string, args[1] as string, args[2] as string);
+          break;
+        case "hasTripleJustification":
+          result = r.hasTripleJustification(args[0] as string, args[1] as string, args[2] as string);
           break;
         default:
           emit("message", { data: { id, error: `Unknown method: ${method}` } });
