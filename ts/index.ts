@@ -206,11 +206,11 @@ export class RdfReasoner {
     });
   }
 
-  private async _ensureExplanationGraph(store: Store, inferredGraph?: string): Promise<void> {
+  private async _ensureExplanationGraph(store: Store): Promise<void> {
     const explGraphNode = DataFactory.namedNode(EXPLANATION_GRAPH_IRI);
     if (store.getQuads(null, null, null, explGraphNode).length > 0) return;
     const bulkExport = (await this._call("exportAllJustifications", [])) as string;
-    serializeExplanations(store, bulkExport, EXPLANATION_GRAPH_IRI, inferredGraph);
+    serializeExplanations(store, bulkExport, EXPLANATION_GRAPH_IRI);
   }
 
   // -------------------------------------------------------------------------
@@ -254,7 +254,7 @@ export class RdfReasoner {
       // Cache hit: same store content as last classify call
       if (this._classifyCache !== null && this._classifyCache.hash === fingerprint) {
         if (wantExplanations) {
-          await this._ensureExplanationGraph(store, opts?.inferredGraph);
+          await this._ensureExplanationGraph(store);
         }
         return;
       }
@@ -282,7 +282,7 @@ export class RdfReasoner {
 
       if (wantExplanations) {
         const bulkExport = (await this._call("exportAllJustifications", [])) as string;
-        serializeExplanations(store, bulkExport, EXPLANATION_GRAPH_IRI, opts?.inferredGraph);
+        serializeExplanations(store, bulkExport, EXPLANATION_GRAPH_IRI);
       }
 
       this._classifyCache = { hash: fingerprint, result: undefined as void };
@@ -485,7 +485,7 @@ export class RdfReasoner {
       // Cache hit: same store content as last materialize call
       if (this._materializeCache !== null && this._materializeCache.hash === fingerprint) {
         if (wantExplanations) {
-          await this._ensureExplanationGraph(store, opts?.inferredGraph);
+          await this._ensureExplanationGraph(store);
         }
         if (returnDelta) {
           return { delta: { added: [], removed: [] } as InferenceDelta };
@@ -530,7 +530,7 @@ export class RdfReasoner {
 
       if (wantExplanations) {
         const bulkExport = (await this._call("exportAllJustifications", [])) as string;
-        serializeExplanations(store, bulkExport, EXPLANATION_GRAPH_IRI, opts?.inferredGraph);
+        serializeExplanations(store, bulkExport, EXPLANATION_GRAPH_IRI);
       }
 
       this._materializeCache = { hash: fingerprint, result: undefined as void };
@@ -634,7 +634,7 @@ export class RdfReasoner {
       // Cache hit: same store content as last classifyProperties call
       if (this._classifyPropertiesCache !== null && this._classifyPropertiesCache.hash === fingerprint) {
         if (wantExplanations) {
-          await this._ensureExplanationGraph(store, opts?.inferredGraph);
+          await this._ensureExplanationGraph(store);
         }
         return;
       }
@@ -661,7 +661,7 @@ export class RdfReasoner {
 
       if (wantExplanations) {
         const bulkExport = (await this._call("exportAllJustifications", [])) as string;
-        serializeExplanations(store, bulkExport, EXPLANATION_GRAPH_IRI, opts?.inferredGraph);
+        serializeExplanations(store, bulkExport, EXPLANATION_GRAPH_IRI);
       }
 
       this._classifyPropertiesCache = { hash: fingerprint, result: undefined as void };
