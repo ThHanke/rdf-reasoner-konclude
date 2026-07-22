@@ -36,8 +36,8 @@ public:
     // Returns total byte length (0 if not classified).
     // getInferredTripleBufferPtr() returns the raw pointer into the internal
     // buffer — valid until the next call to loadTripleBuffer / reset.
-    int buildInferredTripleBuffer();
-    int buildPropertyTripleBuffer();
+    int buildInferredTripleBuffer(bool withExplanations = false);
+    int buildPropertyTripleBuffer(bool withExplanations = false);
     int getInferredTripleBufferPtr();
 
     // Returns newline-delimited unsatisfiable class IRIs (empty string if none or not classified).
@@ -54,10 +54,6 @@ public:
     // Generic justification queries by EntailmentType (0=Classification, 1=Realization, 2=PropertySubsumption)
     std::string getJustificationByType(const std::string& subIri, const std::string& superIri, int type);
     bool hasJustificationByType(const std::string& subIri, const std::string& superIri, int type);
-
-    // Triple-keyed justification cache — IRI-based lookup populated at emission time
-    std::string lookupTripleJustification(const std::string& sub, const std::string& pred, const std::string& obj);
-    bool hasTripleJustification(const std::string& sub, const std::string& pred, const std::string& obj);
 
     // Axiom reverse mapping — convert concept/role tags back to source axiom NTriples
     std::string getAxiomsForConceptTag(int64_t tag);

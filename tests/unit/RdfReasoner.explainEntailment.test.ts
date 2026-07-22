@@ -121,8 +121,6 @@ function mockAlwaysConsistent() {
       simulateWorkerMessage({ id: req.id, result: false });
     } else if (req.method === "hasJustificationByType") {
       simulateWorkerMessage({ id: req.id, result: false });
-    } else if (req.method === "hasTripleJustification") {
-      simulateWorkerMessage({ id: req.id, result: false });
     } else if (req.method === "getInferredTripleBuffer") {
       simulateWorkerMessage({ id: req.id, result: buildCombinedBuffer([]) });
     }
@@ -144,8 +142,6 @@ function mockAlwaysInconsistent() {
     } else if (req.method === "hasNativeJustification") {
       simulateWorkerMessage({ id: req.id, result: false });
     } else if (req.method === "hasJustificationByType") {
-      simulateWorkerMessage({ id: req.id, result: false });
-    } else if (req.method === "hasTripleJustification") {
       simulateWorkerMessage({ id: req.id, result: false });
     }
   });
@@ -179,8 +175,6 @@ function mockEntailmentViaProbe(consistencyThreshold: number, isSatisfiableClass
     } else if (req.method === "hasNativeJustification") {
       simulateWorkerMessage({ id: req.id, result: false });
     } else if (req.method === "hasJustificationByType") {
-      simulateWorkerMessage({ id: req.id, result: false });
-    } else if (req.method === "hasTripleJustification") {
       simulateWorkerMessage({ id: req.id, result: false });
     } else if (req.method === "getSubClassJustification") {
       simulateWorkerMessage({ id: req.id, result: "" });
@@ -484,9 +478,9 @@ describe("RdfReasoner — explainEntailment", () => {
     const fpJustNT = `<${fpProp.value}> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#FunctionalProperty> .\n<${x.value}> <${fpProp.value}> <${m.value}> .\n<${y.value}> <${fpProp.value}> <${m.value}> .\n`;
     mocks.workerPostMessage.mockImplementation((msg: unknown) => {
       const req = msg as { id: number; method: string; args: unknown[] };
-      if (req.method === "hasTripleJustification") {
+      if (req.method === "hasJustificationByType") {
         simulateWorkerMessage({ id: req.id, result: true });
-      } else if (req.method === "lookupTripleJustification") {
+      } else if (req.method === "getJustificationByType") {
         simulateWorkerMessage({ id: req.id, result: fpJustNT });
       }
     });
@@ -526,9 +520,9 @@ describe("RdfReasoner — explainEntailment", () => {
     const ifpJustNT = `<${ifpProp.value}> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#InverseFunctionalProperty> .\n<${ssn.value}> <${ifpProp.value}> <${alice2.value}> .\n<${ssn.value}> <${ifpProp.value}> <${bob.value}> .\n`;
     mocks.workerPostMessage.mockImplementation((msg: unknown) => {
       const req = msg as { id: number; method: string };
-      if (req.method === "hasTripleJustification") {
+      if (req.method === "hasJustificationByType") {
         simulateWorkerMessage({ id: req.id, result: true });
-      } else if (req.method === "lookupTripleJustification") {
+      } else if (req.method === "getJustificationByType") {
         simulateWorkerMessage({ id: req.id, result: ifpJustNT });
       }
     });
@@ -704,9 +698,9 @@ describe("RdfReasoner — explainEntailment", () => {
     const ecJustNT = `<${A.value}> <http://www.w3.org/2002/07/owl#equivalentClass> <${B.value}> .\n`;
     mocks.workerPostMessage.mockImplementation((msg: unknown) => {
       const req = msg as { id: number; method: string };
-      if (req.method === "hasTripleJustification") {
+      if (req.method === "hasNativeJustification") {
         simulateWorkerMessage({ id: req.id, result: true });
-      } else if (req.method === "lookupTripleJustification") {
+      } else if (req.method === "getSubClassJustification") {
         simulateWorkerMessage({ id: req.id, result: ecJustNT });
       }
     });

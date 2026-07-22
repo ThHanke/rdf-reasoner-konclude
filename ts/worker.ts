@@ -134,7 +134,8 @@ export async function handleMessage(
         break;
       }
       case "getInferredTripleBuffer": {
-        const len = reasoner.buildInferredTripleBuffer();
+        const withExplanations = (args[0] as boolean) ?? false;
+        const len = reasoner.buildInferredTripleBuffer(withExplanations);
         if (len > 0) {
           const ptr = reasoner.getInferredTripleBufferPtr();
           // HEAPU8.buffer may be a SharedArrayBuffer — slice() copies to a plain AB
@@ -152,7 +153,8 @@ export async function handleMessage(
         return;
       }
       case "getPropertyTripleBuffer": {
-        const len = reasoner.buildPropertyTripleBuffer();
+        const withExplanations = (args[0] as boolean) ?? false;
+        const len = reasoner.buildPropertyTripleBuffer(withExplanations);
         if (len > 0) {
           const ptr = reasoner.getInferredTripleBufferPtr();
           const plain = mod.HEAPU8.slice(ptr, ptr + len);
@@ -205,14 +207,6 @@ export async function handleMessage(
       }
       case "hasJustificationByType": {
         result = reasoner.hasJustificationByType(args[0] as string, args[1] as string, args[2] as number);
-        break;
-      }
-      case "lookupTripleJustification": {
-        result = reasoner.lookupTripleJustification(args[0] as string, args[1] as string, args[2] as string);
-        break;
-      }
-      case "hasTripleJustification": {
-        result = reasoner.hasTripleJustification(args[0] as string, args[1] as string, args[2] as string);
         break;
       }
       default: {
