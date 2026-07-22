@@ -1,7 +1,7 @@
 /**
  * Diagnostic: full pipeline timing breakdown.
  *
- * Measures old path vs new (direct N3 injection/extraction) for both
+ * Measures old path vs new (direct N3 injection) for both
  * INPUT (Store → binary) and OUTPUT (binary → Store) paths.
  */
 
@@ -12,7 +12,7 @@ import { Store, DataFactory } from "n3";
 import { RdfReasoner, INFERRED_GRAPH_IRI, EXPLANATION_GRAPH_IRI } from "../../ts/index.js";
 import { encodeToBuffers, decodeBuffers, computeStoreFingerprint } from "../../ts/intern.js";
 import { serializeExplanations } from "../../ts/explanationSerializer.js";
-import { injectExplanationsFromBuffer, encodeStoreToBuffers, computeStoreFingerprintDirect } from "../../ts/n3Inject.js";
+import { injectExplanationsFromBuffer, injectInferredFromBuffer, encodeStoreToBuffers, computeStoreFingerprintDirect } from "../../ts/n3Inject.js";
 import { loadFixture } from "../helpers/fixture.js";
 
 const wasmPath = new URL("../../dist/konclude.wasm", import.meta.url).pathname;
@@ -65,8 +65,7 @@ describe.skipIf(!wasmExists)("Full pipeline timing breakdown (roberts-family)", 
       computeStoreFingerprintDirect(store);
     }));
 
-    // === WASM: load + realize + get buffer (single pipeline, no warmup) ===
-    let bufExpl!: ArrayBuffer;
+    // === WASM: load + realize ===
     record("WASM_load+realize", await timeItAsync(async () => {
       await (r as any)._call("loadTripleBuffer",
         [encoded.tripleBuffer, encoded.strTableBuffer, true],
@@ -74,39 +73,39 @@ describe.skipIf(!wasmExists)("Full pipeline timing breakdown (roberts-family)", 
       await (r as any)._call("realization", []);
     }));
 
+    // Get buffer WITH explanations
+    let bufExpl!: ArrayBuffer;
     record("OUT_getBuffer_expl", await timeItAsync(async () => {
       bufExpl = (await (r as any)._call("getInferredTripleBuffer", [true])) as ArrayBuffer;
     }));
 
-    // === OUTPUT: old path (decode + addQuad + serializeExplanations) ===
-    let decoded!: ReturnType<typeof decodeBuffers>;
+    // === OUTPUT OLD: decode + addQuad + serializeExplanations ===
+    let decoded!: ReturnType<typeof decodeBuffers> & { quads: any; justifications: any };
     record("OUT_old_decode", timeIt(() => {
-      decoded = decodeBuffers(bufExpl, { withJustifications: true });
+      decoded = decodeBuffers(bufExpl, { withJustifications: true }) as any;
     }));
 
     const ig = DataFactory.namedNode(INFERRED_GRAPH_IRI);
     const storeOld = new Store();
     record("OUT_old_addQuad_inferred", timeIt(() => {
-      for (const q of (decoded as any).quads) {
+      for (const q of decoded.quads) {
         storeOld.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, ig));
       }
     }));
 
     record("OUT_old_serializeExpl", timeIt(() => {
-      serializeExplanations(storeOld, (decoded as any).justifications, (decoded as any).quads, EXPLANATION_GRAPH_IRI);
+      serializeExplanations(storeOld, decoded.justifications, decoded.quads, EXPLANATION_GRAPH_IRI);
     }));
 
-    const oldInferredCount = (decoded as any).quads.length;
+    const oldInferredCount = decoded.quads.length;
     const oldExplCount = storeOld.getQuads(null, null, null, DataFactory.namedNode(EXPLANATION_GRAPH_IRI)).length;
-    const oldJustCount = (decoded as any).justifications.entries.length;
+    const oldJustCount = decoded.justifications.entries.length;
 
-    // === OUTPUT: new path (decode inferred + inject explanations) ===
+    // === OUTPUT NEW: injectInferredFromBuffer + injectExplanationsFromBuffer ===
     const storeNew = new Store();
-    record("OUT_new_decode+addQuad_inferred", timeIt(() => {
-      const d = decodeBuffers(bufExpl, { withJustifications: true });
-      for (const q of (d as any).quads) {
-        storeNew.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, ig));
-      }
+    let newInferredCount = 0;
+    record("OUT_new_injectInferred", timeIt(() => {
+      newInferredCount = injectInferredFromBuffer(storeNew, bufExpl, INFERRED_GRAPH_IRI);
     }));
 
     record("OUT_new_injectExpl", timeIt(() => {
@@ -125,14 +124,14 @@ describe.skipIf(!wasmExists)("Full pipeline timing breakdown (roberts-family)", 
     const oldInputCost = t["IN_old_getQuads+encode"] + t["IN_old_getQuads+fingerprint"];
     const newInputCost = t["IN_new_encode"] + t["IN_new_fingerprint"];
     const oldOutputCost = t["OUT_getBuffer_expl"] + t["OUT_old_decode"] + t["OUT_old_addQuad_inferred"] + t["OUT_old_serializeExpl"];
-    const newOutputCost = t["OUT_getBuffer_expl"] + t["OUT_new_decode+addQuad_inferred"] + t["OUT_new_injectExpl"];
+    const newOutputCost = t["OUT_getBuffer_expl"] + t["OUT_new_injectInferred"] + t["OUT_new_injectExpl"];
     const oldTotal = oldInputCost + wasmTime + oldOutputCost;
     const newTotal = newInputCost + wasmTime + newOutputCost;
 
     console.log("\n╔════════════════════════════════════════════════════════════════════╗");
     console.log("║   Full Pipeline Timing (roberts-family)                          ║");
     console.log("╠════════════════════════════════════════════════════════════════════╣");
-    console.log(`║  Input quads:    ${baseQuads.length.toString().padStart(6)}     Inferred quads: ${oldInferredCount.toString().padStart(6)}`);
+    console.log(`║  Input quads:    ${baseQuads.length.toString().padStart(6)}     Inferred quads: ${oldInferredCount.toString().padStart(6)} (old) / ${newInferredCount.toString().padStart(6)} (new)`);
     console.log(`║  Justifications: ${oldJustCount.toString().padStart(6)}     Expl quads:     ${oldExplCount.toString().padStart(6)} (old) / ${newExplCount.toString().padStart(6)} (new)`);
     console.log("║");
     console.log("║  Per-phase (ms):");
@@ -145,12 +144,12 @@ describe.skipIf(!wasmExists)("Full pipeline timing breakdown (roberts-family)", 
     console.log(`║  New (direct read):               ${newInputCost.toFixed(2).padStart(8)} ms`);
     console.log(`║  Input speedup:                   ${(oldInputCost / newInputCost).toFixed(1)}x`);
     console.log("║");
-    console.log("║  ══════ OUTPUT PATH (with explanations) ══════");
+    console.log("║  ══════ OUTPUT PATH (inferred + explanations) ══════");
     console.log(`║  Old (decode+addQuad+serialize):   ${oldOutputCost.toFixed(2).padStart(8)} ms`);
-    console.log(`║  New (decode+addQuad+inject):      ${newOutputCost.toFixed(2).padStart(8)} ms`);
+    console.log(`║  New (inject inferred+expl):       ${newOutputCost.toFixed(2).padStart(8)} ms`);
     console.log(`║  Output speedup:                   ${(oldOutputCost / newOutputCost).toFixed(1)}x`);
     console.log("║");
-    console.log("║  ══════ TOTAL PIPELINE (with explanations) ══════");
+    console.log("║  ══════ TOTAL PIPELINE ══════");
     console.log(`║  WASM reasoning:                  ${wasmTime.toFixed(2).padStart(8)} ms`);
     console.log(`║  Old total:                       ${oldTotal.toFixed(2).padStart(8)} ms`);
     console.log(`║  New total:                       ${newTotal.toFixed(2).padStart(8)} ms`);

@@ -112,6 +112,10 @@ export class RdfReasoner {
   private _materializeCache: { hash: string; result: void } | null = null;
   private _classifyPropertiesCache: { hash: string; result: void } | null = null;
   private _consistencyCache: { hash: string; result: boolean } | null = null;
+
+  // Cached explanation buffers — avoids WASM round-trip on cache-hit explanation requests.
+  private _lastExplBuffer: ArrayBuffer | null = null;
+  private _lastPropertyExplBuffer: ArrayBuffer | null = null;
   private _entailmentProbeCounter = 0;
 
   constructor(opts?: RdfReasonerOptions) {
@@ -209,7 +213,13 @@ export class RdfReasoner {
   private async _ensureExplanationGraphFromBuffer(store: Store, bufferMethod: string): Promise<void> {
     const explGraphNode = DataFactory.namedNode(EXPLANATION_GRAPH_IRI);
     if (store.getQuads(null, null, null, explGraphNode).length > 0) return;
-    const resultBuf = (await this._call(bufferMethod, [true])) as ArrayBuffer;
+    const isProperty = bufferMethod === "getPropertyTripleBuffer";
+    let resultBuf = isProperty ? this._lastPropertyExplBuffer : this._lastExplBuffer;
+    if (!resultBuf) {
+      resultBuf = (await this._call(bufferMethod, [true])) as ArrayBuffer;
+      if (isProperty) this._lastPropertyExplBuffer = resultBuf;
+      else this._lastExplBuffer = resultBuf;
+    }
     injectExplanationsFromBuffer(store, resultBuf, EXPLANATION_GRAPH_IRI);
   }
 
@@ -277,16 +287,19 @@ export class RdfReasoner {
           store.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode));
         }
         injectExplanationsFromBuffer(store, resultBuf, EXPLANATION_GRAPH_IRI);
+        this._lastExplBuffer = resultBuf;
       } else {
         const inferredQuads = decodeBuffers(resultBuf);
         for (const q of inferredQuads) {
           store.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode));
         }
+        this._lastExplBuffer = null;
       }
 
       this._classifyCache = { hash: fingerprint, result: undefined as void };
       this._materializeCache = null;
       this._classifyPropertiesCache = null;
+      this._lastPropertyExplBuffer = null;
     });
     this._queue = result.then(
       () => {},
@@ -511,8 +524,10 @@ export class RdfReasoner {
         const decoded = decodeBuffers(resultBuf, { withJustifications: true });
         allQuads = decoded.quads;
         injectExplanationsFromBuffer(store, resultBuf, EXPLANATION_GRAPH_IRI);
+        this._lastExplBuffer = resultBuf;
       } else {
         allQuads = decodeBuffers(resultBuf);
+        this._lastExplBuffer = null;
       }
 
       const inferredQuads = opts?.includeClassHierarchy === true
@@ -532,6 +547,7 @@ export class RdfReasoner {
       this._materializeCache = { hash: fingerprint, result: undefined as void };
       this._classifyCache = null;
       this._classifyPropertiesCache = null;
+      this._lastPropertyExplBuffer = null;
 
       if (returnDelta) {
         // Build after set from what was just written.
@@ -653,16 +669,19 @@ export class RdfReasoner {
           store.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode));
         }
         injectExplanationsFromBuffer(store, resultBuf, EXPLANATION_GRAPH_IRI);
+        this._lastPropertyExplBuffer = resultBuf;
       } else {
         const inferredQuads = decodeBuffers(resultBuf);
         for (const q of inferredQuads) {
           store.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode));
         }
+        this._lastPropertyExplBuffer = null;
       }
 
       this._classifyPropertiesCache = { hash: fingerprint, result: undefined as void };
       this._classifyCache = null;
       this._materializeCache = null;
+      this._lastExplBuffer = null;
     });
     this._queue = result.then(
       () => {},
@@ -725,6 +744,8 @@ export class RdfReasoner {
     this._classifyCache = { hash: fingerprint, result: undefined as void };
     this._materializeCache = null;           // cross-invalidate
     this._classifyPropertiesCache = null;    // cross-invalidate
+    this._lastExplBuffer = null;
+    this._lastPropertyExplBuffer = null;
   }
 
   private async _materializeInline(store: Store, fingerprint: string, inferredGraph?: string): Promise<void> {
@@ -744,6 +765,8 @@ export class RdfReasoner {
     this._materializeCache = { hash: fingerprint, result: undefined as void };
     this._classifyCache = null;              // cross-invalidate
     this._classifyPropertiesCache = null;    // cross-invalidate
+    this._lastExplBuffer = null;
+    this._lastPropertyExplBuffer = null;
   }
 
   private async _classifyPropertiesInline(store: Store, fingerprint: string, inferredGraph?: string): Promise<void> {
@@ -759,6 +782,8 @@ export class RdfReasoner {
     this._classifyPropertiesCache = { hash: fingerprint, result: undefined as void };
     this._classifyCache = null;              // cross-invalidate
     this._materializeCache = null;           // cross-invalidate
+    this._lastExplBuffer = null;
+    this._lastPropertyExplBuffer = null;
   }
 
   // -------------------------------------------------------------------------
@@ -997,6 +1022,8 @@ export class RdfReasoner {
       this._classifyCache = null;
       this._materializeCache = null;
       this._classifyPropertiesCache = null;
+      this._lastExplBuffer = null;
+      this._lastPropertyExplBuffer = null;
       this._consistencyCache = null;
 
       return { added, removed };
@@ -1269,6 +1296,8 @@ export class RdfReasoner {
       this._classifyCache = null;
       this._materializeCache = null;
       this._classifyPropertiesCache = null;
+      this._lastExplBuffer = null;
+      this._lastPropertyExplBuffer = null;
       this._consistencyCache = null;
 
       // Fast-path: axiom not entailed at all
@@ -1414,6 +1443,8 @@ export class RdfReasoner {
       this._classifyCache = null;
       this._materializeCache = null;
       this._classifyPropertiesCache = null;
+      this._lastExplBuffer = null;
+      this._lastPropertyExplBuffer = null;
 
       if (consistent) return [];
 
@@ -1435,6 +1466,8 @@ export class RdfReasoner {
       this._classifyCache = null;
       this._materializeCache = null;
       this._classifyPropertiesCache = null;
+      this._lastExplBuffer = null;
+      this._lastPropertyExplBuffer = null;
       this._consistencyCache = null;
 
       // Verify full candidate set is indeed inconsistent (axiomFilter may have changed the set)
@@ -1553,6 +1586,8 @@ export class RdfReasoner {
       this._classifyCache = null;
       this._materializeCache = null;
       this._classifyPropertiesCache = null;
+      this._lastExplBuffer = null;
+      this._lastPropertyExplBuffer = null;
 
       if (consistent) return [];
 
@@ -1569,6 +1604,8 @@ export class RdfReasoner {
       this._classifyCache = null;
       this._materializeCache = null;
       this._classifyPropertiesCache = null;
+      this._lastExplBuffer = null;
+      this._lastPropertyExplBuffer = null;
       this._consistencyCache = null;
 
       if (!(await this._checkInconsistencyDirect(allCandidates))) return [];
@@ -2106,6 +2143,8 @@ export class RdfReasoner {
       this._classifyCache = null;
       this._materializeCache = null;
       this._classifyPropertiesCache = null;
+      this._lastExplBuffer = null;
+      this._lastPropertyExplBuffer = null;
       this._consistencyCache = null;
 
       // Partition into justification candidates vs background declarations

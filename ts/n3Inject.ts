@@ -331,6 +331,70 @@ export function computeStoreFingerprintDirect(store: Store): string {
   return hash.toString(16).padStart(8, "0");
 }
 
+/**
+ * Decode inferred triples from the combined buffer and inject them directly
+ * into the N3 Store's index, bypassing DataFactory.quad() and store.addQuad().
+ *
+ * Returns the number of triples injected.
+ */
+export function injectInferredFromBuffer(
+  store: Store,
+  combined: ArrayBuffer,
+  inferredGraphIri: string,
+): number {
+  assertN3Internals(store);
+
+  if (combined.byteLength < 4) return 0;
+  const dv = new DataView(combined);
+  const strTableLen = dv.getUint32(0, true);
+  const tripleStart = 4 + strTableLen;
+  if (tripleStart > combined.byteLength || strTableLen < 4) return 0;
+
+  const rawStrings = parseStringTable(combined, 4, strTableLen);
+
+  // Find triple count: scan for magic marker or use remaining bytes
+  let tripleCount: number;
+  let foundMagic = false;
+  for (let off = tripleStart; off + 8 <= combined.byteLength; off += 4) {
+    if (dv.getUint32(off, true) === 0xDEADBEEF) {
+      tripleCount = (off - tripleStart) / 12;
+      foundMagic = true;
+      break;
+    }
+  }
+  if (!foundMagic) {
+    tripleCount = Math.floor((combined.byteLength - tripleStart) / 12);
+  }
+  if (tripleCount === 0) return 0;
+
+  const gId = getOrCreateId(store, inferredGraphIri);
+
+  // Cache: buffer string index → N3 entity ID (keyed by full bufId including type bits)
+  const n3IdCache = new Map<number, number>();
+  const resolveTermId = (bufId: number): number => {
+    let n3Id = n3IdCache.get(bufId);
+    if (n3Id === undefined) {
+      const type = bufId >>> 30;
+      const idx = bufId & 0x3FFFFFFF;
+      const entityKey = toN3EntityKey(rawStrings[idx], type);
+      n3Id = getOrCreateId(store, entityKey);
+      n3IdCache.set(bufId, n3Id);
+    }
+    return n3Id;
+  };
+
+  const tripDv = new DataView(combined, tripleStart, tripleCount! * 12);
+  let injected = 0;
+  for (let i = 0; i < tripleCount!; i++) {
+    const sId = resolveTermId(tripDv.getUint32(i * 12, true));
+    const pId = resolveTermId(tripDv.getUint32(i * 12 + 4, true));
+    const oId = resolveTermId(tripDv.getUint32(i * 12 + 8, true));
+    if (injectQuad(store, sId, pId, oId, gId)) injected++;
+  }
+
+  return injected;
+}
+
 const RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
 const MAGIC = 0xDEADBEEF;
 const dec = new TextDecoder();
