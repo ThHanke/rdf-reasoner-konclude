@@ -1,12 +1,13 @@
 import type { Quad } from "@rdfjs/types";
-import { Store, DataFactory, Parser } from "n3";
+import { Store, DataFactory } from "n3";
+import type { JustificationData } from "./intern.js";
 import {
   KJ_JUSTIFICATION,
   KJ_JUSTIFIES,
   KJ_AXIOM,
 } from "./types.js";
 
-const { namedNode, blankNode, quad } = DataFactory;
+const { namedNode, quad } = DataFactory;
 const RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
 
 const kjJustificationType = namedNode(KJ_JUSTIFICATION);
@@ -16,57 +17,39 @@ const rdfTypePred = namedNode(RDF_TYPE);
 
 export function serializeExplanations(
   store: Store,
-  bulkExport: string,
+  justData: JustificationData,
+  inferredQuads: Quad[],
   explanationGraph: string,
 ): void {
   const explGraphNode = namedNode(explanationGraph);
 
   store.removeQuads(store.getQuads(null, null, null, explGraphNode));
 
-  if (!bulkExport) return;
+  if (!justData || justData.entries.length === 0) return;
 
-  const parser = new Parser({ format: "N-Triples" });
-  let jCounter = 0;
+  const { axioms, entries, mappings } = justData;
 
-  const entries = bulkExport.split("\0");
-  for (const entry of entries) {
-    if (!entry) continue;
-
-    const newlineIdx = entry.indexOf("\n");
-    if (newlineIdx < 0) continue;
-
-    const keyLine = entry.slice(0, newlineIdx);
-    const axiomBody = entry.slice(newlineIdx + 1);
-
-    const parts = keyLine.split("\t");
-    if (parts.length < 3) continue;
-
-    const [sub, pred, obj] = parts;
-
-    const jNode = blankNode(`j${jCounter++}`);
-
-    const inferredTriple = buildQuotedTriple(sub, pred, obj);
+  const jNodes = entries.map((entry) => {
+    const jNode = namedNode(entry.iri);
 
     store.addQuad(quad(jNode, rdfTypePred, kjJustificationType, explGraphNode));
-    store.addQuad(quad(jNode, kjJustifiesPred, inferredTriple, explGraphNode));
 
-    if (axiomBody.trim()) {
-      try {
-        const axiomQuads = parser.parse(axiomBody);
-        for (const aq of axiomQuads) {
-          const quotedAxiom = quad(aq.subject, aq.predicate, aq.object);
-          store.addQuad(quad(jNode, kjAxiomPred, quotedAxiom, explGraphNode));
-        }
-      } catch {
-        // malformed NTriples — skip this entry's axioms
+    for (const axiomIdx of entry.axiomIndices) {
+      if (axiomIdx < axioms.length) {
+        const aq = axioms[axiomIdx];
+        const quotedAxiom = quad(aq.subject as any, aq.predicate, aq.object);
+        store.addQuad(quad(jNode, kjAxiomPred, quotedAxiom as any, explGraphNode));
       }
     }
-  }
-}
 
-function buildQuotedTriple(sub: string, pred: string, obj: string): Quad {
-  const s = sub.startsWith("_:") ? blankNode(sub.slice(2)) : namedNode(sub);
-  const p = namedNode(pred);
-  const o = obj.startsWith("_:") ? blankNode(obj.slice(2)) : namedNode(obj);
-  return quad(s as any, p, o);
+    return jNode;
+  });
+
+  for (const { tripleIdx, justIdx } of mappings) {
+    if (justIdx < jNodes.length && tripleIdx < inferredQuads.length) {
+      const iq = inferredQuads[tripleIdx];
+      const quotedTriple = quad(iq.subject as any, iq.predicate, iq.object);
+      store.addQuad(quad(jNodes[justIdx], kjJustifiesPred, quotedTriple as any, explGraphNode));
+    }
+  }
 }

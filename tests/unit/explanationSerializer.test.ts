@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { Store, DataFactory } from "n3";
 import { serializeExplanations } from "../../ts/explanationSerializer.js";
+import type { JustificationData } from "../../ts/intern.js";
 import {
   EXPLANATION_GRAPH_IRI,
   KJ_JUSTIFICATION,
@@ -14,26 +15,28 @@ const RDFS_SUB_CLASS_OF = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
 const EX = "http://example.org/";
 const explGraph = namedNode(EXPLANATION_GRAPH_IRI);
 
-function makeBulkExport(entries: Array<{ sub: string; pred: string; obj: string; axioms: string }>): string {
-  return entries
-    .map(e => `${e.sub}\t${e.pred}\t${e.obj}\n${e.axioms}`)
-    .join("\0");
+function makeQuad(s: string, p: string, o: string) {
+  return quad(namedNode(s), namedNode(p), namedNode(o));
 }
 
 describe("serializeExplanations", () => {
   it("single justification with 2 axioms", () => {
     const store = new Store();
-    const bulk = makeBulkExport([{
-      sub: `${EX}Dog`,
-      pred: RDFS_SUB_CLASS_OF,
-      obj: `${EX}Animal`,
-      axioms: `<${EX}Dog> <${RDFS_SUB_CLASS_OF}> <${EX}Pet> .\n<${EX}Pet> <${RDFS_SUB_CLASS_OF}> <${EX}Animal> .`,
-    }]);
+    const inferredQuads = [makeQuad(`${EX}Dog`, RDFS_SUB_CLASS_OF, `${EX}Animal`)];
+    const justData: JustificationData = {
+      axioms: [
+        makeQuad(`${EX}Dog`, RDFS_SUB_CLASS_OF, `${EX}Pet`),
+        makeQuad(`${EX}Pet`, RDFS_SUB_CLASS_OF, `${EX}Animal`),
+      ],
+      entries: [{ iri: "urn:konclude:j#abc123", axiomIndices: [0, 1] }],
+      mappings: [{ tripleIdx: 0, justIdx: 0 }],
+    };
 
-    serializeExplanations(store, bulk, EXPLANATION_GRAPH_IRI);
+    serializeExplanations(store, justData, inferredQuads, EXPLANATION_GRAPH_IRI);
 
     const types = store.getQuads(null, namedNode(RDF_TYPE), namedNode(KJ_JUSTIFICATION), explGraph);
     expect(types).toHaveLength(1);
+    expect(types[0].subject.value).toBe("urn:konclude:j#abc123");
 
     const justifies = store.getQuads(null, namedNode(KJ_JUSTIFIES), null, explGraph);
     expect(justifies).toHaveLength(1);
@@ -46,40 +49,44 @@ describe("serializeExplanations", () => {
     }
   });
 
-  it("multiple justifications get unique blank nodes", () => {
+  it("multiple justifications get unique named nodes", () => {
     const store = new Store();
-    const bulk = makeBulkExport([
-      {
-        sub: `${EX}A`,
-        pred: RDFS_SUB_CLASS_OF,
-        obj: `${EX}B`,
-        axioms: `<${EX}A> <${RDFS_SUB_CLASS_OF}> <${EX}B> .`,
-      },
-      {
-        sub: `${EX}C`,
-        pred: RDFS_SUB_CLASS_OF,
-        obj: `${EX}D`,
-        axioms: `<${EX}C> <${RDFS_SUB_CLASS_OF}> <${EX}D> .`,
-      },
-    ]);
+    const inferredQuads = [
+      makeQuad(`${EX}A`, RDFS_SUB_CLASS_OF, `${EX}B`),
+      makeQuad(`${EX}C`, RDFS_SUB_CLASS_OF, `${EX}D`),
+    ];
+    const justData: JustificationData = {
+      axioms: [
+        makeQuad(`${EX}A`, RDFS_SUB_CLASS_OF, `${EX}B`),
+        makeQuad(`${EX}C`, RDFS_SUB_CLASS_OF, `${EX}D`),
+      ],
+      entries: [
+        { iri: "urn:konclude:j#aaa", axiomIndices: [0] },
+        { iri: "urn:konclude:j#bbb", axiomIndices: [1] },
+      ],
+      mappings: [
+        { tripleIdx: 0, justIdx: 0 },
+        { tripleIdx: 1, justIdx: 1 },
+      ],
+    };
 
-    serializeExplanations(store, bulk, EXPLANATION_GRAPH_IRI);
+    serializeExplanations(store, justData, inferredQuads, EXPLANATION_GRAPH_IRI);
 
     const justifies = store.getQuads(null, namedNode(KJ_JUSTIFIES), null, explGraph);
     expect(justifies).toHaveLength(2);
     expect(justifies[0].subject.value).not.toBe(justifies[1].subject.value);
   });
 
-  it("nil-path: no axioms in entry", () => {
+  it("justification with zero axioms", () => {
     const store = new Store();
-    const bulk = makeBulkExport([{
-      sub: `${EX}Dog`,
-      pred: RDFS_SUB_CLASS_OF,
-      obj: `${EX}Animal`,
-      axioms: "",
-    }]);
+    const inferredQuads = [makeQuad(`${EX}Dog`, RDFS_SUB_CLASS_OF, `${EX}Animal`)];
+    const justData: JustificationData = {
+      axioms: [],
+      entries: [{ iri: "urn:konclude:j#empty", axiomIndices: [] }],
+      mappings: [{ tripleIdx: 0, justIdx: 0 }],
+    };
 
-    serializeExplanations(store, bulk, EXPLANATION_GRAPH_IRI);
+    serializeExplanations(store, justData, inferredQuads, EXPLANATION_GRAPH_IRI);
 
     const justifies = store.getQuads(null, namedNode(KJ_JUSTIFIES), null, explGraph);
     expect(justifies).toHaveLength(1);
@@ -88,17 +95,12 @@ describe("serializeExplanations", () => {
     expect(axioms).toHaveLength(0);
   });
 
-  it("empty bulk export clears graph", () => {
+  it("empty justification data clears graph", () => {
     const store = new Store();
-    // Pre-populate with stale data
-    store.addQuad(quad(
-      namedNode(`${EX}old`),
-      namedNode(KJ_JUSTIFIES),
-      namedNode(`${EX}stale`),
-      explGraph,
-    ));
+    store.addQuad(quad(namedNode(`${EX}old`), namedNode(KJ_JUSTIFIES), namedNode(`${EX}stale`), explGraph));
 
-    serializeExplanations(store, "", EXPLANATION_GRAPH_IRI);
+    const justData: JustificationData = { axioms: [], entries: [], mappings: [] };
+    serializeExplanations(store, justData, [], EXPLANATION_GRAPH_IRI);
 
     const all = store.getQuads(null, null, null, explGraph);
     expect(all).toHaveLength(0);
@@ -106,21 +108,19 @@ describe("serializeExplanations", () => {
 
   it("second call clears previous explanation quads", () => {
     const store = new Store();
-    const bulk1 = makeBulkExport([{
-      sub: `${EX}A`,
-      pred: RDFS_SUB_CLASS_OF,
-      obj: `${EX}B`,
-      axioms: `<${EX}A> <${RDFS_SUB_CLASS_OF}> <${EX}B> .`,
-    }]);
-    serializeExplanations(store, bulk1, EXPLANATION_GRAPH_IRI);
+    const justData1: JustificationData = {
+      axioms: [makeQuad(`${EX}A`, RDFS_SUB_CLASS_OF, `${EX}B`)],
+      entries: [{ iri: "urn:konclude:j#first", axiomIndices: [0] }],
+      mappings: [{ tripleIdx: 0, justIdx: 0 }],
+    };
+    serializeExplanations(store, justData1, [makeQuad(`${EX}A`, RDFS_SUB_CLASS_OF, `${EX}B`)], EXPLANATION_GRAPH_IRI);
 
-    const bulk2 = makeBulkExport([{
-      sub: `${EX}C`,
-      pred: RDFS_SUB_CLASS_OF,
-      obj: `${EX}D`,
-      axioms: `<${EX}C> <${RDFS_SUB_CLASS_OF}> <${EX}D> .`,
-    }]);
-    serializeExplanations(store, bulk2, EXPLANATION_GRAPH_IRI);
+    const justData2: JustificationData = {
+      axioms: [makeQuad(`${EX}C`, RDFS_SUB_CLASS_OF, `${EX}D`)],
+      entries: [{ iri: "urn:konclude:j#second", axiomIndices: [0] }],
+      mappings: [{ tripleIdx: 0, justIdx: 0 }],
+    };
+    serializeExplanations(store, justData2, [makeQuad(`${EX}C`, RDFS_SUB_CLASS_OF, `${EX}D`)], EXPLANATION_GRAPH_IRI);
 
     const justifies = store.getQuads(null, namedNode(KJ_JUSTIFIES), null, explGraph);
     expect(justifies).toHaveLength(1);
@@ -128,76 +128,43 @@ describe("serializeExplanations", () => {
     expect(quotedTriple.subject.value).toBe(`${EX}C`);
   });
 
-  it("malformed NTriples emits nil-path, continues with rest", () => {
+  it("two inferred triples sharing same justification", () => {
     const store = new Store();
-    const bulk = makeBulkExport([
-      {
-        sub: `${EX}Bad`,
-        pred: RDFS_SUB_CLASS_OF,
-        obj: `${EX}Entry`,
-        axioms: "NOT VALID NTRIPLES!!!",
-      },
-      {
-        sub: `${EX}Good`,
-        pred: RDFS_SUB_CLASS_OF,
-        obj: `${EX}Entry`,
-        axioms: `<${EX}Good> <${RDFS_SUB_CLASS_OF}> <${EX}Entry> .`,
-      },
-    ]);
+    const inferredQuads = [
+      makeQuad(`${EX}X`, RDF_TYPE, `${EX}A`),
+      makeQuad(`${EX}X`, RDF_TYPE, `${EX}B`),
+    ];
+    const justData: JustificationData = {
+      axioms: [makeQuad(`${EX}A`, RDFS_SUB_CLASS_OF, `${EX}B`)],
+      entries: [{ iri: "urn:konclude:j#shared", axiomIndices: [0] }],
+      mappings: [
+        { tripleIdx: 0, justIdx: 0 },
+        { tripleIdx: 1, justIdx: 0 },
+      ],
+    };
 
-    serializeExplanations(store, bulk, EXPLANATION_GRAPH_IRI);
+    serializeExplanations(store, justData, inferredQuads, EXPLANATION_GRAPH_IRI);
+
+    const types = store.getQuads(null, namedNode(RDF_TYPE), namedNode(KJ_JUSTIFICATION), explGraph);
+    expect(types).toHaveLength(1);
 
     const justifies = store.getQuads(null, namedNode(KJ_JUSTIFIES), null, explGraph);
     expect(justifies).toHaveLength(2);
-
-    // Bad entry has no axioms (nil-path)
-    const badJ = justifies.find(j => {
-      const qt = j.object as unknown as ReturnType<typeof quad>;
-      return qt.subject.value === `${EX}Bad`;
-    });
-    expect(badJ).toBeDefined();
-    const badAxioms = store.getQuads(badJ!.subject, namedNode(KJ_AXIOM), null, explGraph);
-    expect(badAxioms).toHaveLength(0);
-
-    // Good entry has axiom
-    const goodJ = justifies.find(j => {
-      const qt = j.object as unknown as ReturnType<typeof quad>;
-      return qt.subject.value === `${EX}Good`;
-    });
-    expect(goodJ).toBeDefined();
-    const goodAxioms = store.getQuads(goodJ!.subject, namedNode(KJ_AXIOM), null, explGraph);
-    expect(goodAxioms).toHaveLength(1);
+    expect(justifies[0].subject.value).toBe(justifies[1].subject.value);
   });
 
-  it("blank node in axiom triple", () => {
+  it("named node IRI matches urn:konclude:j# pattern", () => {
     const store = new Store();
-    const bulk = makeBulkExport([{
-      sub: `${EX}Dog`,
-      pred: RDFS_SUB_CLASS_OF,
-      obj: `${EX}Animal`,
-      axioms: `_:b1 <${RDF_TYPE}> <${EX}Dog> .`,
-    }]);
+    const justData: JustificationData = {
+      axioms: [makeQuad(`${EX}A`, RDFS_SUB_CLASS_OF, `${EX}B`)],
+      entries: [{ iri: "urn:konclude:j#deadbeef01234567", axiomIndices: [0] }],
+      mappings: [{ tripleIdx: 0, justIdx: 0 }],
+    };
 
-    serializeExplanations(store, bulk, EXPLANATION_GRAPH_IRI);
+    serializeExplanations(store, justData, [makeQuad(`${EX}A`, RDFS_SUB_CLASS_OF, `${EX}B`)], EXPLANATION_GRAPH_IRI);
 
-    const axioms = store.getQuads(null, namedNode(KJ_AXIOM), null, explGraph);
-    expect(axioms).toHaveLength(1);
-    const quotedAxiom = axioms[0].object as unknown as ReturnType<typeof quad>;
-    expect(quotedAxiom.subject.termType).toBe("BlankNode");
-  });
-
-  it("only exports entries from bulk export, no nil-path for unjustified triples", () => {
-    const store = new Store();
-    const bulk = makeBulkExport([{
-      sub: `${EX}Dog`,
-      pred: RDFS_SUB_CLASS_OF,
-      obj: `${EX}Animal`,
-      axioms: `<${EX}Dog> <${RDFS_SUB_CLASS_OF}> <${EX}Animal> .`,
-    }]);
-
-    serializeExplanations(store, bulk, EXPLANATION_GRAPH_IRI);
-
-    const justifies = store.getQuads(null, namedNode(KJ_JUSTIFIES), null, explGraph);
-    expect(justifies).toHaveLength(1);
+    const types = store.getQuads(null, namedNode(RDF_TYPE), namedNode(KJ_JUSTIFICATION), explGraph);
+    expect(types[0].subject.value).toMatch(/^urn:konclude:j#[0-9a-f]+$/);
+    expect(types[0].subject.termType).toBe("NamedNode");
   });
 });

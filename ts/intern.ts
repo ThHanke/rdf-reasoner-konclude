@@ -101,41 +101,126 @@ const dec = new TextDecoder();
 //   lower 30 bits = string-table index.
 //   0 = NamedNode, 1 = BlankNode, 2 = Literal (value\0datatype\0language)
 //
-export function decodeBuffers(combined: ArrayBuffer): Quad[] {
-  if (combined.byteLength < 4) return [];
+export interface JustificationEntry {
+  iri: string;
+  axiomIndices: number[];
+}
+
+export interface JustificationMapping {
+  tripleIdx: number;
+  justIdx: number;
+}
+
+export interface JustificationData {
+  axioms: Quad[];
+  entries: JustificationEntry[];
+  mappings: JustificationMapping[];
+}
+
+export interface DecodeResult {
+  quads: Quad[];
+  justifications: JustificationData;
+}
+
+export function decodeBuffers(combined: ArrayBuffer): Quad[];
+export function decodeBuffers(combined: ArrayBuffer, opts: { withJustifications: true }): DecodeResult;
+export function decodeBuffers(combined: ArrayBuffer, opts?: { withJustifications?: boolean }): Quad[] | DecodeResult {
+  const emptyJust: JustificationData = { axioms: [], entries: [], mappings: [] };
+  const wantJust = opts?.withJustifications === true;
+
+  if (combined.byteLength < 4) return wantJust ? { quads: [], justifications: emptyJust } : [];
 
   const dv = new DataView(combined);
   const strTableLen = dv.getUint32(0, true);
-
-  const strTableStart = 4;
   const tripleStart = 4 + strTableLen;
 
-  if (strTableLen < 4) return [];
+  if (strTableLen < 4) return wantJust ? { quads: [], justifications: emptyJust } : [];
 
-  // Parse string table
-  const strDv = new DataView(combined, strTableStart, strTableLen);
-  const termCount = strDv.getUint32(0, true);
-  const headerBytes = 4 + 4 * termCount;
-  const strDataLen = strTableLen - headerBytes;
-  const strBytes = new Uint8Array(combined, strTableStart + headerBytes, strDataLen);
+  const rawStrings = parseStringTable(combined, 4, strTableLen);
 
-  // Decode raw string for each entry (preserves null bytes for literals)
-  const rawStrings: string[] = new Array(termCount);
-  for (let i = 0; i < termCount; i++) {
-    const start = strDv.getUint32(4 + 4 * i, true);
-    const end = i + 1 < termCount ? strDv.getUint32(4 + 4 * (i + 1), true) : strDataLen;
-    rawStrings[i] = dec.decode(strBytes.slice(start, end));
+  // Without justifications: triple data fills remaining bytes (legacy format).
+  // With justifications: [triples][tripleCount:u32][axiomCount:u32][axioms]
+  //   [justCount:u32][justEntries...][mappingCount:u32][mappings...]
+  let tripleCount: number;
+  if (!wantJust) {
+    tripleCount = Math.floor((combined.byteLength - tripleStart) / 12);
+  } else {
+    // Self-referential sentinel: at offset tripleStart + c*12, u32 value === c.
+    const maxTriples = Math.floor((combined.byteLength - tripleStart) / 12);
+    tripleCount = 0;
+    for (let c = maxTriples; c >= 0; c--) {
+      const sentinelOff = tripleStart + c * 12;
+      if (sentinelOff + 4 <= combined.byteLength && dv.getUint32(sentinelOff, true) === c) {
+        tripleCount = c;
+        break;
+      }
+    }
   }
 
-  // Decode triples
-  const tripleBytes = combined.byteLength - tripleStart;
-  const tripleCount = Math.floor(tripleBytes / 12); // 3 × u32 per triple
-  if (tripleCount === 0) return [];
+  const quads = decodeTriples(combined, tripleStart, tripleCount, rawStrings);
+  if (!wantJust) return quads;
 
-  const tripDv = new DataView(combined, tripleStart, tripleCount * 12);
-  const quads: Quad[] = new Array(tripleCount);
+  let off = tripleStart + tripleCount * 12 + 4; // skip past sentinel
+  if (off + 4 > combined.byteLength) return { quads, justifications: emptyJust };
 
-  for (let i = 0; i < tripleCount; i++) {
+  // Axiom triples
+  const axiomCount = dv.getUint32(off, true); off += 4;
+  const axioms = decodeTriples(combined, off, axiomCount, rawStrings);
+  off += axiomCount * 12;
+
+  // Justification entries: [hashHigh:u32][hashLow:u32][numAxioms:u32][axiomIdx:u32...]
+  if (off + 4 > combined.byteLength) return { quads, justifications: { axioms, entries: [], mappings: [] } };
+  const justCount = dv.getUint32(off, true); off += 4;
+  const entries: JustificationEntry[] = new Array(justCount);
+  for (let i = 0; i < justCount; i++) {
+    const hashHigh = dv.getUint32(off, true); off += 4;
+    const hashLow = dv.getUint32(off, true); off += 4;
+    const numAxioms = dv.getUint32(off, true); off += 4;
+    const axiomIndices: number[] = new Array(numAxioms);
+    for (let j = 0; j < numAxioms; j++) {
+      axiomIndices[j] = dv.getUint32(off, true); off += 4;
+    }
+    const hex = toHex16(hashHigh, hashLow);
+    entries[i] = { iri: `urn:konclude:j#${hex}`, axiomIndices };
+  }
+
+  // Mappings: [tripleIdx:u32][justIdx:u32]
+  if (off + 4 > combined.byteLength) return { quads, justifications: { axioms, entries, mappings: [] } };
+  const mappingCount = dv.getUint32(off, true); off += 4;
+  const mappings: JustificationMapping[] = new Array(mappingCount);
+  for (let i = 0; i < mappingCount; i++) {
+    mappings[i] = { tripleIdx: dv.getUint32(off, true), justIdx: dv.getUint32(off + 4, true) };
+    off += 8;
+  }
+
+  return { quads, justifications: { axioms, entries, mappings } };
+}
+
+function toHex16(high: number, low: number): string {
+  return (high >>> 0).toString(16).padStart(8, "0") + (low >>> 0).toString(16).padStart(8, "0");
+}
+
+function parseStringTable(buf: ArrayBuffer, start: number, len: number): string[] {
+  const strDv = new DataView(buf, start, len);
+  const termCount = strDv.getUint32(0, true);
+  const headerBytes = 4 + 4 * termCount;
+  const strDataLen = len - headerBytes;
+  const strBytes = new Uint8Array(buf, start + headerBytes, strDataLen);
+
+  const rawStrings: string[] = new Array(termCount);
+  for (let i = 0; i < termCount; i++) {
+    const s = strDv.getUint32(4 + 4 * i, true);
+    const e = i + 1 < termCount ? strDv.getUint32(4 + 4 * (i + 1), true) : strDataLen;
+    rawStrings[i] = dec.decode(strBytes.slice(s, e));
+  }
+  return rawStrings;
+}
+
+function decodeTriples(buf: ArrayBuffer, start: number, count: number, rawStrings: string[]): Quad[] {
+  if (count === 0) return [];
+  const tripDv = new DataView(buf, start, count * 12);
+  const quads: Quad[] = new Array(count);
+  for (let i = 0; i < count; i++) {
     const sId = tripDv.getUint32(i * 12, true);
     const pId = tripDv.getUint32(i * 12 + 4, true);
     const oId = tripDv.getUint32(i * 12 + 8, true);
@@ -146,7 +231,6 @@ export function decodeBuffers(combined: ArrayBuffer): Quad[] {
       DataFactory.defaultGraph(),
     );
   }
-
   return quads;
 }
 

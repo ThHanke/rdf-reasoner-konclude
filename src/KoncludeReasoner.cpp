@@ -90,7 +90,6 @@
 
 // Justification index
 #include "JustificationCache.h"
-#include "JustificationTripleCache.h"
 
 // Axiom reverse mapping (IU-A1): expression→axiom hashes
 #include "Reasoner/Ontology/CExpressionDataBoxMapping.h"
@@ -317,6 +316,10 @@ private:
     CGlobalConfigurationBase*    mConfig;
 };
 
+// Forward-declare InternTable (defined in anonymous namespace below) so Impl
+// methods can reference it.
+namespace { struct InternTable; }
+
 // ─── Impl ─────────────────────────────────────────────────────────────────────
 
 struct KoncludeReasoner::Impl {
@@ -514,7 +517,6 @@ struct KoncludeReasoner::Impl {
         mRoleTagToIri.clear();
         mRoleByIri.clear();
         JustificationCache::instance().clear();
-        JustificationTripleCache::instance().clear();
     }
 
     void buildConceptIndex() {
@@ -902,13 +904,12 @@ struct KoncludeReasoner::Impl {
         return result;
     }
 
-    // Store justification in the triple cache, deduplicating NTriples lines.
-    void storeTripleJustification(const std::string& sub, const std::string& pred,
-                                   const std::string& obj, const std::string& justification) {
-        if (!justification.empty()) {
-            JustificationTripleCache::instance().insert(sub, pred, obj, justification);
-        }
-    }
+    // Axiom index resolution — same expression walks as getAxiomsForConceptTag/RoleTag
+    // but interns IRIs into a shared InternTable and returns (s,p,o) index tuples.
+    // Defined out-of-line after InternTable.
+    std::vector<std::tuple<uint32_t,uint32_t,uint32_t>> emitAxiomIndicesForConceptTag(int64_t tag, InternTable& intern);
+    std::vector<std::tuple<uint32_t,uint32_t,uint32_t>> emitAxiomIndicesForRoleTag(int64_t tag, InternTable& intern);
+
 };
 
 // ─── KoncludeReasoner public API ──────────────────────────────────────────────
@@ -2132,7 +2133,193 @@ struct TupleHash3 {
     }
 };
 
+// FNV-1a hash over sorted dep tag int64 array → deterministic 64-bit hash.
+inline uint64_t hashDepTags(std::vector<int64_t>& tags) {
+    std::sort(tags.begin(), tags.end());
+    uint64_t h = 14695981039346656037ULL; // FNV offset basis
+    for (int64_t t : tags) {
+        const auto* bytes = reinterpret_cast<const uint8_t*>(&t);
+        for (int i = 0; i < 8; ++i) {
+            h ^= bytes[i];
+            h *= 1099511628211ULL; // FNV prime
+        }
+    }
+    return h;
+}
+
+struct JustEntry {
+    uint64_t hash;
+    std::vector<uint32_t> axiomIndices; // flat: groups of 3 (s,p,o)
+};
+
 } // anonymous namespace
+
+// ─── Axiom index resolution (out-of-line, needs InternTable) ─────────────────
+
+std::vector<std::tuple<uint32_t,uint32_t,uint32_t>>
+KoncludeReasoner::Impl::emitAxiomIndicesForConceptTag(int64_t tag, InternTable& intern) {
+    std::vector<std::tuple<uint32_t,uint32_t,uint32_t>> result;
+    if (!mClassified || !mOntology) return result;
+
+    auto cit = mTagToConcept.find(tag);
+    if (cit == mTagToConcept.end()) return result;
+    CConcept* concept = cit->second;
+
+    auto* mapping = mOntology->getDataBoxes()->getExpressionDataBoxMapping();
+    if (!mapping) return result;
+
+    auto* c2ctHash = mapping->getConceptClassTermMappingHash();
+    if (!c2ctHash || !c2ctHash->contains(concept)) return result;
+    CClassTermExpression* classTermExpr = c2ctHash->value(concept);
+
+    auto* ct2axHash = mapping->getClassTermExpressionClassAxiomExpressionHash();
+    if (!ct2axHash) return result;
+    QList<CClassAxiomExpression*> axioms = ct2axHash->values(classTermExpr);
+
+    for (CClassAxiomExpression* axiom : axioms) {
+        if (!axiom) continue;
+
+        if (auto* sc = dynamic_cast<CSubClassOfExpression*>(axiom)) {
+            auto* sub = dynamic_cast<CClassExpression*>(sc->getSubClassTermExpression());
+            auto* sup = dynamic_cast<CClassExpression*>(sc->getSuperClassTermExpression());
+            if (sub && sup) {
+                result.emplace_back(
+                    intern.intern(std::string(sub->getName())),
+                    intern.intern("http://www.w3.org/2000/01/rdf-schema#subClassOf"),
+                    intern.intern(std::string(sup->getName())));
+            }
+            continue;
+        }
+
+        if (auto* eq = dynamic_cast<CEquivalentClassesExpression*>(axiom)) {
+            auto* list = eq->getClassTermExpressionList();
+            if (list && list->size() >= 2) {
+                for (int i = 0; i < (int)list->size(); ++i) {
+                    for (int j = i + 1; j < (int)list->size(); ++j) {
+                        auto* a = dynamic_cast<CClassExpression*>((*list)[i]);
+                        auto* b = dynamic_cast<CClassExpression*>((*list)[j]);
+                        if (a && b) {
+                            result.emplace_back(
+                                intern.intern(std::string(a->getName())),
+                                intern.intern("http://www.w3.org/2002/07/owl#equivalentClass"),
+                                intern.intern(std::string(b->getName())));
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+
+        if (auto* dj = dynamic_cast<CDisjointClassesExpression*>(axiom)) {
+            auto* list = dj->getClassTermExpressionList();
+            if (list && list->size() >= 2) {
+                for (int i = 0; i < (int)list->size(); ++i) {
+                    for (int j = i + 1; j < (int)list->size(); ++j) {
+                        auto* a = dynamic_cast<CClassExpression*>((*list)[i]);
+                        auto* b = dynamic_cast<CClassExpression*>((*list)[j]);
+                        if (a && b) {
+                            result.emplace_back(
+                                intern.intern(std::string(a->getName())),
+                                intern.intern("http://www.w3.org/2002/07/owl#disjointWith"),
+                                intern.intern(std::string(b->getName())));
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+    }
+    return result;
+}
+
+std::vector<std::tuple<uint32_t,uint32_t,uint32_t>>
+KoncludeReasoner::Impl::emitAxiomIndicesForRoleTag(int64_t tag, InternTable& intern) {
+    std::vector<std::tuple<uint32_t,uint32_t,uint32_t>> result;
+    if (!mClassified || !mOntology) return result;
+
+    auto rit = mTagToRole.find(tag);
+    if (rit == mTagToRole.end()) return result;
+    CRole* role = rit->second;
+
+    auto* mapping = mOntology->getDataBoxes()->getExpressionDataBoxMapping();
+    if (!mapping) return result;
+
+    auto* r2optHash = mapping->getRoleObjectPropertyTermMappingHash();
+    if (!r2optHash || !r2optHash->contains(role)) return result;
+    CObjectPropertyTermExpression* propTermExpr = r2optHash->value(role);
+
+    auto* opt2axHash = mapping->getObjectPropertyTermObjectPropertyAxiomHash();
+    if (!opt2axHash) return result;
+    QList<CObjectPropertyAxiomExpression*> axioms = opt2axHash->values(propTermExpr);
+
+    for (CObjectPropertyAxiomExpression* axiom : axioms) {
+        if (!axiom) continue;
+
+        if (auto* sp = dynamic_cast<CSubObjectPropertyOfExpression*>(axiom)) {
+            auto* sup = dynamic_cast<CObjectPropertyExpression*>(
+                sp->getSuperObjectPropertyTermExpression());
+            auto* subList = sp->getSubObjectPropertyTermExpressionList();
+            if (sup && subList && subList->size() == 1) {
+                auto* sub = dynamic_cast<CObjectPropertyExpression*>((*subList)[0]);
+                if (sub) {
+                    result.emplace_back(
+                        intern.intern(std::string(sub->getName())),
+                        intern.intern("http://www.w3.org/2000/01/rdf-schema#subPropertyOf"),
+                        intern.intern(std::string(sup->getName())));
+                }
+            }
+            continue;
+        }
+
+        if (auto* ep = dynamic_cast<CEquivalentObjectPropertiesExpression*>(axiom)) {
+            auto* list = ep->getObjectPropertyTermExpressionList();
+            if (list && list->size() >= 2) {
+                for (int i = 0; i < (int)list->size(); ++i) {
+                    for (int j = i + 1; j < (int)list->size(); ++j) {
+                        auto* a = dynamic_cast<CObjectPropertyExpression*>((*list)[i]);
+                        auto* b = dynamic_cast<CObjectPropertyExpression*>((*list)[j]);
+                        if (a && b) {
+                            result.emplace_back(
+                                intern.intern(std::string(a->getName())),
+                                intern.intern("http://www.w3.org/2002/07/owl#equivalentProperty"),
+                                intern.intern(std::string(b->getName())));
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+
+        if (auto* dom = dynamic_cast<CObjectPropertyDomainExpression*>(axiom)) {
+            auto* prop = dynamic_cast<CObjectPropertyExpression*>(
+                dom->getObjectPropertyTermExpression());
+            auto* cls = dynamic_cast<CClassExpression*>(
+                dom->getClassTermExpression());
+            if (prop && cls) {
+                result.emplace_back(
+                    intern.intern(std::string(prop->getName())),
+                    intern.intern("http://www.w3.org/2000/01/rdf-schema#domain"),
+                    intern.intern(std::string(cls->getName())));
+            }
+            continue;
+        }
+
+        if (auto* rng = dynamic_cast<CObjectPropertyRangeExpression*>(axiom)) {
+            auto* prop = dynamic_cast<CObjectPropertyExpression*>(
+                rng->getObjectPropertyTermExpression());
+            auto* cls = dynamic_cast<CClassExpression*>(
+                rng->getClassTermExpression());
+            if (prop && cls) {
+                result.emplace_back(
+                    intern.intern(std::string(prop->getName())),
+                    intern.intern("http://www.w3.org/2000/01/rdf-schema#range"),
+                    intern.intern(std::string(cls->getName())));
+            }
+            continue;
+        }
+    }
+    return result;
+}
 
 // buildInferredTripleBuffer ────────────────────────────────────────────────────
 //
@@ -2143,22 +2330,88 @@ struct TupleHash3 {
 // Returns total byte length; 0 if not classified.
 // The buffer is stored in mImpl->mResultBuffer; the raw pointer is mImpl->mResultBufferPtr.
 //
-int KoncludeReasoner::buildInferredTripleBuffer() {
+int KoncludeReasoner::buildInferredTripleBuffer(bool withExplanations) {
     if (!mImpl->mClassified) {
         return 0;
     }
 
     InternTable intern;
     std::vector<uint32_t> tripleIds;
-    std::unordered_set<std::tuple<uint32_t,uint32_t,uint32_t>, TupleHash3> emittedTriples;
+    std::unordered_map<std::tuple<uint32_t,uint32_t,uint32_t>, uint32_t, TupleHash3> emittedTriples;
 
-    auto emitTriple = [&](uint32_t s, uint32_t p, uint32_t o) {
+    auto emitTriple = [&](uint32_t s, uint32_t p, uint32_t o) -> uint32_t {
         auto key = std::make_tuple(s, p, o);
-        if (emittedTriples.insert(key).second) {
+        auto [it, inserted] = emittedTriples.emplace(key, static_cast<uint32_t>(tripleIds.size() / 3));
+        if (inserted) {
             tripleIds.push_back(s);
             tripleIds.push_back(p);
             tripleIds.push_back(o);
         }
+        return it->second;
+    };
+
+    // Justification data structures (only populated when withExplanations)
+    std::unordered_map<std::tuple<uint32_t,uint32_t,uint32_t>, uint32_t, TupleHash3> axiomDedupMap;
+    std::vector<std::tuple<uint32_t,uint32_t,uint32_t>> axiomTriples;
+    std::unordered_map<uint64_t, uint32_t> justDedup;
+    std::vector<JustEntry> justEntries;
+    std::vector<std::pair<uint32_t,uint32_t>> tripleMappings;
+
+    auto collectJust = [&](uint32_t tripleIdx, const std::vector<int64_t>* depTags, bool isRole) {
+        if (!withExplanations || !depTags || depTags->empty()) return;
+        std::vector<int64_t> sorted(*depTags);
+        uint64_t hash = hashDepTags(sorted);
+        auto [it, inserted] = justDedup.emplace(hash, static_cast<uint32_t>(justEntries.size()));
+        uint32_t justIdx = it->second;
+        if (inserted) {
+            JustEntry entry;
+            entry.hash = hash;
+            for (int64_t tag : sorted) {
+                auto axioms = isRole
+                    ? mImpl->emitAxiomIndicesForRoleTag(tag, intern)
+                    : mImpl->emitAxiomIndicesForConceptTag(tag, intern);
+                for (auto& [s,p,o] : axioms) {
+                    auto akey = std::make_tuple(s,p,o);
+                    auto [ait, ainst] = axiomDedupMap.emplace(akey, static_cast<uint32_t>(axiomTriples.size()));
+                    entry.axiomIndices.push_back(ait->second);
+                    if (ainst) axiomTriples.emplace_back(s,p,o);
+                }
+            }
+            justEntries.push_back(std::move(entry));
+        }
+        tripleMappings.push_back({tripleIdx, justIdx});
+    };
+
+    // Collect justification from merged dep tag chains (e.g. equivalentClass fwd+rev)
+    auto collectJustMerged = [&](uint32_t tripleIdx,
+                                  const std::vector<int64_t>* fwd,
+                                  const std::vector<int64_t>* rev,
+                                  bool isRole) {
+        if (!withExplanations) return;
+        std::vector<int64_t> merged;
+        if (fwd) merged.insert(merged.end(), fwd->begin(), fwd->end());
+        if (rev) merged.insert(merged.end(), rev->begin(), rev->end());
+        if (merged.empty()) return;
+        uint64_t hash = hashDepTags(merged);
+        auto [it, inserted] = justDedup.emplace(hash, static_cast<uint32_t>(justEntries.size()));
+        uint32_t justIdx = it->second;
+        if (inserted) {
+            JustEntry entry;
+            entry.hash = hash;
+            for (int64_t tag : merged) {
+                auto axioms = isRole
+                    ? mImpl->emitAxiomIndicesForRoleTag(tag, intern)
+                    : mImpl->emitAxiomIndicesForConceptTag(tag, intern);
+                for (auto& [s,p,o] : axioms) {
+                    auto akey = std::make_tuple(s,p,o);
+                    auto [ait, ainst] = axiomDedupMap.emplace(akey, static_cast<uint32_t>(axiomTriples.size()));
+                    entry.axiomIndices.push_back(ait->second);
+                    if (ainst) axiomTriples.emplace_back(s,p,o);
+                }
+            }
+            justEntries.push_back(std::move(entry));
+        }
+        tripleMappings.push_back({tripleIdx, justIdx});
     };
 
     // ── TBox: subClassOf + equivalentClass ────────────────────────────────────
@@ -2201,19 +2454,16 @@ int KoncludeReasoner::buildInferredTripleBuffer() {
                 for (size_t i = 0; i < iris.size(); ++i) {
                     for (size_t j = 0; j < iris.size(); ++j) {
                         if (i == j) continue;
-                        emitTriple(intern.intern(iris[i]), pEquiv, intern.intern(iris[j]));
+                        uint32_t tIdx = emitTriple(intern.intern(iris[i]), pEquiv, intern.intern(iris[j]));
                         // Record justification: bidirectional dep chains
                         auto aIt = mImpl->mConceptByIri.find(iris[i]);
                         auto bIt = mImpl->mConceptByIri.find(iris[j]);
                         if (aIt != mImpl->mConceptByIri.end() && bIt != mImpl->mConceptByIri.end()) {
                             int64_t tagA = aIt->second->getConceptTag();
                             int64_t tagB = bIt->second->getConceptTag();
-                            std::string just;
                             const auto* fwd = JustificationCache::instance().lookup(tagA, tagB);
-                            if (fwd && !fwd->empty()) just += mImpl->resolveDepTagsToNTriples(*fwd);
                             const auto* rev = JustificationCache::instance().lookup(tagB, tagA);
-                            if (rev && !rev->empty()) just += mImpl->resolveDepTagsToNTriples(*rev);
-                            mImpl->storeTripleJustification(iris[i], owlEquivClass, iris[j], just);
+                            collectJustMerged(tIdx, fwd, rev, false);
                         }
                     }
                 }
@@ -2241,7 +2491,7 @@ int KoncludeReasoner::buildInferredTripleBuffer() {
                     if (nodeToIris.count(parentNode) == 0) continue;
                     std::string parentIri = nodeRep(parentNode);
                     if (parentIri.empty() || parentIri == owlNothing) continue;
-                    emitTriple(intern.intern(childIri), pSubClass, intern.intern(parentIri));
+                    uint32_t tIdx = emitTriple(intern.intern(childIri), pSubClass, intern.intern(parentIri));
                     // Record justification from dep chain
                     auto subIt = mImpl->mConceptByIri.find(childIri);
                     auto supIt = mImpl->mConceptByIri.find(parentIri);
@@ -2249,10 +2499,7 @@ int KoncludeReasoner::buildInferredTripleBuffer() {
                         int64_t subTag = subIt->second->getConceptTag();
                         int64_t supTag = supIt->second->getConceptTag();
                         const auto* depTags = JustificationCache::instance().lookup(subTag, supTag);
-                        if (depTags && !depTags->empty()) {
-                            std::string just = mImpl->resolveDepTagsToNTriples(*depTags);
-                            mImpl->storeTripleJustification(childIri, rdfsSubClassOf, parentIri, just);
-                        }
+                        collectJust(tIdx, depTags, false);
                     }
                 }
             }
@@ -2304,11 +2551,43 @@ int KoncludeReasoner::buildInferredTripleBuffer() {
                     uint32_t pRdfType;
                     uint32_t indiId;
                     std::vector<uint32_t>* tripleIds;
-                    std::unordered_set<std::tuple<uint32_t,uint32_t,uint32_t>, TupleHash3>* emitted;
+                    std::unordered_map<std::tuple<uint32_t,uint32_t,uint32_t>, uint32_t, TupleHash3>* emitted;
                     const std::string* owlThing;
                     const std::string* owlNothing;
                     KoncludeReasoner::Impl* impl;
                     const std::string* indiIriPtr;
+                    bool withExpl;
+                    // Justification collection pointers (only used when withExpl)
+                    std::unordered_map<std::tuple<uint32_t,uint32_t,uint32_t>, uint32_t, TupleHash3>* axiomDedupMap;
+                    std::vector<std::tuple<uint32_t,uint32_t,uint32_t>>* axiomTriples;
+                    std::unordered_map<uint64_t, uint32_t>* justDedup;
+                    std::vector<JustEntry>* justEntries;
+                    std::vector<std::pair<uint32_t,uint32_t>>* tripleMappings;
+
+                    void collectJustFromDepTags(uint32_t tripleIdx, const std::vector<int64_t>* depTags, bool isRole) {
+                        if (!withExpl || !depTags || depTags->empty()) return;
+                        std::vector<int64_t> sorted(*depTags);
+                        uint64_t hash = hashDepTags(sorted);
+                        auto [it, inserted] = justDedup->emplace(hash, static_cast<uint32_t>(justEntries->size()));
+                        uint32_t justIdx = it->second;
+                        if (inserted) {
+                            JustEntry entry;
+                            entry.hash = hash;
+                            for (int64_t tag : sorted) {
+                                auto axioms = isRole
+                                    ? impl->emitAxiomIndicesForRoleTag(tag, *intern)
+                                    : impl->emitAxiomIndicesForConceptTag(tag, *intern);
+                                for (auto& [s,p,o] : axioms) {
+                                    auto akey = std::make_tuple(s,p,o);
+                                    auto [ait, ainst] = axiomDedupMap->emplace(akey, static_cast<uint32_t>(axiomTriples->size()));
+                                    entry.axiomIndices.push_back(ait->second);
+                                    if (ainst) axiomTriples->emplace_back(s,p,o);
+                                }
+                            }
+                            justEntries->push_back(std::move(entry));
+                        }
+                        tripleMappings->push_back({tripleIdx, justIdx});
+                    }
 
                     bool visitType(CConceptInstantiatedItem* item, CConceptRealization* cr) override {
                         ConceptNameVisitor cv;
@@ -2317,68 +2596,34 @@ int KoncludeReasoner::buildInferredTripleBuffer() {
                             if (iri == *owlThing || iri == *owlNothing) continue;
                             uint32_t cId = intern->intern(iri);
                             auto key = std::make_tuple(indiId, pRdfType, cId);
-                            if (emitted->insert(key).second) {
+                            uint32_t tripleIdx = static_cast<uint32_t>(tripleIds->size() / 3);
+                            auto [eit, isNew] = emitted->emplace(key, tripleIdx);
+                            if (isNew) {
                                 tripleIds->push_back(indiId);
                                 tripleIds->push_back(pRdfType);
                                 tripleIds->push_back(cId);
                                 // Record justification
-                                if (impl && indiIriPtr) {
-                                    static const std::string rdfTypeIri = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
-                                    std::string just;
-                                    // Try realization dep chain: (classTag, classTag, Realization)
+                                if (withExpl && impl && indiIriPtr) {
                                     auto cit = impl->mConceptByIri.find(iri);
                                     if (cit != impl->mConceptByIri.end()) {
                                         int64_t classTag = cit->second->getConceptTag();
                                         const auto* depTags = JustificationCache::instance().lookup(
                                             classTag, classTag, JustificationCache::Realization);
-                                        if (depTags && !depTags->empty())
-                                            just = impl->resolveDepTagsToNTriples(*depTags);
-                                    }
-                                    // Fallback: classification-based — type A with A ⊑ classIri
-                                    if (just.empty()) {
-                                        auto cit2 = impl->mConceptByIri.find(iri);
-                                        if (cit2 != impl->mConceptByIri.end()) {
-                                            int64_t targetTag = cit2->second->getConceptTag();
-                                            CTaxonomy* taxonomy = impl->mOntology ? impl->mOntology->getConceptTaxonomy() : nullptr;
+                                        if (depTags && !depTags->empty()) {
+                                            collectJustFromDepTags(tripleIdx, depTags, false);
+                                        } else {
+                                            int64_t targetTag = classTag;
                                             for (auto& [assertedIri, concept] : impl->mConceptByIri) {
                                                 if (assertedIri == iri) continue;
                                                 int64_t aTag = concept->getConceptTag();
-                                                // 1. Check dep chain cache
                                                 const auto* scDeps = JustificationCache::instance().lookup(aTag, targetTag);
                                                 if (scDeps && !scDeps->empty()) {
-                                                    just = "<" + *indiIriPtr + "> <" + rdfTypeIri + "> <" + assertedIri + "> .\n";
-                                                    just += impl->resolveDepTagsToNTriples(*scDeps);
+                                                    collectJustFromDepTags(tripleIdx, scDeps, false);
                                                     break;
-                                                }
-                                                // 2. Taxonomy subsumption: intermediate type A ⊑ target
-                                                if (taxonomy && taxonomy->isSubsumption(concept, cit2->second)) {
-                                                    // 2a. Workaround-based intermediate type
-                                                    auto wkKey = Impl::wkJustKey(*indiIriPtr, rdfTypeIri, assertedIri);
-                                                    auto wkIt = impl->mWorkaroundJustifications.find(wkKey);
-                                                    if (wkIt != impl->mWorkaroundJustifications.end()) {
-                                                        just = wkIt->second;
-                                                        std::string chainJust = impl->getSubClassJustification(assertedIri, iri);
-                                                        if (!chainJust.empty()) just += chainJust;
-                                                        break;
-                                                    }
-                                                    // 2b. Subclass chain only (asserted or other intermediate type)
-                                                    std::string chainJust = impl->getSubClassJustification(assertedIri, iri);
-                                                    if (!chainJust.empty()) {
-                                                        just = "<" + *indiIriPtr + "> <" + rdfTypeIri + "> <" + assertedIri + "> .\n";
-                                                        just += chainJust;
-                                                        break;
-                                                    }
                                                 }
                                             }
                                         }
                                     }
-                                    if (just.empty()) {
-                                        auto wkKey = Impl::wkJustKey(*indiIriPtr, rdfTypeIri, iri);
-                                        auto wkIt = impl->mWorkaroundJustifications.find(wkKey);
-                                        if (wkIt != impl->mWorkaroundJustifications.end())
-                                            just = wkIt->second;
-                                    }
-                                    impl->storeTripleJustification(*indiIriPtr, rdfTypeIri, iri, just);
                                 }
                             }
                         }
@@ -2395,6 +2640,12 @@ int KoncludeReasoner::buildInferredTripleBuffer() {
                 tv.owlNothing  = &owlNothing2;
                 tv.impl        = mImpl;
                 tv.indiIriPtr  = nullptr;
+                tv.withExpl    = withExplanations;
+                tv.axiomDedupMap = &axiomDedupMap;
+                tv.axiomTriples  = &axiomTriples;
+                tv.justDedup     = &justDedup;
+                tv.justEntries   = &justEntries;
+                tv.tripleMappings = &tripleMappings;
 
                 for (qint64 i = 0; i < indiCount; ++i) {
                     CIndividual* indi = indiVec->getData(i);
@@ -2425,7 +2676,7 @@ int KoncludeReasoner::buildInferredTripleBuffer() {
                     uint32_t srcId;
                     uint32_t roleId;
                     std::vector<uint32_t>* tripleIds;
-                    std::unordered_set<std::tuple<uint32_t,uint32_t,uint32_t>, TupleHash3>* emitted;
+                    std::unordered_map<std::tuple<uint32_t,uint32_t,uint32_t>, uint32_t, TupleHash3>* emitted;
 
                     bool visitIndividual(const CIndividualReference& indiRef, CRoleRealization*) override {
                         CIndividual* tgt = indiRef.getIndividual();
@@ -2434,7 +2685,8 @@ int KoncludeReasoner::buildInferredTripleBuffer() {
                         if (q.empty()) return true;
                         uint32_t tgtId = intern->intern(std::string(q));
                         auto key = std::make_tuple(srcId, roleId, tgtId);
-                        if (emitted->insert(key).second) {
+                        uint32_t idx = static_cast<uint32_t>(tripleIds->size() / 3);
+                        if (emitted->emplace(key, idx).second) {
                             tripleIds->push_back(srcId);
                             tripleIds->push_back(roleId);
                             tripleIds->push_back(tgtId);
@@ -2459,7 +2711,7 @@ int KoncludeReasoner::buildInferredTripleBuffer() {
                     InternTable* intern;
                     uint32_t srcId;
                     std::vector<uint32_t>* tripleIds;
-                    std::unordered_set<std::tuple<uint32_t,uint32_t,uint32_t>, TupleHash3>* emitted;
+                    std::unordered_map<std::tuple<uint32_t,uint32_t,uint32_t>, uint32_t, TupleHash3>* emitted;
                     const std::string* owlTopObjProp;
                     const std::string* owlBottomObjProp;
                     CIndividual* srcIndi;
@@ -2552,12 +2804,6 @@ int KoncludeReasoner::buildInferredTripleBuffer() {
                     for (const auto& otherIri : sgv.iris) {
                         if (otherIri == srcIri) continue;
                         emitTriple(srcId, pSameAs, intern.intern(otherIri));
-                        // Check workaround justification first (FP/IFP sameAs)
-                        auto jit = mImpl->mWorkaroundJustifications.find(
-                            Impl::wkJustKey(srcIri, owlSameAs, otherIri));
-                        if (jit != mImpl->mWorkaroundJustifications.end()) {
-                            mImpl->storeTripleJustification(srcIri, owlSameAs, otherIri, jit->second);
-                        }
                     }
                 }
             }
@@ -2594,10 +2840,6 @@ int KoncludeReasoner::buildInferredTripleBuffer() {
             uint32_t pType = intern.intern(rdfTypeStr);
             for (const auto& [classIri, memberIri] : mImpl->mOneOfMemberships) {
                 emitTriple(intern.intern(memberIri), pType, intern.intern(classIri));
-                auto jit = mImpl->mWorkaroundJustifications.find(
-                    Impl::wkJustKey(memberIri, rdfTypeStr, classIri));
-                if (jit != mImpl->mWorkaroundJustifications.end())
-                    mImpl->storeTripleJustification(memberIri, rdfTypeStr, classIri, jit->second);
             }
         }
 
@@ -2608,10 +2850,6 @@ int KoncludeReasoner::buildInferredTripleBuffer() {
             uint32_t pType = intern.intern(rdfTypeStr3);
             for (const auto& [indiIri, classIri] : mImpl->mIntersectionOfTypes) {
                 emitTriple(intern.intern(indiIri), pType, intern.intern(classIri));
-                auto jit = mImpl->mWorkaroundJustifications.find(
-                    Impl::wkJustKey(indiIri, rdfTypeStr3, classIri));
-                if (jit != mImpl->mWorkaroundJustifications.end())
-                    mImpl->storeTripleJustification(indiIri, rdfTypeStr3, classIri, jit->second);
             }
         }
 
@@ -2622,10 +2860,6 @@ int KoncludeReasoner::buildInferredTripleBuffer() {
             uint32_t pType = intern.intern(rdfTypeStr4);
             for (const auto& [indiIri, classIri] : mImpl->mHasSelfTypes) {
                 emitTriple(intern.intern(indiIri), pType, intern.intern(classIri));
-                auto jit = mImpl->mWorkaroundJustifications.find(
-                    Impl::wkJustKey(indiIri, rdfTypeStr4, classIri));
-                if (jit != mImpl->mWorkaroundJustifications.end())
-                    mImpl->storeTripleJustification(indiIri, rdfTypeStr4, classIri, jit->second);
             }
         }
 
@@ -2700,7 +2934,6 @@ int KoncludeReasoner::buildInferredTripleBuffer() {
                                 }
                             }
                         }
-                        mImpl->storeTripleJustification(indiIri, rdfTypeStr2, entry.classIri, just);
                     }
                 }
             }
@@ -2715,10 +2948,6 @@ int KoncludeReasoner::buildInferredTripleBuffer() {
         uint32_t pSub = intern.intern(rdfsSubCls);
         for (const auto& [classIri, memberIri] : mImpl->mDisjointUnionOf) {
             emitTriple(intern.intern(memberIri), pSub, intern.intern(classIri));
-            auto jit = mImpl->mWorkaroundJustifications.find(
-                Impl::wkJustKey(memberIri, rdfsSubCls, classIri));
-            if (jit != mImpl->mWorkaroundJustifications.end())
-                mImpl->storeTripleJustification(memberIri, rdfsSubCls, classIri, jit->second);
         }
     }
 
@@ -2728,10 +2957,6 @@ int KoncludeReasoner::buildInferredTripleBuffer() {
         uint32_t pSameAs = intern.intern(owlSameAs);
         for (const auto& [s, o] : mImpl->mFpIfpSameAsPairs) {
             emitTriple(intern.intern(s), pSameAs, intern.intern(o));
-            auto jit = mImpl->mWorkaroundJustifications.find(
-                Impl::wkJustKey(s, owlSameAs, o));
-            if (jit != mImpl->mWorkaroundJustifications.end())
-                mImpl->storeTripleJustification(s, owlSameAs, o, jit->second);
         }
     }
 
@@ -2775,13 +3000,6 @@ int KoncludeReasoner::buildInferredTripleBuffer() {
                         if (allTypes[fillerIri].insert(filler).second) {
                             emitTriple(intern.intern(fillerIri), pType, intern.intern(filler));
                             changed = true;
-                            // Single-step justification: restriction + role assertion
-                            std::string just;
-                            just += "<" + classIri + "> <http://www.w3.org/2002/07/owl#someValuesFrom> <" + filler + "> .\n";
-                            just += "<" + classIri + "> <http://www.w3.org/2002/07/owl#onProperty> <" + prop + "> .\n";
-                            just += "<" + indiIri + "> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <" + classIri + "> .\n";
-                            just += "<" + indiIri + "> <" + prop + "> <" + fillerIri + "> .\n";
-                            mImpl->storeTripleJustification(fillerIri, rdfType, filler, just);
                         }
                     }
                 }
@@ -2789,40 +3007,83 @@ int KoncludeReasoner::buildInferredTripleBuffer() {
         }
     }
 
-    // ── Assemble combined buffer [strTableLen:u32][strTable][tripleBuffer] ────
+    // ── Assemble combined buffer ────────────────────────────────────────────────
+    // Base: [strTableLen:u32][strTable][tripleBuffer]
+    // With explanations: ...[tripleCount:u32][axiomCount:u32][axiom triples]
+    //   [justCount:u32][justEntries...][mappingCount:u32][mappings...]
 
     std::vector<uint8_t> strTable = intern.build();
     uint32_t strTableLen = static_cast<uint32_t>(strTable.size());
+    uint32_t tripleCount = static_cast<uint32_t>(tripleIds.size() / 3);
+
+    auto pu32 = [](uint8_t*& dst, uint32_t v) {
+        dst[0] = v & 0xff;
+        dst[1] = (v >> 8) & 0xff;
+        dst[2] = (v >> 16) & 0xff;
+        dst[3] = (v >> 24) & 0xff;
+        dst += 4;
+    };
 
     size_t totalLen = 4 + strTableLen + tripleIds.size() * 4;
+
+    if (withExplanations) {
+        totalLen += 4; // tripleCount sentinel
+        totalLen += 4 + axiomTriples.size() * 12; // axiomCount + axiom triples
+        // justCount + per-entry: hashHigh(4) + hashLow(4) + numAxioms(4) + axiomIndices(4 each)
+        totalLen += 4;
+        for (const auto& je : justEntries) {
+            totalLen += 12 + je.axiomIndices.size() * 4;
+        }
+        totalLen += 4 + tripleMappings.size() * 8; // mappingCount + mappings
+    }
+
     mImpl->mResultBuffer.resize(totalLen);
     uint8_t* p = mImpl->mResultBuffer.data();
 
-    // Write strTableLen as little-endian u32
-    p[0] = strTableLen & 0xff;
-    p[1] = (strTableLen >> 8) & 0xff;
-    p[2] = (strTableLen >> 16) & 0xff;
-    p[3] = (strTableLen >> 24) & 0xff;
-    p += 4;
-
-    // Write strTable
+    pu32(p, strTableLen);
     std::memcpy(p, strTable.data(), strTableLen);
     p += strTableLen;
 
-    // Write triple IDs
     for (uint32_t id : tripleIds) {
-        p[0] = id & 0xff;
-        p[1] = (id >> 8) & 0xff;
-        p[2] = (id >> 16) & 0xff;
-        p[3] = (id >> 24) & 0xff;
-        p += 4;
+        pu32(p, id);
+    }
+
+    if (withExplanations) {
+        // tripleCount sentinel
+        pu32(p, tripleCount);
+
+        // Axiom section
+        pu32(p, static_cast<uint32_t>(axiomTriples.size()));
+        for (const auto& [s, pr, o] : axiomTriples) {
+            pu32(p, s);
+            pu32(p, pr);
+            pu32(p, o);
+        }
+
+        // Justification entries
+        pu32(p, static_cast<uint32_t>(justEntries.size()));
+        for (const auto& je : justEntries) {
+            pu32(p, static_cast<uint32_t>(je.hash >> 32));       // hashHigh
+            pu32(p, static_cast<uint32_t>(je.hash & 0xFFFFFFFF)); // hashLow
+            pu32(p, static_cast<uint32_t>(je.axiomIndices.size()));
+            for (uint32_t ai : je.axiomIndices) {
+                pu32(p, ai);
+            }
+        }
+
+        // Triple → justification mappings
+        pu32(p, static_cast<uint32_t>(tripleMappings.size()));
+        for (const auto& [ti, ji] : tripleMappings) {
+            pu32(p, ti);
+            pu32(p, ji);
+        }
     }
 
     mImpl->mResultBufferPtr = reinterpret_cast<int>(mImpl->mResultBuffer.data());
 
 #ifdef WASM_VERBOSE_LOGGING
-    fprintf(stderr, "{info} KoncludeReasoner >> buildInferredTripleBuffer: %zu triples, %zu bytes\n",
-        tripleIds.size() / 3, totalLen);
+    fprintf(stderr, "{info} KoncludeReasoner >> buildInferredTripleBuffer: %zu triples, %zu axioms, %zu justs, %zu mappings, %zu bytes\n",
+        tripleIds.size() / 3, axiomTriples.size(), justEntries.size(), tripleMappings.size(), totalLen);
 #endif
 
     return static_cast<int>(totalLen);
@@ -2839,22 +3100,56 @@ int KoncludeReasoner::getInferredTripleBufferPtr() {
 // rdfs:subPropertyOf triples into mResultBuffer using the same binary wire
 // format as buildInferredTripleBuffer().
 
-int KoncludeReasoner::buildPropertyTripleBuffer() {
+int KoncludeReasoner::buildPropertyTripleBuffer(bool withExplanations) {
     if (!mImpl->mClassified) {
         return 0;
     }
 
     InternTable intern;
     std::vector<uint32_t> tripleIds;
-    std::unordered_set<std::tuple<uint32_t,uint32_t,uint32_t>, TupleHash3> emittedTriples;
+    std::unordered_map<std::tuple<uint32_t,uint32_t,uint32_t>, uint32_t, TupleHash3> emittedTriples;
 
-    auto emitTriple = [&](uint32_t s, uint32_t p, uint32_t o) {
+    auto emitTriple = [&](uint32_t s, uint32_t p, uint32_t o) -> uint32_t {
         auto key = std::make_tuple(s, p, o);
-        if (emittedTriples.insert(key).second) {
+        auto [it, inserted] = emittedTriples.emplace(key, static_cast<uint32_t>(tripleIds.size() / 3));
+        if (inserted) {
             tripleIds.push_back(s);
             tripleIds.push_back(p);
             tripleIds.push_back(o);
         }
+        return it->second;
+    };
+
+    // Justification data structures
+    std::unordered_map<std::tuple<uint32_t,uint32_t,uint32_t>, uint32_t, TupleHash3> axiomDedupMap;
+    std::vector<std::tuple<uint32_t,uint32_t,uint32_t>> axiomTriples;
+    std::unordered_map<uint64_t, uint32_t> justDedup;
+    std::vector<JustEntry> justEntries;
+    std::vector<std::pair<uint32_t,uint32_t>> tripleMappings;
+
+    auto collectJust = [&](uint32_t tripleIdx, const std::vector<int64_t>* depTags, bool isRole) {
+        if (!withExplanations || !depTags || depTags->empty()) return;
+        std::vector<int64_t> sorted(*depTags);
+        uint64_t hash = hashDepTags(sorted);
+        auto [it, inserted] = justDedup.emplace(hash, static_cast<uint32_t>(justEntries.size()));
+        uint32_t justIdx = it->second;
+        if (inserted) {
+            JustEntry entry;
+            entry.hash = hash;
+            for (int64_t tag : sorted) {
+                auto axioms = isRole
+                    ? mImpl->emitAxiomIndicesForRoleTag(tag, intern)
+                    : mImpl->emitAxiomIndicesForConceptTag(tag, intern);
+                for (auto& [s,p,o] : axioms) {
+                    auto akey = std::make_tuple(s,p,o);
+                    auto [ait, ainst] = axiomDedupMap.emplace(akey, static_cast<uint32_t>(axiomTriples.size()));
+                    entry.axiomIndices.push_back(ait->second);
+                    if (ainst) axiomTriples.emplace_back(s,p,o);
+                }
+            }
+            justEntries.push_back(std::move(entry));
+        }
+        tripleMappings.push_back({tripleIdx, justIdx});
     };
 
     static const std::string rdfsSubPropertyOf =
@@ -2920,7 +3215,7 @@ int KoncludeReasoner::buildPropertyTripleBuffer() {
                     if (parentIris.empty()) continue;
 
                     std::string parentRep = *std::min_element(parentIris.begin(), parentIris.end());
-                    emitTriple(intern.intern(childRep), pSubProp, intern.intern(parentRep));
+                    uint32_t tIdx = emitTriple(intern.intern(childRep), pSubProp, intern.intern(parentRep));
                     // Record justification from dep chain
                     auto subIt = mImpl->mRoleByIri.find(childRep);
                     auto supIt = mImpl->mRoleByIri.find(parentRep);
@@ -2929,10 +3224,7 @@ int KoncludeReasoner::buildPropertyTripleBuffer() {
                         int64_t supTag = supIt->second->getRoleTag();
                         const auto* depTags = JustificationCache::instance().lookup(
                             subTag, supTag, JustificationCache::PropertySubsumption);
-                        if (depTags && !depTags->empty()) {
-                            std::string just = mImpl->resolveDepTagsToNTriples(*depTags, true);
-                            mImpl->storeTripleJustification(childRep, rdfsSubPropertyOf, parentRep, just);
-                        }
+                        collectJust(tIdx, depTags, true);
                     }
                 }
             }
@@ -2948,40 +3240,62 @@ int KoncludeReasoner::buildPropertyTripleBuffer() {
     for (const auto& [p, q] : mImpl->mEquivPropPairs) {
         emitTriple(intern.intern(p), pSubProp, intern.intern(q));
         emitTriple(intern.intern(q), pSubProp, intern.intern(p));
-        std::string just = "<" + p + "> <" + owlEquivProp + "> <" + q + "> .\n";
-        mImpl->storeTripleJustification(p, rdfsSubPropertyOf, q, just);
-        mImpl->storeTripleJustification(q, rdfsSubPropertyOf, p, just);
-        mImpl->storeTripleJustification(p, owlEquivProp, q, just);
-        mImpl->storeTripleJustification(q, owlEquivProp, p, just);
     }
 
-    // ── Assemble combined buffer [strTableLen:u32][strTable][tripleBuffer] ────
+    // ── Assemble combined buffer ────────────────────────────────────────────────
 
     std::vector<uint8_t> strTable = intern.build();
     uint32_t strTableLen = static_cast<uint32_t>(strTable.size());
+    uint32_t tripleCount = static_cast<uint32_t>(tripleIds.size() / 3);
+
+    auto pu32 = [](uint8_t*& dst, uint32_t v) {
+        dst[0] = v & 0xff;
+        dst[1] = (v >> 8) & 0xff;
+        dst[2] = (v >> 16) & 0xff;
+        dst[3] = (v >> 24) & 0xff;
+        dst += 4;
+    };
 
     size_t totalLen = 4 + strTableLen + tripleIds.size() * 4;
+
+    if (withExplanations) {
+        totalLen += 4; // tripleCount sentinel
+        totalLen += 4 + axiomTriples.size() * 12;
+        totalLen += 4;
+        for (const auto& je : justEntries) {
+            totalLen += 12 + je.axiomIndices.size() * 4;
+        }
+        totalLen += 4 + tripleMappings.size() * 8;
+    }
+
     mImpl->mResultBuffer.resize(totalLen);
     uint8_t* p = mImpl->mResultBuffer.data();
 
-    // Write strTableLen as little-endian u32
-    p[0] = strTableLen & 0xff;
-    p[1] = (strTableLen >> 8) & 0xff;
-    p[2] = (strTableLen >> 16) & 0xff;
-    p[3] = (strTableLen >> 24) & 0xff;
-    p += 4;
-
-    // Write strTable
+    pu32(p, strTableLen);
     std::memcpy(p, strTable.data(), strTableLen);
     p += strTableLen;
 
-    // Write triple IDs
     for (uint32_t id : tripleIds) {
-        p[0] = id & 0xff;
-        p[1] = (id >> 8) & 0xff;
-        p[2] = (id >> 16) & 0xff;
-        p[3] = (id >> 24) & 0xff;
-        p += 4;
+        pu32(p, id);
+    }
+
+    if (withExplanations) {
+        pu32(p, tripleCount);
+        pu32(p, static_cast<uint32_t>(axiomTriples.size()));
+        for (const auto& [s, pr, o] : axiomTriples) {
+            pu32(p, s); pu32(p, pr); pu32(p, o);
+        }
+        pu32(p, static_cast<uint32_t>(justEntries.size()));
+        for (const auto& je : justEntries) {
+            pu32(p, static_cast<uint32_t>(je.hash >> 32));
+            pu32(p, static_cast<uint32_t>(je.hash & 0xFFFFFFFF));
+            pu32(p, static_cast<uint32_t>(je.axiomIndices.size()));
+            for (uint32_t ai : je.axiomIndices) { pu32(p, ai); }
+        }
+        pu32(p, static_cast<uint32_t>(tripleMappings.size()));
+        for (const auto& [ti, ji] : tripleMappings) {
+            pu32(p, ti); pu32(p, ji);
+        }
     }
 
     mImpl->mResultBufferPtr = reinterpret_cast<int>(mImpl->mResultBuffer.data());
@@ -3104,30 +3418,4 @@ std::string KoncludeReasoner::getJustificationByType(const std::string& subIri, 
 
 bool KoncludeReasoner::hasJustificationByType(const std::string& subIri, const std::string& superIri, int type) {
     return mImpl->hasJustificationByType(subIri, superIri, type);
-}
-
-std::string KoncludeReasoner::lookupTripleJustification(const std::string& sub, const std::string& pred, const std::string& obj) {
-    return JustificationTripleCache::instance().lookup(sub, pred, obj);
-}
-
-bool KoncludeReasoner::hasTripleJustification(const std::string& sub, const std::string& pred, const std::string& obj) {
-    return JustificationTripleCache::instance().has(sub, pred, obj);
-}
-
-std::string KoncludeReasoner::exportAllJustifications() {
-    auto& cache = JustificationTripleCache::instance();
-    if (cache.entries.empty()) return "";
-
-    std::string result;
-    for (const auto& [key, justification] : cache.entries) {
-        result += key.sub;
-        result += '\t';
-        result += key.pred;
-        result += '\t';
-        result += key.obj;
-        result += '\n';
-        result += justification;
-        result += '\0';
-    }
-    return result;
 }

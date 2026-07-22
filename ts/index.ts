@@ -32,7 +32,7 @@ export type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, Material
 export { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, KJ_NS, KJ_JUSTIFICATION, KJ_JUSTIFIES, KJ_AXIOM } from "./types.js";
 export { createInlineWorker } from "./inlineWorker.js";
 import type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions, LaconicPart, LaconicJustification, LaconicExplainOptions } from "./types.js";
-import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI } from "./types.js";
+import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, KJ_JUSTIFIES, KJ_AXIOM } from "./types.js";
 import { serializeExplanations } from "./explanationSerializer.js";
 import { buildEntailmentProbe, classifyAxiom, tripleKey as probeTripleKey } from "./entailmentProbe.js";
 import { computeLaconicAsync, groupQuadsIntoAxioms, splitAxiom, axiomKey } from "./laconicJustification.js";
@@ -206,11 +206,12 @@ export class RdfReasoner {
     });
   }
 
-  private async _ensureExplanationGraph(store: Store): Promise<void> {
+  private async _ensureExplanationGraphFromBuffer(store: Store, bufferMethod: string): Promise<void> {
     const explGraphNode = DataFactory.namedNode(EXPLANATION_GRAPH_IRI);
     if (store.getQuads(null, null, null, explGraphNode).length > 0) return;
-    const bulkExport = (await this._call("exportAllJustifications", [])) as string;
-    serializeExplanations(store, bulkExport, EXPLANATION_GRAPH_IRI);
+    const resultBuf = (await this._call(bufferMethod, [true])) as ArrayBuffer;
+    const decoded = decodeBuffers(resultBuf, { withJustifications: true });
+    serializeExplanations(store, decoded.justifications, decoded.quads, EXPLANATION_GRAPH_IRI);
   }
 
   // -------------------------------------------------------------------------
@@ -254,7 +255,7 @@ export class RdfReasoner {
       // Cache hit: same store content as last classify call
       if (this._classifyCache !== null && this._classifyCache.hash === fingerprint) {
         if (wantExplanations) {
-          await this._ensureExplanationGraph(store);
+          await this._ensureExplanationGraphFromBuffer(store, "getInferredTripleBuffer");
         }
         return;
       }
@@ -268,21 +269,21 @@ export class RdfReasoner {
       const { tripleBuffer, strTableBuffer } = encodeToBuffers(store.getQuads(null, null, null, null));
 
       await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer, false], [tripleBuffer, strTableBuffer]);
-      // Always uses classification (TBox-only); opts.mode is reserved for future use.
       await this._call("classification", []);
 
-      const resultBuf = (await this._call("getInferredTripleBuffer", [])) as ArrayBuffer;
-      const inferredQuads = decodeBuffers(resultBuf);
-
-      for (const q of inferredQuads) {
-        store.addQuad(
-          DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode),
-        );
-      }
+      const resultBuf = (await this._call("getInferredTripleBuffer", [wantExplanations])) as ArrayBuffer;
 
       if (wantExplanations) {
-        const bulkExport = (await this._call("exportAllJustifications", [])) as string;
-        serializeExplanations(store, bulkExport, EXPLANATION_GRAPH_IRI);
+        const decoded = decodeBuffers(resultBuf, { withJustifications: true });
+        for (const q of decoded.quads) {
+          store.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode));
+        }
+        serializeExplanations(store, decoded.justifications, decoded.quads, EXPLANATION_GRAPH_IRI);
+      } else {
+        const inferredQuads = decodeBuffers(resultBuf);
+        for (const q of inferredQuads) {
+          store.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode));
+        }
       }
 
       this._classifyCache = { hash: fingerprint, result: undefined as void };
@@ -485,7 +486,7 @@ export class RdfReasoner {
       // Cache hit: same store content as last materialize call
       if (this._materializeCache !== null && this._materializeCache.hash === fingerprint) {
         if (wantExplanations) {
-          await this._ensureExplanationGraph(store);
+          await this._ensureExplanationGraphFromBuffer(store, "getInferredTripleBuffer");
         }
         if (returnDelta) {
           return { delta: { added: [], removed: [] } as InferenceDelta };
@@ -511,8 +512,16 @@ export class RdfReasoner {
       await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer, true], [tripleBuffer, strTableBuffer]);
       await this._call("realization", []);
 
-      const resultBuf = (await this._call("getInferredTripleBuffer", [])) as ArrayBuffer;
-      const allQuads = decodeBuffers(resultBuf);
+      const resultBuf = (await this._call("getInferredTripleBuffer", [wantExplanations])) as ArrayBuffer;
+
+      let allQuads: Quad[];
+      if (wantExplanations) {
+        const decoded = decodeBuffers(resultBuf, { withJustifications: true });
+        allQuads = decoded.quads;
+        serializeExplanations(store, decoded.justifications, decoded.quads, EXPLANATION_GRAPH_IRI);
+      } else {
+        allQuads = decodeBuffers(resultBuf);
+      }
 
       const inferredQuads = opts?.includeClassHierarchy === true
         ? allQuads
@@ -526,11 +535,6 @@ export class RdfReasoner {
         store.addQuad(
           DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode),
         );
-      }
-
-      if (wantExplanations) {
-        const bulkExport = (await this._call("exportAllJustifications", [])) as string;
-        serializeExplanations(store, bulkExport, EXPLANATION_GRAPH_IRI);
       }
 
       this._materializeCache = { hash: fingerprint, result: undefined as void };
@@ -634,7 +638,7 @@ export class RdfReasoner {
       // Cache hit: same store content as last classifyProperties call
       if (this._classifyPropertiesCache !== null && this._classifyPropertiesCache.hash === fingerprint) {
         if (wantExplanations) {
-          await this._ensureExplanationGraph(store);
+          await this._ensureExplanationGraphFromBuffer(store, "getPropertyTripleBuffer");
         }
         return;
       }
@@ -650,18 +654,19 @@ export class RdfReasoner {
       await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer, false], [tripleBuffer, strTableBuffer]);
       await this._call("classification", []);
 
-      const resultBuf = (await this._call("getPropertyTripleBuffer", [])) as ArrayBuffer;
-      const inferredQuads = decodeBuffers(resultBuf);
-
-      for (const q of inferredQuads) {
-        store.addQuad(
-          DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode),
-        );
-      }
+      const resultBuf = (await this._call("getPropertyTripleBuffer", [wantExplanations])) as ArrayBuffer;
 
       if (wantExplanations) {
-        const bulkExport = (await this._call("exportAllJustifications", [])) as string;
-        serializeExplanations(store, bulkExport, EXPLANATION_GRAPH_IRI);
+        const decoded = decodeBuffers(resultBuf, { withJustifications: true });
+        for (const q of decoded.quads) {
+          store.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode));
+        }
+        serializeExplanations(store, decoded.justifications, decoded.quads, EXPLANATION_GRAPH_IRI);
+      } else {
+        const inferredQuads = decodeBuffers(resultBuf);
+        for (const q of inferredQuads) {
+          store.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode));
+        }
       }
 
       this._classifyPropertiesCache = { hash: fingerprint, result: undefined as void };
@@ -1158,12 +1163,26 @@ export class RdfReasoner {
     return (await this._callDirect("hasJustificationByType", [subIri, superIri, type])) as boolean;
   }
 
-  private async _lookupTripleJustificationDirect(sub: string, pred: string, obj: string): Promise<string> {
-    return (await this._callDirect("lookupTripleJustification", [sub, pred, obj])) as string;
-  }
+  private _lookupJustificationFromStore(store: Store, sub: string, pred: string, obj: string): Quad[] | null {
+    const explGraphNode = DataFactory.namedNode(EXPLANATION_GRAPH_IRI);
+    const quotedTriple = DataFactory.quad(
+      DataFactory.namedNode(sub),
+      DataFactory.namedNode(pred),
+      DataFactory.namedNode(obj),
+    );
+    const justifiesMatches = store.getQuads(null, DataFactory.namedNode(KJ_JUSTIFIES), quotedTriple as any, explGraphNode);
+    if (justifiesMatches.length === 0) return null;
 
-  private async _hasTripleJustificationDirect(sub: string, pred: string, obj: string): Promise<boolean> {
-    return (await this._callDirect("hasTripleJustification", [sub, pred, obj])) as boolean;
+    const axiomQuads: Quad[] = [];
+    for (const jMatch of justifiesMatches) {
+      const axioms = store.getQuads(jMatch.subject, DataFactory.namedNode(KJ_AXIOM), null, explGraphNode);
+      for (const a of axioms) {
+        if ((a.object as any).termType === "Quad") {
+          axiomQuads.push(a.object as unknown as Quad);
+        }
+      }
+    }
+    return axiomQuads;
   }
 
   private _parseNTriplesJustification(ntriples: string): Quad[] {
@@ -1738,14 +1757,12 @@ export class RdfReasoner {
         return { isEntailed: false, justifications: [] as Quad[][] };
       }
 
-      // ── Triple-keyed cache lookup (universal fast path) ──────────────
-      // Every inferred triple with a justification recorded at emission time
-      // resolves in one call — no probe-kind routing, no store scanning.
+      // ── Store-based justification lookup (universal fast path) ──────
+      // Explanation graph contains kj:justifies quads linking justification
+      // nodes to inferred quoted triples. One Store query, no WASM round-trip.
       if (mode === "causal") {
-        const hasCached = await this._hasTripleJustificationDirect(subjectIri, predicateIri, objectIri);
-        if (hasCached) {
-          const ntriples = await this._lookupTripleJustificationDirect(subjectIri, predicateIri, objectIri);
-          const justQuads = this._parseNTriplesJustification(ntriples);
+        const justQuads = this._lookupJustificationFromStore(store, subjectIri, predicateIri, objectIri);
+        if (justQuads !== null) {
           if (justQuads.length > 0) {
             return { isEntailed: true, justifications: [justQuads] };
           }
@@ -1753,7 +1770,7 @@ export class RdfReasoner {
         }
       }
 
-      // ── Legacy fast path (fallback for triples not in JustificationTripleCache) ──
+      // ── Dep-chain fallback (when no Store justification found) ──
       // Uses the dep-chain cache from a prior classify()/reason() call.
       // Zero WASM reloads — just O(1) lookups on the existing state.
 
@@ -1806,11 +1823,8 @@ export class RdfReasoner {
         for (const inferredType of inferredTypes) {
           const scNtriples = await this._getSubClassJustificationDirect(inferredType, objectIri);
           if (scNtriples.length === 0) continue;
-          const hasTJ = await this._hasTripleJustificationDirect(subjectIri, RDF_TYPE, inferredType);
-          if (!hasTJ) continue;
-          const tjNtriples = await this._lookupTripleJustificationDirect(subjectIri, RDF_TYPE, inferredType);
-          const tjQuads = this._parseNTriplesJustification(tjNtriples);
-          if (tjQuads.length === 0) continue;
+          const tjQuads = this._lookupJustificationFromStore(store, subjectIri, RDF_TYPE, inferredType);
+          if (!tjQuads || tjQuads.length === 0) continue;
           const scQuads = this._parseNTriplesJustification(scNtriples);
           if (scQuads.length === 0) continue;
           return { isEntailed: true, justifications: [[...tjQuads, ...scQuads]] };

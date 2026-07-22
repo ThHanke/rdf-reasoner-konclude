@@ -33,8 +33,8 @@ interface KoncludeReasonerInstance {
   classification(): void;
   realization(): void;
   consistency(): boolean;
-  buildInferredTripleBuffer(): number;
-  buildPropertyTripleBuffer(): number;
+  buildInferredTripleBuffer(withExplanations?: boolean): number;
+  buildPropertyTripleBuffer(withExplanations?: boolean): number;
   getInferredTripleBufferPtr(): number;
   buildUnsatisfiableClassBuffer(): string;
   isSubClassOf(sub: string, sup: string): boolean;
@@ -46,9 +46,6 @@ interface KoncludeReasonerInstance {
   getAxiomsForRoleTag(tag: number): string;
   getJustificationByType(sub: string, sup: string, type: number): string;
   hasJustificationByType(sub: string, sup: string, type: number): boolean;
-  lookupTripleJustification(sub: string, pred: string, obj: string): string;
-  hasTripleJustification(sub: string, pred: string, obj: string): boolean;
-  exportAllJustifications(): string;
   delete?(): void;
 }
 
@@ -134,7 +131,8 @@ export function createInlineWorker(koncludeModuleUrl: string | URL): Worker {
           result = r.consistency();
           break;
         case "getInferredTripleBuffer": {
-          const len = r.buildInferredTripleBuffer();
+          const withExpl = (args[0] as boolean) ?? false;
+          const len = r.buildInferredTripleBuffer(withExpl);
           console.debug("[inlineWorker] getInferredTripleBuffer len:", len);
           if (len > 0) {
             const ptr = r.getInferredTripleBufferPtr();
@@ -148,7 +146,8 @@ export function createInlineWorker(koncludeModuleUrl: string | URL): Worker {
           return;
         }
         case "getPropertyTripleBuffer": {
-          const len = r.buildPropertyTripleBuffer();
+          const withExpl = (args[0] as boolean) ?? false;
+          const len = r.buildPropertyTripleBuffer(withExpl);
           if (len > 0) {
             const ptr = r.getInferredTripleBufferPtr();
             const copy = m.HEAPU8.slice(ptr, ptr + len);
@@ -189,12 +188,6 @@ export function createInlineWorker(koncludeModuleUrl: string | URL): Worker {
           break;
         case "hasJustificationByType":
           result = r.hasJustificationByType(args[0] as string, args[1] as string, args[2] as number);
-          break;
-        case "lookupTripleJustification":
-          result = r.lookupTripleJustification(args[0] as string, args[1] as string, args[2] as string);
-          break;
-        case "hasTripleJustification":
-          result = r.hasTripleJustification(args[0] as string, args[1] as string, args[2] as string);
           break;
         default:
           emit("message", { data: { id, error: `Unknown method: ${method}` } });
