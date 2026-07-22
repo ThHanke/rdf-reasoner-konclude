@@ -90,6 +90,7 @@
 
 // Justification index
 #include "JustificationCache.h"
+#include "JustificationTripleCache.h"
 
 // Axiom reverse mapping (IU-A1): expression→axiom hashes
 #include "Reasoner/Ontology/CExpressionDataBoxMapping.h"
@@ -385,6 +386,14 @@ struct KoncludeReasoner::Impl {
     // Unit 5 (plan-048): role assertions for minCard properties (unconditional — not gated on mSvfIndex)
     std::unordered_map<std::string, std::vector<std::string>> mMinCardRoleAssertions;  // "subj\0prop" → [objs]
 
+    // Workaround-emitted rdf:type triples from restriction patterns (intersectionOf, hasSelf)
+    std::vector<std::pair<std::string,std::string>> mIntersectionOfTypes;  // (indiIri, classIri)
+    std::vector<std::pair<std::string,std::string>> mHasSelfTypes;         // (indiIri, classIri)
+
+    // Workaround justification NTriples: key = "sub\0pred\0obj", value = justification NTriples.
+    // Populated during loadTripleBuffer, consumed during buildInferredTripleBuffer/buildPropertyTripleBuffer.
+    std::unordered_map<std::string, std::string> mWorkaroundJustifications;
+
     // IRI→concept/individual indexes — built once after classification/realization
     // for O(1) lookup in isSubClassOf/isInstanceOf/isSatisfiableClass.
     std::unordered_map<std::string, CConcept*> mConceptByIri;
@@ -494,6 +503,9 @@ struct KoncludeReasoner::Impl {
         mMinCardRestrictions.clear();
         mDifferentFromPairs.clear();
         mMinCardRoleAssertions.clear();
+        mIntersectionOfTypes.clear();
+        mHasSelfTypes.clear();
+        mWorkaroundJustifications.clear();
         mConceptByIri.clear();
         mIndividualByIri.clear();
         mTagToIri.clear();
@@ -502,6 +514,7 @@ struct KoncludeReasoner::Impl {
         mRoleTagToIri.clear();
         mRoleByIri.clear();
         JustificationCache::instance().clear();
+        JustificationTripleCache::instance().clear();
     }
 
     void buildConceptIndex() {
@@ -873,6 +886,29 @@ struct KoncludeReasoner::Impl {
         }
         return result;
     }
+
+    static std::string wkJustKey(const std::string& s, const std::string& p, const std::string& o) {
+        return s + '\0' + p + '\0' + o;
+    }
+
+    // Resolve a vector of dep chain tags to axiom NTriples.
+    // isRoleTag: use getAxiomsForRoleTag instead of getAxiomsForConceptTag.
+    std::string resolveDepTagsToNTriples(const std::vector<int64_t>& depTags, bool isRoleTag = false) {
+        std::string result;
+        for (int64_t tag : depTags) {
+            std::string axioms = isRoleTag ? getAxiomsForRoleTag(tag) : getAxiomsForConceptTag(tag);
+            if (!axioms.empty()) result += axioms;
+        }
+        return result;
+    }
+
+    // Store justification in the triple cache, deduplicating NTriples lines.
+    void storeTripleJustification(const std::string& sub, const std::string& pred,
+                                   const std::string& obj, const std::string& justification) {
+        if (!justification.empty()) {
+            JustificationTripleCache::instance().insert(sub, pred, obj, justification);
+        }
+    }
 };
 
 // ─── KoncludeReasoner public API ──────────────────────────────────────────────
@@ -1060,10 +1096,16 @@ void KoncludeReasoner::loadTripleBuffer(int triplePtr, int tripleCount, int strT
                     uint32_t val = bySubj ? oi : si;
                     byGroup[key].push_back(val);
                 }
+                std::string propIri(terms[propIdx].ptr, terms[propIdx].len);
+                std::string typeIri = (typeTermIdx == fpPreFpIdx)
+                    ? "http://www.w3.org/2002/07/owl#FunctionalProperty"
+                    : "http://www.w3.org/2002/07/owl#InverseFunctionalProperty";
+                std::string declNT = "<" + propIri + "> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <" + typeIri + "> .\n";
                 bool hasMulti = false;
                 for (const auto& [k, vals] : byGroup) {
                     if (vals.size() < 2) continue;
                     hasMulti = true;
+                    std::string indiIri(terms[k].ptr, terms[k].len);
                     for (size_t ii = 0; ii < vals.size(); ++ii)
                         for (size_t jj = ii+1; jj < vals.size(); ++jj) {
                             if (vals[ii] >= count || vals[jj] >= count) continue;
@@ -1071,6 +1113,18 @@ void KoncludeReasoner::loadTripleBuffer(int triplePtr, int tripleCount, int strT
                             std::string b(terms[vals[jj]].ptr, terms[vals[jj]].len);
                             mImpl->mFpIfpSameAsPairs.push_back({a, b});
                             mImpl->mFpIfpSameAsPairs.push_back({b, a});
+                            // Build justification: FP/IFP decl + 2 role assertions
+                            std::string just = declNT;
+                            if (bySubj) {
+                                just += "<" + indiIri + "> <" + propIri + "> <" + a + "> .\n";
+                                just += "<" + indiIri + "> <" + propIri + "> <" + b + "> .\n";
+                            } else {
+                                just += "<" + a + "> <" + propIri + "> <" + indiIri + "> .\n";
+                                just += "<" + b + "> <" + propIri + "> <" + indiIri + "> .\n";
+                            }
+                            static const std::string owlSameAs = "http://www.w3.org/2002/07/owl#sameAs";
+                            mImpl->mWorkaroundJustifications[Impl::wkJustKey(a, owlSameAs, b)] = just;
+                            mImpl->mWorkaroundJustifications[Impl::wkJustKey(b, owlSameAs, a)] = just;
                         }
                 }
                 if (hasMulti)
@@ -1079,6 +1133,269 @@ void KoncludeReasoner::loadTripleBuffer(int triplePtr, int tripleCount, int strT
             };
             for (uint32_t p : fpPropIdxsPre)  scanPropPairs(p, true,  fpPreFpIdx);
             for (uint32_t p : ifpPropIdxsPre) scanPropPairs(p, false, fpPreIfpIdx);
+        }
+    }
+
+    // ── Pre-scan: domain/range + restriction justifications ───────────────────
+    // Scan raw triples for rdfs:domain/range declarations and OWL restriction
+    // patterns. For each implied rdf:type, store justification in
+    // mWorkaroundJustifications keyed as "indi\0rdf:type\0class".
+    {
+        auto findTermIdx = [&](const char* iri, size_t len) -> uint32_t {
+            for (uint32_t i = 0; i < count; ++i)
+                if (terms[i].len == len && memcmp(terms[i].ptr, iri, len) == 0) return i;
+            return UINT32_MAX;
+        };
+        auto iriStr = [&](uint32_t id) -> std::string {
+            uint32_t idx = id & 0x3FFFFFFFu;
+            if (idx >= count) return "";
+            return std::string(terms[idx].ptr, terms[idx].len);
+        };
+        auto isNamedNode = [](uint32_t id) -> bool { return (id >> 30) == 0; };
+
+        static const char s_domain[] = "http://www.w3.org/2000/01/rdf-schema#domain";
+        static const char s_range[]  = "http://www.w3.org/2000/01/rdf-schema#range";
+        static const char s_rdfType[] = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+        static const char s_onProp[]  = "http://www.w3.org/2002/07/owl#onProperty";
+        static const char s_hasVal[]  = "http://www.w3.org/2002/07/owl#hasValue";
+        static const char s_allVF[]   = "http://www.w3.org/2002/07/owl#allValuesFrom";
+        static const char s_someVF[]  = "http://www.w3.org/2002/07/owl#someValuesFrom";
+        static const char s_intOf[]   = "http://www.w3.org/2002/07/owl#intersectionOf";
+        static const char s_hasSelf[] = "http://www.w3.org/2002/07/owl#hasSelf";
+        static const char s_equivCl[] = "http://www.w3.org/2002/07/owl#equivalentClass";
+        static const char s_subCl[]   = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
+        static const char s_restrict[]= "http://www.w3.org/2002/07/owl#Restriction";
+        static const char s_first[]   = "http://www.w3.org/1999/02/22-rdf-syntax-ns#first";
+        static const char s_rest[]    = "http://www.w3.org/1999/02/22-rdf-syntax-ns#rest";
+        static const char s_nil[]     = "http://www.w3.org/1999/02/22-rdf-syntax-ns#nil";
+
+        uint32_t domIdx   = findTermIdx(s_domain,  sizeof(s_domain)  - 1);
+        uint32_t rngIdx   = findTermIdx(s_range,   sizeof(s_range)   - 1);
+        uint32_t rdfTIdx  = findTermIdx(s_rdfType, sizeof(s_rdfType) - 1);
+        uint32_t onPIdx   = findTermIdx(s_onProp,  sizeof(s_onProp)  - 1);
+        uint32_t hvIdx    = findTermIdx(s_hasVal,  sizeof(s_hasVal)  - 1);
+        uint32_t avfIdx   = findTermIdx(s_allVF,   sizeof(s_allVF)   - 1);
+        uint32_t svfIdx   = findTermIdx(s_someVF,  sizeof(s_someVF)  - 1);
+        uint32_t intIdx   = findTermIdx(s_intOf,   sizeof(s_intOf)   - 1);
+        uint32_t hsIdx    = findTermIdx(s_hasSelf, sizeof(s_hasSelf) - 1);
+        uint32_t eqCIdx   = findTermIdx(s_equivCl, sizeof(s_equivCl)- 1);
+        uint32_t scIdx    = findTermIdx(s_subCl,   sizeof(s_subCl)  - 1);
+        uint32_t restIdx  = findTermIdx(s_restrict,sizeof(s_restrict)- 1);
+        uint32_t firstIdx = findTermIdx(s_first,   sizeof(s_first)  - 1);
+        uint32_t restLIdx = findTermIdx(s_rest,    sizeof(s_rest)   - 1);
+        uint32_t nilIdx   = findTermIdx(s_nil,     sizeof(s_nil)    - 1);
+
+        static const std::string rdfTypeStr = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+
+        // Build triple indices for O(1) lookup
+        // spo[s] = list of (p, o) — all triples with given subject
+        std::unordered_map<uint32_t, std::vector<std::pair<uint32_t,uint32_t>>> spo;
+        // ops[o] = list of (p, s) — all triples with given object
+        std::unordered_map<uint32_t, std::vector<std::pair<uint32_t,uint32_t>>> ops;
+        for (int i = 0; i < tripleCount; ++i) {
+            uint32_t s = triples[i*3+0], p = triples[i*3+1], o = triples[i*3+2];
+            spo[s].push_back({p, o});
+            ops[o].push_back({p, s});
+        }
+
+        // ── Domain/Range ──
+        if (domIdx != UINT32_MAX || rngIdx != UINT32_MAX) {
+            // Collect domain/range declarations: propRaw → classRaw
+            std::unordered_map<uint32_t, std::vector<uint32_t>> domDecls, rngDecls;
+            for (int i = 0; i < tripleCount; ++i) {
+                uint32_t s = triples[i*3+0], p = triples[i*3+1], o = triples[i*3+2];
+                if (!isNamedNode(s) || !isNamedNode(o)) continue;
+                if (domIdx != UINT32_MAX && p == domIdx) domDecls[s & 0x3FFFFFFFu].push_back(o & 0x3FFFFFFFu);
+                if (rngIdx != UINT32_MAX && p == rngIdx) rngDecls[s & 0x3FFFFFFFu].push_back(o & 0x3FFFFFFFu);
+            }
+            // For each role assertion (indi prop obj):
+            //   - If prop has domain → indi rdf:type domainClass
+            //   - If prop has range  → obj rdf:type rangeClass
+            for (int i = 0; i < tripleCount; ++i) {
+                uint32_t sRaw = triples[i*3+0], pRaw = triples[i*3+1], oRaw = triples[i*3+2];
+                if (!isNamedNode(sRaw) || !isNamedNode(pRaw)) continue;
+                uint32_t pi = pRaw & 0x3FFFFFFFu;
+                if (rdfTIdx != UINT32_MAX && pRaw == rdfTIdx) continue; // skip type triples
+                auto dit = domDecls.find(pi);
+                if (dit != domDecls.end()) {
+                    std::string sIri = iriStr(sRaw), pIri = iriStr(pRaw), oIri = iriStr(oRaw);
+                    for (uint32_t cIdx : dit->second) {
+                        std::string cIri(terms[cIdx].ptr, terms[cIdx].len);
+                        std::string just = "<" + pIri + "> <http://www.w3.org/2000/01/rdf-schema#domain> <" + cIri + "> .\n";
+                        just += "<" + sIri + "> <" + pIri + "> <" + oIri + "> .\n";
+                        auto key = Impl::wkJustKey(sIri, rdfTypeStr, cIri);
+                        if (mImpl->mWorkaroundJustifications.find(key) == mImpl->mWorkaroundJustifications.end())
+                            mImpl->mWorkaroundJustifications[key] = just;
+                    }
+                }
+                if (isNamedNode(oRaw)) {
+                    auto rit = rngDecls.find(pi);
+                    if (rit != rngDecls.end()) {
+                        std::string sIri = iriStr(sRaw), pIri = iriStr(pRaw), oIri = iriStr(oRaw);
+                        for (uint32_t cIdx : rit->second) {
+                            std::string cIri(terms[cIdx].ptr, terms[cIdx].len);
+                            std::string just = "<" + pIri + "> <http://www.w3.org/2000/01/rdf-schema#range> <" + cIri + "> .\n";
+                            just += "<" + sIri + "> <" + pIri + "> <" + oIri + "> .\n";
+                            auto key = Impl::wkJustKey(oIri, rdfTypeStr, cIri);
+                            if (mImpl->mWorkaroundJustifications.find(key) == mImpl->mWorkaroundJustifications.end())
+                                mImpl->mWorkaroundJustifications[key] = just;
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Restriction-based rdf:type justifications ──
+        // Pattern: restrictionNode owl:onProperty prop,
+        //          restrictionNode owl:hasValue/allValuesFrom/hasSelf val,
+        //          classIri owl:equivalentClass/rdfs:subClassOf restrictionNode
+        // Then match individual role assertions to derive rdf:type.
+        if (onPIdx != UINT32_MAX) {
+            // Build restriction info: rNode → (prop, hasValue, allValuesFrom, hasSelf, someValuesFrom)
+            struct RestrInfo { uint32_t propIdx = UINT32_MAX; uint32_t hvIdx = UINT32_MAX;
+                uint32_t avfClassIdx = UINT32_MAX; bool hasSelf = false; uint32_t svfClassIdx = UINT32_MAX; };
+            std::unordered_map<uint32_t, RestrInfo> restrMap;
+            for (int i = 0; i < tripleCount; ++i) {
+                uint32_t s = triples[i*3+0] & 0x3FFFFFFFu, p = triples[i*3+1], o = triples[i*3+2];
+                if (p == onPIdx && isNamedNode(triples[i*3+2])) restrMap[s].propIdx = o & 0x3FFFFFFFu;
+                if (hvIdx != UINT32_MAX && p == hvIdx)  restrMap[s].hvIdx = o & 0x3FFFFFFFu;
+                if (avfIdx != UINT32_MAX && p == avfIdx && isNamedNode(triples[i*3+2])) restrMap[s].avfClassIdx = o & 0x3FFFFFFFu;
+                if (hsIdx != UINT32_MAX && p == hsIdx)  restrMap[s].hasSelf = true;
+                if (svfIdx != UINT32_MAX && p == svfIdx && isNamedNode(triples[i*3+2])) restrMap[s].svfClassIdx = o & 0x3FFFFFFFu;
+            }
+
+            // classIri → restrictionNode (via equivalentClass or subClassOf)
+            std::unordered_map<uint32_t, std::vector<uint32_t>> classToRestr;
+            for (int i = 0; i < tripleCount; ++i) {
+                uint32_t s = triples[i*3+0] & 0x3FFFFFFFu, p = triples[i*3+1], o = triples[i*3+2] & 0x3FFFFFFFu;
+                if ((eqCIdx != UINT32_MAX && p == eqCIdx) || (scIdx != UINT32_MAX && p == scIdx)) {
+                    if (restrMap.count(o)) classToRestr[s].push_back(o);
+                }
+            }
+
+            // For each class with restrictions, check individual role assertions
+            for (auto& [classIdx, rNodes] : classToRestr) {
+                std::string classIri(terms[classIdx].ptr, terms[classIdx].len);
+                for (uint32_t rIdx : rNodes) {
+                    auto& ri = restrMap[rIdx];
+                    if (ri.propIdx == UINT32_MAX) continue;
+                    std::string propIri(terms[ri.propIdx].ptr, terms[ri.propIdx].len);
+
+                    // hasValue: indi <prop> <value> → indi rdf:type classIri
+                    if (ri.hvIdx != UINT32_MAX) {
+                        std::string valIri(terms[ri.hvIdx].ptr, terms[ri.hvIdx].len);
+                        for (int i = 0; i < tripleCount; ++i) {
+                            uint32_t s = triples[i*3+0], p = triples[i*3+1], o = triples[i*3+2];
+                            if (!isNamedNode(s) || (p & 0x3FFFFFFFu) != ri.propIdx) continue;
+                            if ((o & 0x3FFFFFFFu) != ri.hvIdx) continue;
+                            std::string indiIri = iriStr(s);
+                            std::string just = "<" + propIri + "> <http://www.w3.org/2002/07/owl#hasValue> <" + valIri + "> .\n";
+                            just += "<" + indiIri + "> <" + propIri + "> <" + valIri + "> .\n";
+                            auto key = Impl::wkJustKey(indiIri, rdfTypeStr, classIri);
+                            if (mImpl->mWorkaroundJustifications.find(key) == mImpl->mWorkaroundJustifications.end())
+                                mImpl->mWorkaroundJustifications[key] = just;
+                        }
+                    }
+
+                    // hasSelf: indi <prop> indi → indi rdf:type classIri
+                    if (ri.hasSelf) {
+                        for (int i = 0; i < tripleCount; ++i) {
+                            uint32_t s = triples[i*3+0], p = triples[i*3+1], o = triples[i*3+2];
+                            if (!isNamedNode(s) || (p & 0x3FFFFFFFu) != ri.propIdx) continue;
+                            if (s != o) continue;
+                            std::string indiIri = iriStr(s);
+                            std::string just = "<" + indiIri + "> <" + propIri + "> <" + indiIri + "> .\n";
+                            auto key = Impl::wkJustKey(indiIri, rdfTypeStr, classIri);
+                            if (mImpl->mWorkaroundJustifications.find(key) == mImpl->mWorkaroundJustifications.end()) {
+                                mImpl->mWorkaroundJustifications[key] = just;
+                                mImpl->mHasSelfTypes.push_back({indiIri, classIri});
+                            }
+                        }
+                    }
+
+                    // allValuesFrom: x rdf:type sourceClass, x <prop> indi → indi rdf:type avfClass
+                    if (ri.avfClassIdx != UINT32_MAX && rdfTIdx != UINT32_MAX) {
+                        // Find individuals typed as the class that has this restriction
+                        std::vector<uint32_t> typedIndis;
+                        for (int i = 0; i < tripleCount; ++i) {
+                            uint32_t s = triples[i*3+0], p = triples[i*3+1], o = triples[i*3+2];
+                            if (p != rdfTIdx || !isNamedNode(s)) continue;
+                            if ((o & 0x3FFFFFFFu) == classIdx) typedIndis.push_back(s & 0x3FFFFFFFu);
+                        }
+                        for (uint32_t srcIdx : typedIndis) {
+                            auto sit = spo.find(srcIdx);
+                            if (sit == spo.end()) continue;
+                            for (auto& [pp, oo] : sit->second) {
+                                if ((pp & 0x3FFFFFFFu) != ri.propIdx || !isNamedNode(oo)) continue;
+                                std::string fillerIri = iriStr(oo);
+                                std::string avfIri(terms[ri.avfClassIdx].ptr, terms[ri.avfClassIdx].len);
+                                std::string srcIri(terms[srcIdx].ptr, terms[srcIdx].len);
+                                std::string just = "<" + srcIri + "> <" + rdfTypeStr + "> <" + classIri + "> .\n";
+                                just += "<" + srcIri + "> <" + propIri + "> <" + fillerIri + "> .\n";
+                                auto key = Impl::wkJustKey(fillerIri, rdfTypeStr, avfIri);
+                                if (mImpl->mWorkaroundJustifications.find(key) == mImpl->mWorkaroundJustifications.end())
+                                    mImpl->mWorkaroundJustifications[key] = just;
+                            }
+                        }
+                    }
+                }
+            }
+
+        }
+
+        // ── intersectionOf rdf:type (independent of restrictions) ──
+        if (intIdx != UINT32_MAX && rdfTIdx != UINT32_MAX) {
+            std::unordered_map<uint32_t, uint32_t> intOfMap;
+            for (int i = 0; i < tripleCount; ++i) {
+                uint32_t s = triples[i*3+0] & 0x3FFFFFFFu, p = triples[i*3+1];
+                if (p == intIdx) intOfMap[s] = triples[i*3+2];
+            }
+            auto walkList = [&](uint32_t headIdx) -> std::vector<uint32_t> {
+                std::vector<uint32_t> members;
+                uint32_t cur = headIdx;
+                for (int j = 0; j < 100; ++j) {
+                    if (nilIdx != UINT32_MAX && cur == nilIdx) break;
+                    uint32_t firstVal = UINT32_MAX, nextVal = UINT32_MAX;
+                    auto sit = spo.find(cur);
+                    if (sit == spo.end()) break;
+                    for (auto& [pp, oo] : sit->second) {
+                        if (firstIdx != UINT32_MAX && pp == firstIdx) firstVal = oo & 0x3FFFFFFFu;
+                        if (restLIdx != UINT32_MAX && pp == restLIdx) nextVal = oo;
+                    }
+                    if (firstVal != UINT32_MAX) members.push_back(firstVal);
+                    if (nextVal == UINT32_MAX) break;
+                    cur = nextVal;
+                }
+                return members;
+            };
+            for (auto& [classIdx2, listHead] : intOfMap) {
+                auto members = walkList(listHead);
+                if (members.empty()) continue;
+                std::string classIri2(terms[classIdx2].ptr, terms[classIdx2].len);
+                std::unordered_map<uint32_t, std::unordered_set<uint32_t>> indiTypes;
+                for (int i = 0; i < tripleCount; ++i) {
+                    uint32_t s = triples[i*3+0], p = triples[i*3+1], o = triples[i*3+2];
+                    if (p != rdfTIdx || !isNamedNode(s)) continue;
+                    uint32_t oi = o & 0x3FFFFFFFu;
+                    for (uint32_t m : members) {
+                        if (oi == m) indiTypes[s & 0x3FFFFFFFu].insert(m);
+                    }
+                }
+                for (auto& [indiIdx, typedMembers] : indiTypes) {
+                    if (typedMembers.size() != members.size()) continue;
+                    std::string indiIri(terms[indiIdx].ptr, terms[indiIdx].len);
+                    std::string just;
+                    for (uint32_t m : members) {
+                        std::string mIri(terms[m].ptr, terms[m].len);
+                        just += "<" + indiIri + "> <" + rdfTypeStr + "> <" + mIri + "> .\n";
+                    }
+                    auto key = Impl::wkJustKey(indiIri, rdfTypeStr, classIri2);
+                    if (mImpl->mWorkaroundJustifications.find(key) == mImpl->mWorkaroundJustifications.end()) {
+                        mImpl->mWorkaroundJustifications[key] = just;
+                        mImpl->mIntersectionOfTypes.push_back({indiIri, classIri2});
+                    }
+                }
+            }
         }
     }
 
@@ -1364,21 +1681,32 @@ void KoncludeReasoner::loadTripleBuffer(int triplePtr, int tripleCount, int strT
             for (const auto& [classTermIdx, headEncId] : oneOfHeadMap) {
                 if (classTermIdx >= count) continue;
                 std::string classIri(terms[classTermIdx].ptr, terms[classTermIdx].len);
+                // Collect all members first for justification
+                std::vector<std::string> members;
                 uint32_t curr = headEncId;
                 std::unordered_set<uint32_t> seen;
                 while (true) {
                     if (seen.count(curr)) break;
                     seen.insert(curr);
-                    if ((curr >> 30) == 0) break;  // rdf:nil or other NamedNode → end
+                    if ((curr >> 30) == 0) break;
                     auto fit = rdfFirstMap.find(curr);
                     if (fit == rdfFirstMap.end()) break;
                     uint32_t memberIdx = fit->second;
                     if (memberIdx < count)
-                        mImpl->mOneOfMemberships.push_back({classIri,
-                            std::string(terms[memberIdx].ptr, terms[memberIdx].len)});
+                        members.push_back(std::string(terms[memberIdx].ptr, terms[memberIdx].len));
                     auto rit = rdfRestMap.find(curr);
                     if (rit == rdfRestMap.end()) break;
                     curr = rit->second;
+                }
+                // Build oneOf justification: class declaration + member list
+                std::string justNT;
+                for (const auto& m : members) {
+                    justNT += "<" + classIri + "> <http://www.w3.org/2002/07/owl#oneOf> <" + m + "> .\n";
+                }
+                static const std::string rdfTypeStr = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+                for (const auto& memberIri : members) {
+                    mImpl->mOneOfMemberships.push_back({classIri, memberIri});
+                    mImpl->mWorkaroundJustifications[Impl::wkJustKey(memberIri, rdfTypeStr, classIri)] = justNT;
                 }
             }
         }
@@ -1464,21 +1792,32 @@ void KoncludeReasoner::loadTripleBuffer(int triplePtr, int tripleCount, int strT
                 uint32_t classIdx = sId & 0x3FFFFFFFu;
                 if (classIdx >= count) continue;
                 std::string classIri(terms[classIdx].ptr, terms[classIdx].len);
+                // Collect all members for justification
+                std::vector<std::string> members;
                 uint32_t curr = oId;
                 std::unordered_set<uint32_t> seen;
                 while (true) {
                     if (seen.count(curr)) break;
                     seen.insert(curr);
-                    if ((curr >> 30) == 0) break;  // rdf:nil or other NamedNode → end
+                    if ((curr >> 30) == 0) break;
                     auto fit = rdfFirstMap.find(curr);
                     if (fit == rdfFirstMap.end()) break;
                     uint32_t memberIdx = fit->second;
                     if (memberIdx < count)
-                        mImpl->mDisjointUnionOf.push_back({classIri,
-                            std::string(terms[memberIdx].ptr, terms[memberIdx].len)});
+                        members.push_back(std::string(terms[memberIdx].ptr, terms[memberIdx].len));
                     auto rit = rdfRestMap.find(curr);
                     if (rit == rdfRestMap.end()) break;
                     curr = rit->second;
+                }
+                // Build justification: disjointUnionOf axiom referencing all members
+                std::string justNT;
+                for (const auto& m : members) {
+                    justNT += "<" + classIri + "> <http://www.w3.org/2002/07/owl#disjointUnionOf> <" + m + "> .\n";
+                }
+                static const std::string rdfsSubCls = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
+                for (const auto& memberIri : members) {
+                    mImpl->mDisjointUnionOf.push_back({classIri, memberIri});
+                    mImpl->mWorkaroundJustifications[Impl::wkJustKey(memberIri, rdfsSubCls, classIri)] = justNT;
                 }
             }
         }
@@ -1779,6 +2118,19 @@ int KoncludeReasoner::buildInferredTripleBuffer() {
                     for (size_t j = 0; j < iris.size(); ++j) {
                         if (i == j) continue;
                         emitTriple(intern.intern(iris[i]), pEquiv, intern.intern(iris[j]));
+                        // Record justification: bidirectional dep chains
+                        auto aIt = mImpl->mConceptByIri.find(iris[i]);
+                        auto bIt = mImpl->mConceptByIri.find(iris[j]);
+                        if (aIt != mImpl->mConceptByIri.end() && bIt != mImpl->mConceptByIri.end()) {
+                            int64_t tagA = aIt->second->getConceptTag();
+                            int64_t tagB = bIt->second->getConceptTag();
+                            std::string just;
+                            const auto* fwd = JustificationCache::instance().lookup(tagA, tagB);
+                            if (fwd && !fwd->empty()) just += mImpl->resolveDepTagsToNTriples(*fwd);
+                            const auto* rev = JustificationCache::instance().lookup(tagB, tagA);
+                            if (rev && !rev->empty()) just += mImpl->resolveDepTagsToNTriples(*rev);
+                            mImpl->storeTripleJustification(iris[i], owlEquivClass, iris[j], just);
+                        }
                     }
                 }
             }
@@ -1806,6 +2158,18 @@ int KoncludeReasoner::buildInferredTripleBuffer() {
                     std::string parentIri = nodeRep(parentNode);
                     if (parentIri.empty() || parentIri == owlNothing) continue;
                     emitTriple(intern.intern(childIri), pSubClass, intern.intern(parentIri));
+                    // Record justification from dep chain
+                    auto subIt = mImpl->mConceptByIri.find(childIri);
+                    auto supIt = mImpl->mConceptByIri.find(parentIri);
+                    if (subIt != mImpl->mConceptByIri.end() && supIt != mImpl->mConceptByIri.end()) {
+                        int64_t subTag = subIt->second->getConceptTag();
+                        int64_t supTag = supIt->second->getConceptTag();
+                        const auto* depTags = JustificationCache::instance().lookup(subTag, supTag);
+                        if (depTags && !depTags->empty()) {
+                            std::string just = mImpl->resolveDepTagsToNTriples(*depTags);
+                            mImpl->storeTripleJustification(childIri, rdfsSubClassOf, parentIri, just);
+                        }
+                    }
                 }
             }
         }
@@ -1859,6 +2223,8 @@ int KoncludeReasoner::buildInferredTripleBuffer() {
                     std::unordered_set<std::tuple<uint32_t,uint32_t,uint32_t>, TupleHash3>* emitted;
                     const std::string* owlThing;
                     const std::string* owlNothing;
+                    KoncludeReasoner::Impl* impl;
+                    const std::string* indiIriPtr;
 
                     bool visitType(CConceptInstantiatedItem* item, CConceptRealization* cr) override {
                         ConceptNameVisitor cv;
@@ -1871,6 +2237,57 @@ int KoncludeReasoner::buildInferredTripleBuffer() {
                                 tripleIds->push_back(indiId);
                                 tripleIds->push_back(pRdfType);
                                 tripleIds->push_back(cId);
+                                // Record justification
+                                if (impl && indiIriPtr) {
+                                    static const std::string rdfTypeIri = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+                                    std::string just;
+                                    // Try realization dep chain: (classTag, classTag, Realization)
+                                    auto cit = impl->mConceptByIri.find(iri);
+                                    if (cit != impl->mConceptByIri.end()) {
+                                        int64_t classTag = cit->second->getConceptTag();
+                                        const auto* depTags = JustificationCache::instance().lookup(
+                                            classTag, classTag, JustificationCache::Realization);
+                                        if (depTags && !depTags->empty())
+                                            just = impl->resolveDepTagsToNTriples(*depTags);
+                                    }
+                                    // Fallback: classification-based — type A with A ⊑ classIri
+                                    if (just.empty()) {
+                                        auto cit2 = impl->mConceptByIri.find(iri);
+                                        if (cit2 != impl->mConceptByIri.end()) {
+                                            int64_t targetTag = cit2->second->getConceptTag();
+                                            CTaxonomy* taxonomy = impl->mOntology ? impl->mOntology->getConceptTaxonomy() : nullptr;
+                                            for (auto& [assertedIri, concept] : impl->mConceptByIri) {
+                                                if (assertedIri == iri) continue;
+                                                int64_t aTag = concept->getConceptTag();
+                                                // 1. Check dep chain cache
+                                                const auto* scDeps = JustificationCache::instance().lookup(aTag, targetTag);
+                                                if (scDeps && !scDeps->empty()) {
+                                                    just = "<" + *indiIriPtr + "> <" + rdfTypeIri + "> <" + assertedIri + "> .\n";
+                                                    just += impl->resolveDepTagsToNTriples(*scDeps);
+                                                    break;
+                                                }
+                                                // 2. Taxonomy + workaround: intermediate type from domain/range/restriction
+                                                if (taxonomy && taxonomy->isSubsumption(concept, cit2->second)) {
+                                                    auto wkKey = Impl::wkJustKey(*indiIriPtr, rdfTypeIri, assertedIri);
+                                                    auto wkIt = impl->mWorkaroundJustifications.find(wkKey);
+                                                    if (wkIt != impl->mWorkaroundJustifications.end()) {
+                                                        just = wkIt->second;
+                                                        std::string chainJust = impl->getSubClassJustification(assertedIri, iri);
+                                                        if (!chainJust.empty()) just += chainJust;
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if (just.empty()) {
+                                        auto wkKey = Impl::wkJustKey(*indiIriPtr, rdfTypeIri, iri);
+                                        auto wkIt = impl->mWorkaroundJustifications.find(wkKey);
+                                        if (wkIt != impl->mWorkaroundJustifications.end())
+                                            just = wkIt->second;
+                                    }
+                                    impl->storeTripleJustification(*indiIriPtr, rdfTypeIri, iri, just);
+                                }
                             }
                         }
                         return true;
@@ -1884,6 +2301,8 @@ int KoncludeReasoner::buildInferredTripleBuffer() {
                 tv.emitted     = &emittedTriples;
                 tv.owlThing    = &owlThing2;
                 tv.owlNothing  = &owlNothing2;
+                tv.impl        = mImpl;
+                tv.indiIriPtr  = nullptr;
 
                 for (qint64 i = 0; i < indiCount; ++i) {
                     CIndividual* indi = indiVec->getData(i);
@@ -1892,6 +2311,7 @@ int KoncludeReasoner::buildInferredTripleBuffer() {
                     if (indiQ.empty()) continue;
                     std::string indiIri(indiQ);
                     tv.indiId = intern.intern(indiIri);
+                    tv.indiIriPtr = &indiIri;
                     conReal->visitAllTypes(indi, &tv);
                 }
             }
@@ -2040,6 +2460,12 @@ int KoncludeReasoner::buildInferredTripleBuffer() {
                     for (const auto& otherIri : sgv.iris) {
                         if (otherIri == srcIri) continue;
                         emitTriple(srcId, pSameAs, intern.intern(otherIri));
+                        // Check workaround justification first (FP/IFP sameAs)
+                        auto jit = mImpl->mWorkaroundJustifications.find(
+                            Impl::wkJustKey(srcIri, owlSameAs, otherIri));
+                        if (jit != mImpl->mWorkaroundJustifications.end()) {
+                            mImpl->storeTripleJustification(srcIri, owlSameAs, otherIri, jit->second);
+                        }
                     }
                 }
             }
@@ -2074,8 +2500,41 @@ int KoncludeReasoner::buildInferredTripleBuffer() {
             static const std::string rdfTypeStr =
                 "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
             uint32_t pType = intern.intern(rdfTypeStr);
-            for (const auto& [classIri, memberIri] : mImpl->mOneOfMemberships)
+            for (const auto& [classIri, memberIri] : mImpl->mOneOfMemberships) {
                 emitTriple(intern.intern(memberIri), pType, intern.intern(classIri));
+                auto jit = mImpl->mWorkaroundJustifications.find(
+                    Impl::wkJustKey(memberIri, rdfTypeStr, classIri));
+                if (jit != mImpl->mWorkaroundJustifications.end())
+                    mImpl->storeTripleJustification(memberIri, rdfTypeStr, classIri, jit->second);
+            }
+        }
+
+        // intersectionOf workaround: indi rdf:type class (all members typed)
+        if (!mImpl->mIntersectionOfTypes.empty()) {
+            static const std::string rdfTypeStr3 =
+                "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+            uint32_t pType = intern.intern(rdfTypeStr3);
+            for (const auto& [indiIri, classIri] : mImpl->mIntersectionOfTypes) {
+                emitTriple(intern.intern(indiIri), pType, intern.intern(classIri));
+                auto jit = mImpl->mWorkaroundJustifications.find(
+                    Impl::wkJustKey(indiIri, rdfTypeStr3, classIri));
+                if (jit != mImpl->mWorkaroundJustifications.end())
+                    mImpl->storeTripleJustification(indiIri, rdfTypeStr3, classIri, jit->second);
+            }
+        }
+
+        // hasSelf workaround: indi rdf:type class (self-referencing property)
+        if (!mImpl->mHasSelfTypes.empty()) {
+            static const std::string rdfTypeStr4 =
+                "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+            uint32_t pType = intern.intern(rdfTypeStr4);
+            for (const auto& [indiIri, classIri] : mImpl->mHasSelfTypes) {
+                emitTriple(intern.intern(indiIri), pType, intern.intern(classIri));
+                auto jit = mImpl->mWorkaroundJustifications.find(
+                    Impl::wkJustKey(indiIri, rdfTypeStr4, classIri));
+                if (jit != mImpl->mWorkaroundJustifications.end())
+                    mImpl->storeTripleJustification(indiIri, rdfTypeStr4, classIri, jit->second);
+            }
         }
 
         // Unit 5 (plan-048): minCardinality → member rdf:type class (OWA-correct)
@@ -2125,8 +2584,32 @@ int KoncludeReasoner::buildInferredTripleBuffer() {
                             if (allDistinct) satisfied = true;
                         }
                     }
-                    if (satisfied)
+                    if (satisfied) {
                         emitTriple(intern.intern(indiIri), pType, intern.intern(entry.classIri));
+                        // Build justification: restriction + role assertions + differentFrom
+                        std::string just;
+                        // Restriction axiom (simplified)
+                        just += "<" + entry.classIri + "> <http://www.w3.org/2002/07/owl#onProperty> <" + entry.propIri + "> .\n";
+                        just += "<" + entry.classIri + "> <http://www.w3.org/2002/07/owl#minCardinality> \"" + std::to_string(entry.minCard) + "\" .\n";
+                        // Role assertions (up to minCard fillers)
+                        int emitted = 0;
+                        for (const auto& f : fillers) {
+                            if (emitted >= entry.minCard) break;
+                            just += "<" + indiIri + "> <" + entry.propIri + "> <" + f + "> .\n";
+                            emitted++;
+                        }
+                        // DifferentFrom pairs between fillers (if minCard > 1)
+                        if (entry.minCard > 1) {
+                            for (size_t a = 0; a < fillers.size() && (int)a < entry.minCard; ++a) {
+                                for (size_t b = a+1; b < fillers.size() && (int)b < entry.minCard; ++b) {
+                                    auto dit = mImpl->mDifferentFromPairs.find(fillers[a]);
+                                    if (dit != mImpl->mDifferentFromPairs.end() && dit->second.count(fillers[b]))
+                                        just += "<" + fillers[a] + "> <http://www.w3.org/2002/07/owl#differentFrom> <" + fillers[b] + "> .\n";
+                                }
+                            }
+                        }
+                        mImpl->storeTripleJustification(indiIri, rdfTypeStr2, entry.classIri, just);
+                    }
                 }
             }
         }
@@ -2138,16 +2621,26 @@ int KoncludeReasoner::buildInferredTripleBuffer() {
     if (!mImpl->mDisjointUnionOf.empty()) {
         static const std::string rdfsSubCls = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
         uint32_t pSub = intern.intern(rdfsSubCls);
-        for (const auto& [classIri, memberIri] : mImpl->mDisjointUnionOf)
+        for (const auto& [classIri, memberIri] : mImpl->mDisjointUnionOf) {
             emitTriple(intern.intern(memberIri), pSub, intern.intern(classIri));
+            auto jit = mImpl->mWorkaroundJustifications.find(
+                Impl::wkJustKey(memberIri, rdfsSubCls, classIri));
+            if (jit != mImpl->mWorkaroundJustifications.end())
+                mImpl->storeTripleJustification(memberIri, rdfsSubCls, classIri, jit->second);
+        }
     }
 
     // Unit 1: FP/IFP sameAs pairs
     if (!mImpl->mFpIfpSameAsPairs.empty()) {
         static const std::string owlSameAs = "http://www.w3.org/2002/07/owl#sameAs";
         uint32_t pSameAs = intern.intern(owlSameAs);
-        for (const auto& [s, o] : mImpl->mFpIfpSameAsPairs)
+        for (const auto& [s, o] : mImpl->mFpIfpSameAsPairs) {
             emitTriple(intern.intern(s), pSameAs, intern.intern(o));
+            auto jit = mImpl->mWorkaroundJustifications.find(
+                Impl::wkJustKey(s, owlSameAs, o));
+            if (jit != mImpl->mWorkaroundJustifications.end())
+                mImpl->storeTripleJustification(s, owlSameAs, o, jit->second);
+        }
     }
 
     // Unit 2: someValuesFrom fixpoint — propagate rdf:type to restriction fillers
@@ -2190,6 +2683,13 @@ int KoncludeReasoner::buildInferredTripleBuffer() {
                         if (allTypes[fillerIri].insert(filler).second) {
                             emitTriple(intern.intern(fillerIri), pType, intern.intern(filler));
                             changed = true;
+                            // Single-step justification: restriction + role assertion
+                            std::string just;
+                            just += "<" + classIri + "> <http://www.w3.org/2002/07/owl#someValuesFrom> <" + filler + "> .\n";
+                            just += "<" + classIri + "> <http://www.w3.org/2002/07/owl#onProperty> <" + prop + "> .\n";
+                            just += "<" + indiIri + "> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <" + classIri + "> .\n";
+                            just += "<" + indiIri + "> <" + prop + "> <" + fillerIri + "> .\n";
+                            mImpl->storeTripleJustification(fillerIri, rdfType, filler, just);
                         }
                     }
                 }
@@ -2329,6 +2829,19 @@ int KoncludeReasoner::buildPropertyTripleBuffer() {
 
                     std::string parentRep = *std::min_element(parentIris.begin(), parentIris.end());
                     emitTriple(intern.intern(childRep), pSubProp, intern.intern(parentRep));
+                    // Record justification from dep chain
+                    auto subIt = mImpl->mRoleByIri.find(childRep);
+                    auto supIt = mImpl->mRoleByIri.find(parentRep);
+                    if (subIt != mImpl->mRoleByIri.end() && supIt != mImpl->mRoleByIri.end()) {
+                        int64_t subTag = subIt->second->getRoleTag();
+                        int64_t supTag = supIt->second->getRoleTag();
+                        const auto* depTags = JustificationCache::instance().lookup(
+                            subTag, supTag, JustificationCache::PropertySubsumption);
+                        if (depTags && !depTags->empty()) {
+                            std::string just = mImpl->resolveDepTagsToNTriples(*depTags, true);
+                            mImpl->storeTripleJustification(childRep, rdfsSubPropertyOf, parentRep, just);
+                        }
+                    }
                 }
             }
         };
@@ -2338,9 +2851,16 @@ int KoncludeReasoner::buildPropertyTripleBuffer() {
     }
 
     // ── OWL 2 DL: p owl:equivalentProperty q ⇒ bidirectional rdfs:subPropertyOf
+    static const std::string owlEquivProp =
+        "http://www.w3.org/2002/07/owl#equivalentProperty";
     for (const auto& [p, q] : mImpl->mEquivPropPairs) {
         emitTriple(intern.intern(p), pSubProp, intern.intern(q));
         emitTriple(intern.intern(q), pSubProp, intern.intern(p));
+        std::string just = "<" + p + "> <" + owlEquivProp + "> <" + q + "> .\n";
+        mImpl->storeTripleJustification(p, rdfsSubPropertyOf, q, just);
+        mImpl->storeTripleJustification(q, rdfsSubPropertyOf, p, just);
+        mImpl->storeTripleJustification(p, owlEquivProp, q, just);
+        mImpl->storeTripleJustification(q, owlEquivProp, p, just);
     }
 
     // ── Assemble combined buffer [strTableLen:u32][strTable][tripleBuffer] ────
@@ -2434,7 +2954,7 @@ bool KoncludeReasoner::isSubClassOf(const std::string& subIri, const std::string
     auto supIt = mImpl->mConceptByIri.find(superIri);
     if (subIt == mImpl->mConceptByIri.end() || supIt == mImpl->mConceptByIri.end()) return false;
 
-    return taxonomy->isSubsumption(supIt->second, subIt->second);
+    return taxonomy->isSubsumption(subIt->second, supIt->second);
 }
 
 // isSatisfiableClass — O(1) taxonomy lookup using pre-built concept index.
@@ -2492,4 +3012,12 @@ std::string KoncludeReasoner::getJustificationByType(const std::string& subIri, 
 
 bool KoncludeReasoner::hasJustificationByType(const std::string& subIri, const std::string& superIri, int type) {
     return mImpl->hasJustificationByType(subIri, superIri, type);
+}
+
+std::string KoncludeReasoner::lookupTripleJustification(const std::string& sub, const std::string& pred, const std::string& obj) {
+    return JustificationTripleCache::instance().lookup(sub, pred, obj);
+}
+
+bool KoncludeReasoner::hasTripleJustification(const std::string& sub, const std::string& pred, const std::string& obj) {
+    return JustificationTripleCache::instance().has(sub, pred, obj);
 }

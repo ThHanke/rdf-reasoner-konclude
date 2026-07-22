@@ -24,5 +24,7 @@ EMSCRIPTEN_BINDINGS(konclude) {
         .function("getAxiomsForRoleTag",              &KoncludeReasoner::getAxiomsForRoleTag)
         .function("getJustificationByType",           &KoncludeReasoner::getJustificationByType)
         .function("hasJustificationByType",           &KoncludeReasoner::hasJustificationByType)
+        .function("lookupTripleJustification",        &KoncludeReasoner::lookupTripleJustification)
+        .function("hasTripleJustification",           &KoncludeReasoner::hasTripleJustification)
         .function("reset",                            &KoncludeReasoner::reset);
 }
