@@ -3113,3 +3113,21 @@ std::string KoncludeReasoner::lookupTripleJustification(const std::string& sub, 
 bool KoncludeReasoner::hasTripleJustification(const std::string& sub, const std::string& pred, const std::string& obj) {
     return JustificationTripleCache::instance().has(sub, pred, obj);
 }
+
+std::string KoncludeReasoner::exportAllJustifications() {
+    auto& cache = JustificationTripleCache::instance();
+    if (cache.entries.empty()) return "";
+
+    std::string result;
+    for (const auto& [key, justification] : cache.entries) {
+        result += key.sub;
+        result += '\t';
+        result += key.pred;
+        result += '\t';
+        result += key.obj;
+        result += '\n';
+        result += justification;
+        result += '\0';
+    }
+    return result;
+}

@@ -28,6 +28,13 @@ export interface ExplainOptions {
  */
 export const HYPOTHETICAL_IRI = "urn:konclude:hypothetical";
 
+export const EXPLANATION_GRAPH_IRI = "urn:konclude:explanations";
+
+export const KJ_NS = "urn:konclude:justification#";
+export const KJ_JUSTIFICATION = `${KJ_NS}Justification`;
+export const KJ_JUSTIFIES = `${KJ_NS}justifies`;
+export const KJ_AXIOM = `${KJ_NS}axiom`;
+
 /**
  * The set of quads added or removed from the inferred graph between two
  * consecutive materialize() calls on the same store.
@@ -72,6 +79,12 @@ export interface StoreReasoningOptions extends ReasoningOptions {
    * The graph is cleared before each call; do not store ontology triples here.
    */
   inferredGraph?: string;
+
+  /**
+   * When `true`, justifications are serialized as RDF-star triples into the
+   * `urn:konclude:explanations` named graph. Query via `store.getQuads()`.
+   */
+  explanations?: boolean;
 }
 
 /**
@@ -110,6 +123,12 @@ export interface MaterializeStoreOptions extends MaterializeOptions {
    * When absent or `false`, the Promise resolves to `void` (backward compatible).
    */
   returnDelta?: boolean;
+
+  /**
+   * When `true`, justifications are serialized as RDF-star triples into the
+   * `urn:konclude:explanations` named graph. Query via `store.getQuads()`.
+   */
+  explanations?: boolean;
 }
 
 /**
@@ -123,6 +142,12 @@ export interface ClassifyPropertiesStoreOptions {
    * The graph is cleared before each call; do not store ontology triples here.
    */
   inferredGraph?: string;
+
+  /**
+   * When `true`, justifications are serialized as RDF-star triples into the
+   * `urn:konclude:explanations` named graph. Query via `store.getQuads()`.
+   */
+  explanations?: boolean;
 }
 
 /**

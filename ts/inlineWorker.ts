@@ -48,6 +48,7 @@ interface KoncludeReasonerInstance {
   hasJustificationByType(sub: string, sup: string, type: number): boolean;
   lookupTripleJustification(sub: string, pred: string, obj: string): string;
   hasTripleJustification(sub: string, pred: string, obj: string): boolean;
+  exportAllJustifications(): string;
   delete?(): void;
 }
 

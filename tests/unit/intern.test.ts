@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { DataFactory } from "n3";
-import { InternTable, encodeToBuffers, decodeBuffers } from "../../ts/intern.js";
+import { InternTable, encodeToBuffers, decodeBuffers, computeStoreFingerprint } from "../../ts/intern.js";
+import { Store } from "n3";
+import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI } from "../../ts/types.js";
 
 const { namedNode, blankNode, literal, quad, defaultGraph } = DataFactory;
 
@@ -286,6 +288,30 @@ describe("decodeBuffers", () => {
     expect(decoded[1].object.value).toBe("http://o2");
     // Subject and predicate shared
     expect(decoded[0].subject.value).toBe(decoded[1].subject.value);
+  });
+});
+
+// ─── computeStoreFingerprint ────────────────────────────────────────────────
+
+describe("computeStoreFingerprint", () => {
+  it("excludes explanation graph from fingerprint", () => {
+    const base = quad(namedNode("http://a"), namedNode("http://b"), namedNode("http://c"), defaultGraph());
+    const explQuad = quad(namedNode("http://j1"), namedNode("http://kj"), namedNode("http://x"), namedNode(EXPLANATION_GRAPH_IRI));
+
+    const fpWithout = computeStoreFingerprint([base]);
+    const fpWith = computeStoreFingerprint([base, explQuad]);
+    expect(fpWith).toBe(fpWithout);
+  });
+
+  it("excludes inferred, hypothetical, and explanation graphs together", () => {
+    const base = quad(namedNode("http://a"), namedNode("http://b"), namedNode("http://c"), defaultGraph());
+    const infQuad = quad(namedNode("http://x"), namedNode("http://y"), namedNode("http://z"), namedNode(INFERRED_GRAPH_IRI));
+    const hypQuad = quad(namedNode("http://h"), namedNode("http://i"), namedNode("http://j"), namedNode(HYPOTHETICAL_IRI));
+    const explQuad = quad(namedNode("http://e"), namedNode("http://f"), namedNode("http://g"), namedNode(EXPLANATION_GRAPH_IRI));
+
+    const fpBase = computeStoreFingerprint([base]);
+    const fpAll = computeStoreFingerprint([base, infQuad, hypQuad, explQuad]);
+    expect(fpAll).toBe(fpBase);
   });
 });
 
