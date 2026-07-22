@@ -59,6 +59,10 @@ public:
     std::string lookupTripleJustification(const std::string& sub, const std::string& pred, const std::string& obj);
     bool hasTripleJustification(const std::string& sub, const std::string& pred, const std::string& obj);
 
+    // Bulk export all entries from JustificationTripleCache.
+    // Format: "sub\tpred\tobj\n<ntriples axioms>\x00..." (NUL-separated entries)
+    std::string exportAllJustifications();
+
     // Axiom reverse mapping — convert concept/role tags back to source axiom NTriples
     std::string getAxiomsForConceptTag(int64_t tag);
     std::string getAxiomsForRoleTag(int64_t tag);

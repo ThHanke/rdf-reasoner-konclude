@@ -29,10 +29,11 @@ function isStore(input: unknown): input is Store {
 }
 
 export type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions, LaconicPart, LaconicJustification, LaconicExplainOptions } from "./types.js";
-export { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI } from "./types.js";
+export { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, KJ_NS, KJ_JUSTIFICATION, KJ_JUSTIFIES, KJ_AXIOM } from "./types.js";
 export { createInlineWorker } from "./inlineWorker.js";
 import type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions, LaconicPart, LaconicJustification, LaconicExplainOptions } from "./types.js";
-import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI } from "./types.js";
+import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI } from "./types.js";
+import { serializeExplanations } from "./explanationSerializer.js";
 import { buildEntailmentProbe, classifyAxiom, tripleKey as probeTripleKey } from "./entailmentProbe.js";
 import { computeLaconicAsync, groupQuadsIntoAxioms, splitAxiom, axiomKey } from "./laconicJustification.js";
 
@@ -205,6 +206,13 @@ export class RdfReasoner {
     });
   }
 
+  private async _ensureExplanationGraph(store: Store, inferredGraph?: string): Promise<void> {
+    const explGraphNode = DataFactory.namedNode(EXPLANATION_GRAPH_IRI);
+    if (store.getQuads(null, null, null, explGraphNode).length > 0) return;
+    const bulkExport = (await this._call("exportAllJustifications", [])) as string;
+    serializeExplanations(store, bulkExport, EXPLANATION_GRAPH_IRI, inferredGraph);
+  }
+
   // -------------------------------------------------------------------------
   // reason()
   // -------------------------------------------------------------------------
@@ -241,9 +249,13 @@ export class RdfReasoner {
     // the cache may incorrectly report a hit when the inferred graph has
     // changed between calls. Acceptable for the current use-cases.
     const fingerprint = computeStoreFingerprint(store.getQuads(null, null, null, null));
+    const wantExplanations = opts?.explanations === true;
     const result = this._queue.then(async () => {
       // Cache hit: same store content as last classify call
       if (this._classifyCache !== null && this._classifyCache.hash === fingerprint) {
+        if (wantExplanations) {
+          await this._ensureExplanationGraph(store, opts?.inferredGraph);
+        }
         return;
       }
 
@@ -251,6 +263,7 @@ export class RdfReasoner {
         opts?.inferredGraph ?? INFERRED_GRAPH_IRI,
       );
       store.removeQuads(store.getQuads(null, null, null, inferredGraphNode));
+      store.removeQuads(store.getQuads(null, null, null, DataFactory.namedNode(EXPLANATION_GRAPH_IRI)));
 
       const { tripleBuffer, strTableBuffer } = encodeToBuffers(store.getQuads(null, null, null, null));
 
@@ -265,6 +278,11 @@ export class RdfReasoner {
         store.addQuad(
           DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode),
         );
+      }
+
+      if (wantExplanations) {
+        const bulkExport = (await this._call("exportAllJustifications", [])) as string;
+        serializeExplanations(store, bulkExport, EXPLANATION_GRAPH_IRI, opts?.inferredGraph);
       }
 
       this._classifyCache = { hash: fingerprint, result: undefined as void };
@@ -458,6 +476,7 @@ export class RdfReasoner {
     // changed between calls. Acceptable for the current use-cases.
     const fingerprint = computeStoreFingerprint(store.getQuads(null, null, null, null));
     const returnDelta = opts?.returnDelta === true;
+    const wantExplanations = opts?.explanations === true;
     const result = this._queue.then(async () => {
       const inferredGraphNode = DataFactory.namedNode(
         opts?.inferredGraph ?? INFERRED_GRAPH_IRI,
@@ -465,6 +484,9 @@ export class RdfReasoner {
 
       // Cache hit: same store content as last materialize call
       if (this._materializeCache !== null && this._materializeCache.hash === fingerprint) {
+        if (wantExplanations) {
+          await this._ensureExplanationGraph(store, opts?.inferredGraph);
+        }
         if (returnDelta) {
           return { delta: { added: [], removed: [] } as InferenceDelta };
         }
@@ -482,6 +504,7 @@ export class RdfReasoner {
       }
 
       store.removeQuads(store.getQuads(null, null, null, inferredGraphNode));
+      store.removeQuads(store.getQuads(null, null, null, DataFactory.namedNode(EXPLANATION_GRAPH_IRI)));
 
       const { tripleBuffer, strTableBuffer } = encodeToBuffers(store.getQuads(null, null, null, null));
 
@@ -503,6 +526,11 @@ export class RdfReasoner {
         store.addQuad(
           DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode),
         );
+      }
+
+      if (wantExplanations) {
+        const bulkExport = (await this._call("exportAllJustifications", [])) as string;
+        serializeExplanations(store, bulkExport, EXPLANATION_GRAPH_IRI, opts?.inferredGraph);
       }
 
       this._materializeCache = { hash: fingerprint, result: undefined as void };
@@ -601,9 +629,13 @@ export class RdfReasoner {
     // the cache may incorrectly report a hit when the inferred graph has
     // changed between calls. Acceptable for the current use-cases.
     const fingerprint = computeStoreFingerprint(store.getQuads(null, null, null, null));
+    const wantExplanations = opts?.explanations === true;
     const result = this._queue.then(async () => {
       // Cache hit: same store content as last classifyProperties call
       if (this._classifyPropertiesCache !== null && this._classifyPropertiesCache.hash === fingerprint) {
+        if (wantExplanations) {
+          await this._ensureExplanationGraph(store, opts?.inferredGraph);
+        }
         return;
       }
 
@@ -611,6 +643,7 @@ export class RdfReasoner {
         opts?.inferredGraph ?? INFERRED_GRAPH_IRI,
       );
       store.removeQuads(store.getQuads(null, null, null, inferredGraphNode));
+      store.removeQuads(store.getQuads(null, null, null, DataFactory.namedNode(EXPLANATION_GRAPH_IRI)));
 
       const { tripleBuffer, strTableBuffer } = encodeToBuffers(store.getQuads(null, null, null, null));
 
@@ -624,6 +657,11 @@ export class RdfReasoner {
         store.addQuad(
           DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode),
         );
+      }
+
+      if (wantExplanations) {
+        const bulkExport = (await this._call("exportAllJustifications", [])) as string;
+        serializeExplanations(store, bulkExport, EXPLANATION_GRAPH_IRI, opts?.inferredGraph);
       }
 
       this._classifyPropertiesCache = { hash: fingerprint, result: undefined as void };

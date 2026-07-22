@@ -1,6 +1,6 @@
 import type { Quad, Term } from "@rdfjs/types";
 import { DataFactory } from "n3";
-import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI } from "./types.js";
+import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI } from "./types.js";
 
 export interface EncodedBuffers {
   tripleBuffer: ArrayBuffer;
@@ -206,7 +206,7 @@ export function computeStoreFingerprint(quads: Quad[]): string {
   const strings: string[] = [];
   for (const q of quads) {
     const g = q.graph.value;
-    if (g === INFERRED_GRAPH_IRI || g === HYPOTHETICAL_IRI) continue;
+    if (g === INFERRED_GRAPH_IRI || g === HYPOTHETICAL_IRI || g === EXPLANATION_GRAPH_IRI) continue;
     strings.push(quadToNTriples(q));
   }
   strings.sort();

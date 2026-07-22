@@ -215,6 +215,10 @@ export async function handleMessage(
         result = reasoner.hasTripleJustification(args[0] as string, args[1] as string, args[2] as string);
         break;
       }
+      case "exportAllJustifications": {
+        result = reasoner.exportAllJustifications();
+        break;
+      }
       default: {
         const response: WorkerResponse = {
           id,

@@ -1,0 +1,18 @@
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix kj:   <urn:konclude:justification#> .
+
+kj:Justification a owl:Class ;
+    rdfs:label "Justification" ;
+    rdfs:comment "A justification linking an inferred triple to the axioms that entail it." .
+
+kj:justifies a owl:ObjectProperty ;
+    rdfs:label "justifies" ;
+    rdfs:comment "Relates a justification to the inferred triple it explains. The object is an RDF-star quoted triple." ;
+    rdfs:domain kj:Justification .
+
+kj:axiom a owl:ObjectProperty ;
+    rdfs:label "axiom" ;
+    rdfs:comment "Relates a justification to a source axiom used in the derivation. The object is an RDF-star quoted triple." ;
+    rdfs:domain kj:Justification .

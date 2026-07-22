@@ -28,6 +28,7 @@ export interface KoncludeReasonerInstance {
   hasJustificationByType(subIri: string, superIri: string, type: number): boolean;
   lookupTripleJustification(sub: string, pred: string, obj: string): string;
   hasTripleJustification(sub: string, pred: string, obj: string): boolean;
+  exportAllJustifications(): string;
   reset(): void;
   /** Release Embind-managed C++ memory. Must be called when done. */
   delete(): void;
