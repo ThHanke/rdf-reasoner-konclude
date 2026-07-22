@@ -91,9 +91,9 @@ describe.skipIf(!wasmExists)("Explanation performance benchmark", () => {
       console.log(`  materialize + explanations: ${explTime.toFixed(1)}ms`);
       console.log(`  overhead: ${overhead.toFixed(1)}%`);
 
-      // Streaming buffer approach trades per-triple NTriples parsing for bulk
-      // binary decode + N3 Store RDF-star insertion. 1600% is a regression guard.
-      expect(overhead).toBeLessThan(1600);
+      // Direct N3 index injection eliminates Quad allocation + serializeExplanations.
+      // 500% is a regression guard (was 1600% before injection path).
+      expect(overhead).toBeLessThan(500);
     } finally {
       r.terminate();
     }
