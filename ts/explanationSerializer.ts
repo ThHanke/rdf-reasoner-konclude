@@ -1,11 +1,9 @@
 import type { Quad } from "@rdfjs/types";
 import { Store, DataFactory, Parser } from "n3";
 import {
-  EXPLANATION_GRAPH_IRI,
   KJ_JUSTIFICATION,
   KJ_JUSTIFIES,
   KJ_AXIOM,
-  INFERRED_GRAPH_IRI,
 } from "./types.js";
 
 const { namedNode, blankNode, quad } = DataFactory;
@@ -20,7 +18,6 @@ export function serializeExplanations(
   store: Store,
   bulkExport: string,
   explanationGraph: string,
-  inferredGraph?: string,
 ): void {
   const explGraphNode = namedNode(explanationGraph);
 
@@ -29,7 +26,6 @@ export function serializeExplanations(
   if (!bulkExport) return;
 
   const parser = new Parser({ format: "N-Triples" });
-  const justifiedKeys = new Set<string>();
   let jCounter = 0;
 
   const entries = bulkExport.split("\0");
@@ -46,7 +42,6 @@ export function serializeExplanations(
     if (parts.length < 3) continue;
 
     const [sub, pred, obj] = parts;
-    justifiedKeys.add(`${sub}\0${pred}\0${obj}`);
 
     const jNode = blankNode(`j${jCounter++}`);
 
@@ -63,20 +58,8 @@ export function serializeExplanations(
           store.addQuad(quad(jNode, kjAxiomPred, quotedAxiom, explGraphNode));
         }
       } catch {
-        // malformed NTriples — emit nil-path for this entry
+        // malformed NTriples — skip this entry's axioms
       }
-    }
-  }
-
-  const igIri = inferredGraph ?? INFERRED_GRAPH_IRI;
-  const inferredQuads = store.getQuads(null, null, null, namedNode(igIri));
-  for (const iq of inferredQuads) {
-    const key = `${iq.subject.value}\0${iq.predicate.value}\0${iq.object.value}`;
-    if (!justifiedKeys.has(key)) {
-      const jNode = blankNode(`j${jCounter++}`);
-      const inferredTriple = quad(iq.subject, iq.predicate, iq.object);
-      store.addQuad(quad(jNode, rdfTypePred, kjJustificationType, explGraphNode));
-      store.addQuad(quad(jNode, kjJustifiesPred, inferredTriple, explGraphNode));
     }
   }
 }

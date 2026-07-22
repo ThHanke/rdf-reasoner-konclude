@@ -3,7 +3,6 @@ import { Store, DataFactory } from "n3";
 import { serializeExplanations } from "../../ts/explanationSerializer.js";
 import {
   EXPLANATION_GRAPH_IRI,
-  INFERRED_GRAPH_IRI,
   KJ_JUSTIFICATION,
   KJ_JUSTIFIES,
   KJ_AXIOM,
@@ -187,19 +186,8 @@ describe("serializeExplanations", () => {
     expect(quotedAxiom.subject.termType).toBe("BlankNode");
   });
 
-  it("nil-path for inferred triples without C++ justification", () => {
+  it("only exports entries from bulk export, no nil-path for unjustified triples", () => {
     const store = new Store();
-    const infGraph = namedNode(INFERRED_GRAPH_IRI);
-
-    // Add inferred triple that has NO corresponding bulk export entry
-    store.addQuad(quad(
-      namedNode(`${EX}Orphan`),
-      namedNode(RDFS_SUB_CLASS_OF),
-      namedNode(`${EX}Thing`),
-      infGraph,
-    ));
-
-    // Bulk export has a different triple
     const bulk = makeBulkExport([{
       sub: `${EX}Dog`,
       pred: RDFS_SUB_CLASS_OF,
@@ -210,15 +198,6 @@ describe("serializeExplanations", () => {
     serializeExplanations(store, bulk, EXPLANATION_GRAPH_IRI);
 
     const justifies = store.getQuads(null, namedNode(KJ_JUSTIFIES), null, explGraph);
-    expect(justifies).toHaveLength(2);
-
-    // Orphan should have a nil-path entry
-    const orphanJ = justifies.find(j => {
-      const qt = j.object as unknown as ReturnType<typeof quad>;
-      return qt.subject.value === `${EX}Orphan`;
-    });
-    expect(orphanJ).toBeDefined();
-    const orphanAxioms = store.getQuads(orphanJ!.subject, namedNode(KJ_AXIOM), null, explGraph);
-    expect(orphanAxioms).toHaveLength(0);
+    expect(justifies).toHaveLength(1);
   });
 });
