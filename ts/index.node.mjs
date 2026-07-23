@@ -1,9 +1,10 @@
 // index.node.mjs — Node.js entry via "node" export condition
 import { Worker as NodeWorker } from 'node:worker_threads';
+import { fileURLToPath } from 'node:url';
 
 class NodeWorkerShim {
   constructor(url, _opts) {
-    const rawPath = url instanceof URL ? url.pathname : String(url);
+    const rawPath = url instanceof URL ? fileURLToPath(url) : String(url);
     const path = rawPath.replace(/worker\.js$/, 'worker-node.mjs');
     this._w = new NodeWorker(path);
     this._map = new Map();
