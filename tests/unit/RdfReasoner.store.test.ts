@@ -1211,4 +1211,102 @@ describe("RdfReasoner — Store API", () => {
       expect(result).toBe(true);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // Deduplication — inferred triples already in source graphs are skipped
+  // -------------------------------------------------------------------------
+
+  describe("deduplication", () => {
+    it("reason(store) filters inferred triples that exist in source graph", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store();
+      store.addQuad(quad(A, subClassOf, B, defaultGraph()));
+      store.addQuad(quad(B, subClassOf, C, defaultGraph()));
+
+      // WASM returns A→B (already in source) AND A→C (new)
+      mockWorkerSequence([
+        quad(A, subClassOf, B, defaultGraph()),
+        quad(A, subClassOf, C, defaultGraph()),
+      ]);
+
+      await reasoner.reason(store);
+
+      const inferredGraphNode = namedNode(INFERRED_GRAPH_IRI);
+      const inferred = store.getQuads(null, null, null, inferredGraphNode);
+      expect(inferred).toHaveLength(1);
+      expect(inferred[0].object.value).toBe("http://example.org/C");
+    });
+
+    it("dedup works across multiple named source graphs", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store();
+      store.addQuad(quad(A, subClassOf, B, G1));
+      store.addQuad(quad(B, subClassOf, C, G2));
+
+      // WASM returns B→C (in G2) and A→C (new)
+      mockWorkerSequence([
+        quad(B, subClassOf, C, defaultGraph()),
+        quad(A, subClassOf, C, defaultGraph()),
+      ]);
+
+      await reasoner.reason(store);
+
+      const inferred = store.getQuads(null, null, null, namedNode(INFERRED_GRAPH_IRI));
+      expect(inferred).toHaveLength(1);
+      expect(inferred[0].subject.value).toBe("http://example.org/A");
+      expect(inferred[0].object.value).toBe("http://example.org/C");
+    });
+
+    it("returnDelta excludes deduped triples from delta.added", async () => {
+      const reasoner = await makeReadyReasoner();
+      const rdfType = namedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#type");
+      const alice = namedNode("http://example.org/alice");
+      const store = new Store();
+      // Source has alice rdf:type A
+      store.addQuad(quad(alice, rdfType, A, defaultGraph()));
+
+      // WASM returns alice rdf:type A (dup) + alice rdf:type B (new)
+      const buf = buildCombinedBuffer([
+        quad(alice, rdfType, A, defaultGraph()),
+        quad(alice, rdfType, B, defaultGraph()),
+      ]);
+      mocks.workerPostMessage.mockImplementation((msg: unknown) => {
+        const req = msg as { id: number; method: string };
+        if (req.method === "loadTripleBuffer") {
+          simulateWorkerMessage({ id: req.id, result: true });
+        } else if (req.method === "realization") {
+          simulateWorkerMessage({ id: req.id, result: true });
+        } else if (req.method === "getInferredTripleBuffer") {
+          simulateWorkerMessage({ id: req.id, result: buf });
+        }
+      });
+
+      const result = await reasoner.materialize(store, { returnDelta: true });
+
+      // delta.added should only contain alice rdf:type B, not the dup
+      expect(result.delta.added).toHaveLength(1);
+      expect(result.delta.added[0].object.value).toBe("http://example.org/B");
+      expect(result.delta.removed).toHaveLength(0);
+
+      // Inferred graph should also only have 1 triple
+      const inferred = store.getQuads(null, null, null, namedNode(INFERRED_GRAPH_IRI));
+      expect(inferred).toHaveLength(1);
+    });
+
+    it("dedup does NOT filter triples only in excluded graphs (inferred/hypothetical)", async () => {
+      const reasoner = await makeReadyReasoner();
+      const store = new Store();
+      store.addQuad(quad(A, subClassOf, B, defaultGraph()));
+      // Pre-existing triple in hypothetical graph should NOT cause dedup
+      store.addQuad(quad(A, subClassOf, C, namedNode(HYPOTHETICAL_IRI)));
+
+      mockWorkerSequence([quad(A, subClassOf, C, defaultGraph())]);
+
+      await reasoner.reason(store);
+
+      const inferred = store.getQuads(null, null, null, namedNode(INFERRED_GRAPH_IRI));
+      expect(inferred).toHaveLength(1);
+      expect(inferred[0].object.value).toBe("http://example.org/C");
+    });
+  });
 });

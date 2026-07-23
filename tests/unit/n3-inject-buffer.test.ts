@@ -7,6 +7,7 @@ import { describe, it, expect } from "vitest";
 import { Store, DataFactory } from "n3";
 import {
   injectExplanationsFromBuffer,
+  injectInferredFromBuffer,
   getOrCreateId,
   injectQuad,
 } from "../../ts/n3Inject.js";
@@ -499,5 +500,86 @@ describe("injectExplanationsFromBuffer", () => {
     const quads = store.getQuads(null, null, null, explGraph);
     expect(quads.some(q => q.subject.value === "ex:old")).toBe(false);
     expect(quads.length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// injectInferredFromBuffer — deduplication
+// ---------------------------------------------------------------------------
+
+describe("injectInferredFromBuffer deduplication", () => {
+  const INFERRED_GRAPH = "urn:konclude:inferred";
+  const subClassOf = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
+
+  function makeSimpleBuffer(triples: [string, string, string][]): ArrayBuffer {
+    const allTerms = new Map<string, number>();
+    for (const [s, p, o] of triples) {
+      for (const t of [s, p, o]) {
+        if (!allTerms.has(t)) allTerms.set(t, allTerms.size);
+      }
+    }
+    const terms: TermEntry[] = [];
+    for (const [raw] of allTerms) terms.push({ raw, type: 0 });
+
+    const tripleIds: [number, number, number][] = triples.map(([s, p, o]) => [
+      makeTermId(allTerms.get(s)!, 0),
+      makeTermId(allTerms.get(p)!, 0),
+      makeTermId(allTerms.get(o)!, 0),
+    ]);
+
+    return buildCombinedBuffer({ terms, triples: tripleIds });
+  }
+
+  it("skips inferred triples already in default graph (deduplicate=true)", () => {
+    const store = new Store();
+    store.addQuad(quad(namedNode("ex:A"), namedNode(subClassOf), namedNode("ex:B")));
+
+    const buf = makeSimpleBuffer([
+      ["ex:A", subClassOf, "ex:B"], // already in store
+      ["ex:A", subClassOf, "ex:C"], // new
+    ]);
+
+    const count = injectInferredFromBuffer(store, buf, INFERRED_GRAPH, true);
+    expect(count).toBe(1);
+
+    const inferred = store.getQuads(null, null, null, namedNode(INFERRED_GRAPH));
+    expect(inferred).toHaveLength(1);
+    expect(inferred[0].object.value).toBe("ex:C");
+  });
+
+  it("keeps all triples when deduplicate=false", () => {
+    const store = new Store();
+    store.addQuad(quad(namedNode("ex:A"), namedNode(subClassOf), namedNode("ex:B")));
+
+    const buf = makeSimpleBuffer([
+      ["ex:A", subClassOf, "ex:B"],
+      ["ex:A", subClassOf, "ex:C"],
+    ]);
+
+    const count = injectInferredFromBuffer(store, buf, INFERRED_GRAPH, false);
+    expect(count).toBe(2);
+
+    const inferred = store.getQuads(null, null, null, namedNode(INFERRED_GRAPH));
+    expect(inferred).toHaveLength(2);
+  });
+
+  it("dedup matches across multiple source graphs", () => {
+    const store = new Store();
+    store.addQuad(quad(namedNode("ex:A"), namedNode(subClassOf), namedNode("ex:B"), namedNode("ex:G1")));
+    store.addQuad(quad(namedNode("ex:B"), namedNode(subClassOf), namedNode("ex:C"), namedNode("ex:G2")));
+
+    const buf = makeSimpleBuffer([
+      ["ex:A", subClassOf, "ex:B"], // in G1
+      ["ex:B", subClassOf, "ex:C"], // in G2
+      ["ex:A", subClassOf, "ex:C"], // new
+    ]);
+
+    const count = injectInferredFromBuffer(store, buf, INFERRED_GRAPH, true);
+    expect(count).toBe(1);
+
+    const inferred = store.getQuads(null, null, null, namedNode(INFERRED_GRAPH));
+    expect(inferred).toHaveLength(1);
+    expect(inferred[0].subject.value).toBe("ex:A");
+    expect(inferred[0].object.value).toBe("ex:C");
   });
 });

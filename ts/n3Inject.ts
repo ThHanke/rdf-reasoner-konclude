@@ -138,6 +138,75 @@ export function clearGraph(store: Store, graphId: string): void {
 const EXCLUDED_GRAPHS = new Set([INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI]);
 
 /**
+ * Build a Set of numeric graph IDs that should be excluded from dedup checks.
+ */
+function getExcludedGraphIds(store: Store): Set<number> {
+  const ei = (store as any)._entityIndex;
+  const ids = new Set<number>();
+  for (const iri of EXCLUDED_GRAPHS) {
+    const id = ei._ids[iri];
+    if (id !== undefined) ids.add(id);
+  }
+  return ids;
+}
+
+/**
+ * Check whether the triple (sId, pId, oId) exists in any graph other than
+ * those in excludeGIds. Operates on N3's three-layer index — zero allocation.
+ */
+export function spoExistsInOtherGraphs(
+  store: Store,
+  sId: number,
+  pId: number,
+  oId: number,
+  excludeGIds: Set<number>,
+): boolean {
+  const graphs = (store as any)._graphs;
+  for (const gIdStr of Object.keys(graphs)) {
+    const gId = Number(gIdStr);
+    if (excludeGIds.has(gId)) continue;
+    const subjects = graphs[gId]?.subjects;
+    if (subjects?.[sId]?.[pId]?.[oId] === null) return true;
+  }
+  return false;
+}
+
+/**
+ * Convert an RDF/JS Term to N3's internal entity key string.
+ */
+export function termToN3Key(term: { termType: string; value: string; language?: string; datatype?: { value: string } }): string {
+  if (term.termType === "BlankNode") return `_:${term.value}`;
+  if (term.termType === "Literal") {
+    if (term.language) return `"${term.value}"@${term.language}`;
+    if (term.datatype && term.datatype.value !== "http://www.w3.org/2001/XMLSchema#string")
+      return `"${term.value}"^^${term.datatype.value}`;
+    return `"${term.value}"`;
+  }
+  return term.value;
+}
+
+/**
+ * Check whether a triple exists in any source (non-excluded) graph.
+ * Accepts RDF/JS-like term objects. Zero allocation. Returns false if
+ * any term is unknown to the store.
+ */
+export function existsInSourceGraphs(
+  store: Store,
+  subject: { termType: string; value: string },
+  predicate: { termType: string; value: string },
+  object: { termType: string; value: string; language?: string; datatype?: { value: string } },
+): boolean {
+  const ei = (store as any)._entityIndex;
+  const sId = ei._ids[termToN3Key(subject)];
+  if (sId === undefined) return false;
+  const pId = ei._ids[termToN3Key(predicate)];
+  if (pId === undefined) return false;
+  const oId = ei._ids[termToN3Key(object)];
+  if (oId === undefined) return false;
+  return spoExistsInOtherGraphs(store, sId, pId, oId, getExcludedGraphIds(store));
+}
+
+/**
  * Convert an N3 internal entity string back to intern.ts format (raw + type tag).
  * Reverse of toN3EntityKey.
  */
@@ -341,6 +410,7 @@ export function injectInferredFromBuffer(
   store: Store,
   combined: ArrayBuffer,
   inferredGraphIri: string,
+  deduplicate = true,
 ): number {
   assertN3Internals(store);
 
@@ -383,12 +453,15 @@ export function injectInferredFromBuffer(
     return n3Id;
   };
 
+  const excludeGIds = deduplicate ? getExcludedGraphIds(store) : null;
+
   const tripDv = new DataView(combined, tripleStart, tripleCount! * 12);
   let injected = 0;
   for (let i = 0; i < tripleCount!; i++) {
     const sId = resolveTermId(tripDv.getUint32(i * 12, true));
     const pId = resolveTermId(tripDv.getUint32(i * 12 + 4, true));
     const oId = resolveTermId(tripDv.getUint32(i * 12 + 8, true));
+    if (excludeGIds && spoExistsInOtherGraphs(store, sId, pId, oId, excludeGIds)) continue;
     if (injectQuad(store, sId, pId, oId, gId)) injected++;
   }
 
