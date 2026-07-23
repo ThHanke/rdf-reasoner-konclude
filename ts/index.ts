@@ -33,7 +33,7 @@ export { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, KJ_NS, KJ_
 export { createInlineWorker } from "./inlineWorker.js";
 import type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions, LaconicPart, LaconicJustification, LaconicExplainOptions } from "./types.js";
 import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, KJ_JUSTIFIES, KJ_AXIOM } from "./types.js";
-import { injectExplanationsFromBuffer, encodeStoreToBuffers, computeStoreFingerprintDirect } from "./n3Inject.js";
+import { injectExplanationsFromBuffer, encodeStoreToBuffers, computeStoreFingerprintDirect, existsInSourceGraphs } from "./n3Inject.js";
 import { buildEntailmentProbe, classifyAxiom, tripleKey as probeTripleKey } from "./entailmentProbe.js";
 import { computeLaconicAsync, groupQuadsIntoAxioms, splitAxiom, axiomKey } from "./laconicJustification.js";
 
@@ -291,6 +291,7 @@ export class RdfReasoner {
       if (wantExplanations) {
         const decoded = decodeBuffers(resultBuf, { withJustifications: true });
         for (const q of decoded.quads) {
+          if (existsInSourceGraphs(store, q.subject, q.predicate, q.object)) continue;
           store.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode));
         }
         injectExplanationsFromBuffer(store, resultBuf, EXPLANATION_GRAPH_IRI);
@@ -298,6 +299,7 @@ export class RdfReasoner {
       } else {
         const inferredQuads = decodeBuffers(resultBuf);
         for (const q of inferredQuads) {
+          if (existsInSourceGraphs(store, q.subject, q.predicate, q.object)) continue;
           store.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode));
         }
         this._lastExplBuffer = null;
@@ -546,6 +548,7 @@ export class RdfReasoner {
           );
 
       for (const q of inferredQuads) {
+        if (existsInSourceGraphs(store, q.subject, q.predicate, q.object)) continue;
         store.addQuad(
           DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode),
         );
@@ -557,13 +560,12 @@ export class RdfReasoner {
       this._lastPropertyExplBuffer = null;
 
       if (returnDelta) {
-        // Build after set from what was just written.
-        // Wrap each quad with inferredGraphNode so delta.added and delta.removed
-        // are both consistently in the inferred named graph.
+        // Build after set from what actually landed in the inferred graph
+        // (post-dedup), not the raw WASM output.
         const afterSet = new Map<string, Quad>();
-        for (const q of inferredQuads) {
+        for (const q of store.getQuads(null, null, null, inferredGraphNode)) {
           const key = `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`;
-          afterSet.set(key, DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode));
+          afterSet.set(key, q);
         }
         const added: Quad[] = [];
         const removed: Quad[] = [];
@@ -673,6 +675,7 @@ export class RdfReasoner {
       if (wantExplanations) {
         const decoded = decodeBuffers(resultBuf, { withJustifications: true });
         for (const q of decoded.quads) {
+          if (existsInSourceGraphs(store, q.subject, q.predicate, q.object)) continue;
           store.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode));
         }
         injectExplanationsFromBuffer(store, resultBuf, EXPLANATION_GRAPH_IRI);
@@ -680,6 +683,7 @@ export class RdfReasoner {
       } else {
         const inferredQuads = decodeBuffers(resultBuf);
         for (const q of inferredQuads) {
+          if (existsInSourceGraphs(store, q.subject, q.predicate, q.object)) continue;
           store.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode));
         }
         this._lastPropertyExplBuffer = null;
@@ -746,8 +750,10 @@ export class RdfReasoner {
     // Capture base quads BEFORE writing inferred quads so the disjointUnionOf scan
     // only sees the original store contents, not the newly added inferred triples.
     const allQuads = store.getQuads(null, null, null, null);
-    for (const q of decodeBuffers(buf))
+    for (const q of decodeBuffers(buf)) {
+      if (existsInSourceGraphs(store, q.subject, q.predicate, q.object)) continue;
       store.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, ig));
+    }
     this._classifyCache = { hash: fingerprint, result: undefined as void };
     this._materializeCache = null;           // cross-invalidate
     this._classifyPropertiesCache = null;    // cross-invalidate
@@ -767,8 +773,10 @@ export class RdfReasoner {
     const buf = (await this._call("getInferredTripleBuffer", [])) as ArrayBuffer;
     const allQuads = decodeBuffers(buf);
     // Write ALL results (including subClassOf) so rdf:type AND subClassOf checks work
-    for (const q of allQuads)
+    for (const q of allQuads) {
+      if (existsInSourceGraphs(store, q.subject, q.predicate, q.object)) continue;
       store.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, ig));
+    }
     this._materializeCache = { hash: fingerprint, result: undefined as void };
     this._classifyCache = null;              // cross-invalidate
     this._classifyPropertiesCache = null;    // cross-invalidate
@@ -784,8 +792,10 @@ export class RdfReasoner {
     await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer, false], [tripleBuffer, strTableBuffer]);
     await this._call("classification", []);
     const buf = (await this._call("getPropertyTripleBuffer", [])) as ArrayBuffer;
-    for (const q of decodeBuffers(buf))
+    for (const q of decodeBuffers(buf)) {
+      if (existsInSourceGraphs(store, q.subject, q.predicate, q.object)) continue;
       store.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, ig));
+    }
     this._classifyPropertiesCache = { hash: fingerprint, result: undefined as void };
     this._classifyCache = null;              // cross-invalidate
     this._materializeCache = null;           // cross-invalidate
