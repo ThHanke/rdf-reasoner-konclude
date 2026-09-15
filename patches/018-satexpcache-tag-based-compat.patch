@@ -1,6 +1,6 @@
 --- a/Source/Reasoner/Kernel/Algorithm/CSatisfiableExpanderCacheHandler.cpp	2026-09-15 15:33:11.444002791 +0200
 +++ b/Source/Reasoner/Kernel/Algorithm/CSatisfiableExpanderCacheHandler.cpp	2026-09-15 15:33:11.444002791 +0200
-@@ -84,15 +84,17 @@
+@@ -84,15 +84,20 @@
  					while (expCacheValueLinker && conNr++ < conSetCount) {
  
  						CCacheValue* cacheValue = expCacheValueLinker->getCacheValue();
