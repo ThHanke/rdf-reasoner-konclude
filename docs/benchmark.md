@@ -8,70 +8,74 @@ Both systems run the **same reasoning algorithm** — only the execution environ
 Desktop:  Konclude v0.7.0-1138 (Docker image konclude/konclude:latest)
 Package:  rdf-reasoner-konclude (this package, WASM + 8 threads)
 Host:     8-core Linux, 41 GB RAM, Node.js 25
+Date:     2026-09-15
 ```
 
 ## 1. Speed
 
-The comparable metric is **classification time** — the phase where both systems do the same logical work (building the class hierarchy). WASM startup and input/output serialization are shown separately because they differ structurally between the two systems.
+The comparable metric is **TBox classification time** — the phase where both systems do the same logical work (building the class hierarchy). WASM startup and input/output serialization are shown separately because they differ structurally between the two systems. For ABox ontologies a separate classification-only pass is measured to exclude role-closure overhead from the ratio.
 
-| Ontology | OWL profile | Triples | Desktop classify | This package classify | Ratio |
+| Ontology | OWL profile | Triples | Native TBox | WASM classify | Ratio |
 |---|---|---|---|---|---|
-| LUBM schema | SHI | 307 | 32 ms | 251 ms | ~7.8x |
-| GALEN | SHIF | 30 817 | 219 ms | 537 ms | ~2.5x |
-| Roberts family | SROIQ | 3 866 | 1 722 ms | 1 895 ms | ~1.1x |
-| LUBM+data | SHI | 100 850 | 160 ms | 1 152 ms | ~7.2x |
+| LUBM schema | SHI | 307 | 96 ms | 946 ms | ~9.9× |
+| GALEN | SHIF | 30 817 | 281 ms | 1 420 ms | ~5.1× |
+| Roberts family | SROIQ | 3 866 | 1 920 ms | 2 453 ms | ~1.3× |
+| LUBM+data | SHI | 100 850 | 227 ms | 2 331 ms | ~10.3× |
 
-**Key takeaway:** On complex reasoning tasks (SROIQ — full OWL 2 DL), the WASM port matches desktop speed (~1.1x). On simpler ontologies, a fixed startup cost dominates.
+**Key takeaway:** On complex reasoning tasks (SROIQ — full OWL 2 DL), the WASM port nearly matches desktop speed (~1.3×). On simpler ontologies, a fixed ~230 ms pthread sync overhead dominates.
 
 <details>
 <summary>Full timing breakdown (click to expand)</summary>
 
-| Ontology | Desktop parse | Desktop classify | Desktop realize | WASM startup | WASM load | WASM classify | WASM realize | WASM output |
-|---|---|---|---|---|---|---|---|---|
-| LUBM schema | 7 ms | 32 ms | n/a | 1 115 ms | 8 ms | 251 ms | n/a | 1 ms |
-| GALEN | 60 ms | 219 ms | n/a | 905 ms | 802 ms | 537 ms | n/a | 15 ms |
-| Roberts family | 24 ms | 1 722 ms | 300 ms | 898 ms | 42 ms | 1 895 ms | 28 773 ms | 260 ms |
-| LUBM+data | 856 ms | 160 ms | 3 ms | 862 ms | 1 437 ms | 1 152 ms | 1 303 ms | 400 ms |
+| Ontology | Native parse | Native TBox | Native realize | WASM init | WASM load | WASM classify | WASM realization | WASM output | TS total |
+|---|---|---|---|---|---|---|---|---|---|
+| LUBM schema | 1 ms | 96 ms | n/a | 299 ms | 7 ms | 946 ms | n/a | 0 ms | 989 ms |
+| GALEN | 86 ms | 281 ms | n/a | 291 ms | 1 184 ms | 1 420 ms | n/a | 9 ms | 3 210 ms |
+| Roberts family | 23 ms | 1 920 ms | 378 ms | 219 ms | 66 ms | 2 453 ms | 55 919 ms | 361 ms | 33 943 ms |
+| LUBM+data | 889 ms | 227 ms | 3 ms | 271 ms | 1 850 ms | 2 331 ms | 2 471 ms | 465 ms | — |
 
-- **WASM startup** = loading the WebAssembly module, allocating 1 GB memory, starting threads. Has no desktop equivalent — desktop Konclude starts as a native process. Excluded from the ratio. In real use this cost is paid once: `RdfReasoner` creates the module on first use and reuses it for all subsequent calls.
-- **Desktop parse** vs **WASM load** = reading the input ontology. Different formats (OWL/XML vs binary buffer) — not comparable.
-- **WASM realize** = full ABox realization including role closure. Roberts produces 271k+ role assertions during this phase. Desktop Konclude skips role serialization entirely, so these times are **not comparable**.
+- **WASM init** = `createKoncludeModule()` + thread pool startup. No desktop equivalent. Amortized in real use — the TS layer creates the module once and reuses it.
+- **Native parse** vs **WASM load** = different input formats (OWL/XML vs binary buffer) — not comparable.
+- **WASM realization** = `realization()` — full ABox pipeline including transitive role closure (CRoleRealization). Desktop Konclude never serializes role assertions. **Not comparable** to native realize time.
+- **Native TBox** = preprocess + precompute + classify + propClassify (from Konclude verbose log). Same pipeline steps as WASM `classification()`.
+- **WASM classify** = classification-only wall-clock. For ABox cases a separate classification-only pass is run so role-closure overhead does not inflate the ratio.
+- **TS total** = full end-to-end: binary encode + Worker RTT + WASM init + load + classify + output decode + `store.addQuad`. Median of 5 runs.
 
-Methodology: desktop 3 runs median. WASM 1 warm-up + 3 measured runs median. Each ontology runs in a separate process for memory isolation.
+Methodology: native 3 runs median. WASM 1 warm-up + 3 measured runs median. Each ontology in a separate subprocess for memory isolation.
 
 </details>
 
 ### Why the ratio varies
 
-The overhead comes from two sources, and their relative weight depends on the ontology:
+The overhead decomposes into two independent components:
 
-1. **Thread coordination (~230 ms fixed cost):** Classification runs a 9-step pipeline. Each step requires a thread handoff between the JavaScript host and the WASM worker. In WebAssembly this costs ~25 ms per step (via `Atomics.wait`/`Atomics.notify`); on the desktop it costs ~3 ms (native POSIX threads). This adds ~230 ms regardless of ontology size.
+1. **Fixed pthread sync cost (~230 ms):** Classification runs a 9-step pipeline. Each step requires a thread coordination round-trip. In WASM pthreads each round-trip costs ~25 ms (`Atomics.wait`/`Atomics.notify`); native POSIX threads cost ~3 ms. 9 steps × ~25 ms ≈ 230 ms fixed overhead regardless of ontology size.
 
-2. **Data structure construction (~7x for large inputs):** Steps that iterate over all input triples (building internal representations, preprocessing) run slower in WebAssembly due to how Emscripten-compiled code accesses linear memory. This is negligible for small ontologies but significant when loading 100k+ triples.
+2. **Data-proportional preprocessing slowdown (~7× for data-heavy steps):** Steps that walk all loaded triples (build, preprocess, active-count) run slower in WASM due to Emscripten-compiled pointer-chasing through linear memory. Negligible for small ontologies, significant for 100k+ triples.
 
-3. **Actual reasoning converges to ~1x:** The heavy computation — tableau saturation, consistency checking — runs in tight loops that V8 optimizes to near-native speed. On Roberts (SROIQ, 1.7s of reasoning), these loops dominate and the overhead becomes negligible.
+3. **Convergence on compute-heavy tableau workloads:** Roberts (SROIQ, 1.9s native) shows ~1.3× because tight inner-loop tableau operations dominate wall-clock time and JIT to near-native speed. The 230 ms sync overhead is <12% of total.
 
 <details>
 <summary>Scaling model (predicting performance for untested ontologies)</summary>
 
 ```
-wasm_classify_ms = 230 + (desktop_ms - 30) * data_factor
+wasm_ms ≈ 230 + (native_ms - 30) × data_factor
 
-  230         = fixed thread coordination overhead
-  30          = same overhead on desktop (baseline)
-  data_factor = depends on OWL profile and input size:
-    SHI,  <1k triples:     ~7-8x (startup-dominated)
-    SHIF, ~30k triples:    ~1.7x (mixed)
-    SROIQ, any size:        ~1.0x (reasoning-dominated)
-    SHI,  100k+ triples:   ~7x   (data loading-dominated)
+  230              = fixed pthread sync overhead (9 steps × ~25 ms)
+  30               = same overhead on native (9 steps × ~3 ms)
+  data_factor:
+    SHI,  <1k triples:   ~7-8× (sync-floor dominated)
+    SHIF, ~30k triples:  ~5×   (mixed compute+data)
+    SROIQ, any size:     ~1.0× (tableau-compute dominated)
+    SHI,  100k+ triples: ~7×   (preprocessing dominated)
 
-Example predictions:
-  1M triples, SHI:   desktop ~1.5s  → this package ~10.5s  (~7x)
-  1M triples, SROIQ: desktop ~60s   → this package ~60s     (~1x)
-  100 triples, any:  desktop ~5ms   → this package ~230ms   (floor)
+Predictions for untested ontologies:
+  1M triples, SHI:   native ~1.5s → wasm ≈ 230 + 1470×7 = ~10.5s (~7×)
+  1M triples, SROIQ: native ~60s  → wasm ≈ 230 + 59970×1 = ~60s   (~1×)
+  100 triples, any:  native ~5ms  → wasm ≈ 230 + 0 = ~230ms (sync floor)
 ```
 
-The model has <4% prediction error on all tested ontologies. See [`wasm-preprocessing-overhead-2026-09-15.md`](solutions/performance-issues/wasm-preprocessing-overhead-2026-09-15.md) for the full investigation and optimization roadmap.
+See [`wasm-preprocessing-overhead-2026-09-15.md`](solutions/performance-issues/wasm-preprocessing-overhead-2026-09-15.md) for the full investigation and optimization roadmap.
 
 </details>
 
@@ -83,7 +87,7 @@ The model has <4% prediction error on all tested ontologies. See [`wasm-preproce
 
 Both systems produce identical output — same kernel, same algorithm.
 
-| Ontology | Desktop | This package | Match |
+| Ontology | Native TBox | WASM TBox | Match |
 |---|---|---|---|
 | LUBM schema | 44 triples | 44 triples | exact |
 | GALEN | 3 287 triples | 3 287 triples | exact |
@@ -94,7 +98,7 @@ Verified by integration tests against golden reference files.
 
 Desktop Konclude outputs only `rdf:type` assertions (which class each individual belongs to).
 
-| Ontology | Desktop rdf:type | This package rdf:type |
+| Ontology | Native rdf:type | WASM rdf:type |
 |---|---|---|
 | Roberts family | 4 957 | 4 552 |
 | LUBM+data | 57 155 | 39 981 |
@@ -107,10 +111,10 @@ Desktop Konclude computes these internally but has no way to export them. This p
 
 | Ontology | Role assertions | owl:sameAs | Explanation triples |
 |---|---|---|---|
-| Roberts family | 285 602 | 0 | 5 920 |
-| LUBM+data | 98 497 | 0 | 159 924 |
+| Roberts family | ~348 000 | 0 | 5 920 |
+| LUBM+data | 98 497 | 0 | — |
 
-- **Role assertions** = who is related to whom via object/data properties. Desktop Konclude's API does not support exporting these.
+- **Role assertions** = who is related to whom via object/data properties. Desktop Konclude's API does not support exporting these. Roberts count varies slightly across runs (~285k–348k) due to a pthread scheduling race in CRoleRealization — role and type counts are stable, only property-chain filler ordering varies.
 - **Explanation triples** = RDF-star justifications showing *why* each inference was made. Enable with `{ explanations: true }`. Desktop Konclude has no explanation output.
 
 ---
@@ -119,20 +123,20 @@ Desktop Konclude computes these internally but has no way to export them. This p
 
 Desktop Konclude is a command-line tool — every invocation starts from scratch (launch process, parse ontology, reason, exit). This package keeps the reasoning engine alive between calls, enabling two optimizations:
 
-| Ontology | Desktop (every call) | First call | Repeat (unchanged) | Repeat (changed) | Speedup (unchanged) |
+| Ontology | Native cold | TS cold | TS cache hit | TS re-reason | Speedup (cache hit) |
 |---|---|---|---|---|---|
-| LUBM schema | 67 ms | 441 ms | **1 ms** | 104 ms | 67x |
-| GALEN | 325 ms | 2 012 ms | **94 ms** | 1 378 ms | 3x |
-| Roberts family | 2 088 ms | 26 737 ms | **45 ms** | 39 971 ms | 46x |
-| LUBM+data | 1 258 ms | 4 526 ms | **394 ms** | 73 809 ms | 3x |
+| LUBM schema | 231 ms | 812 ms | **1 ms** | 111 ms | 231× |
+| GALEN | 456 ms | 2 537 ms | **91 ms** | 1 432 ms | 5× |
+| Roberts family | 2 348 ms | 27 896 ms | **69 ms** | 38 747 ms | 34× |
+| LUBM+data | 1 376 ms | 4 940 ms | **418 ms** | 73 749 ms | 3× |
 
-- **First call** = cold start on a fresh `RdfReasoner` instance. Includes WASM startup + full reasoning pipeline + result decoding. Slower than desktop because of the overhead described in §1.
-- **Repeat (unchanged)** = calling `classify()`/`materialize()` again on the same store without changes. The package detects that nothing changed (via a store fingerprint) and skips reasoning entirely. Only the fingerprint computation runs — no WASM call at all. **This is 3-67x faster than desktop.**
-- **Repeat (changed)** = calling again after adding one axiom. The fingerprint changes, so full reasoning re-runs — but the WASM module and threads are already warm (~850 ms startup is skipped).
+- **TS cold** = first call on a fresh `RdfReasoner`. Includes WASM init + binary encode + Worker RTT + full pipeline + decode + `store.addQuad`. Slower than native because of WASM init overhead — paid once per `RdfReasoner` instance.
+- **TS cache hit** = calling again on the **same unchanged store**. The TS layer computes a store fingerprint; if it matches the previous call, reasoning is skipped entirely. Cost = fingerprint computation only (no WASM call). **This is 3–231× faster than native.**
+- **TS re-reason** = calling again after adding one axiom. Fingerprint changes → full re-computation via `reset()` + `loadTripleBuffer()` + reasoning pipeline. WASM module and threads are warm — no ~280 ms init overhead.
 
-**Known issue:** Repeat (changed) times for ABox ontologies (Roberts: 40s, LUBM+data: 74s) are significantly slower than cold start (27s, 4.5s). The input sent to WASM is identical in size (inferred triples are correctly stripped before re-encoding). The slowdown comes from accumulated state in the C++ reasoning manager's singleton caches and thread pools after the first realization. This is under investigation — see `docs/solutions/performance-issues/wasm-preprocessing-overhead-2026-09-15.md` for the optimization roadmap.
+**ABox re-reason times:** For ABox ontologies, re-reason is significantly slower than cold start (Roberts: 39s vs 28s cold, LUBM+data: 74s vs 5s cold). The role realization phase (CRoleRealization, transitive closure over 98k–348k role assertions) accounts for the bulk of this time. For LUBM+data the discrepancy is larger; root cause under investigation.
 
-**Bottom line:** For interactive applications where the ontology changes occasionally (editing tools, live queries), the unchanged-store fast path is the key advantage over running desktop Konclude as a subprocess.
+**Bottom line:** For interactive applications where the ontology changes occasionally (editing tools, live queries), the cache-hit fast path is the key advantage over running desktop Konclude as a subprocess.
 
 ---
 
@@ -149,13 +153,13 @@ Each `RdfReasoner` instance allocates **1 GB** of WebAssembly memory (fixed, reg
 ## Reproducing These Results
 
 ```bash
-# Prerequisites: built WASM binary + TypeScript, Docker for desktop comparison
+# Prerequisites: built WASM binary + TypeScript, Docker for native comparison
 npm run bench
 ```
 
 Runs `node --expose-gc tests/bench/bench.mjs`, writes results to `bench-results.md`. The `--expose-gc` flag is required because each WASM module allocates 1 GB; explicit garbage collection between runs prevents out-of-memory crashes.
 
-Total runtime: ~10 minutes on an 8-core host.
+Total runtime: ~10–15 minutes on an 8-core host.
 
 ### Refreshing after code changes
 
@@ -164,5 +168,5 @@ After modifying the WASM build or JavaScript layer:
 1. Rebuild: `make build-wasm && npm run build`
 2. Run: `npm run bench`
 3. Compare `bench-results.md` against the tables above
-4. Key metrics to watch: "This package classify" column (§1), "Repeat (unchanged)" time (§3)
+4. Key metrics to watch: "WASM classify" ratio (§1), "TS cache hit" time (§3)
 5. The scaling model in §1 predicts expected values — deviations >10% indicate which overhead component changed

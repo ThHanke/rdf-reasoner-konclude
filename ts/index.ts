@@ -1238,6 +1238,31 @@ export class RdfReasoner {
   // ── TS synthesis helpers ──────────────────────────────────────────
   // For workaround-computed types: justification = relevant input axioms.
 
+  private _synthesizeDomainRangeJustification(
+    allBase: Quad[], subjectIri: string, classIri: string,
+  ): Quad[] | null {
+    const RDFS_DOMAIN = "http://www.w3.org/2000/01/rdf-schema#domain";
+    const RDFS_RANGE = "http://www.w3.org/2000/01/rdf-schema#range";
+
+    for (const q of allBase) {
+      if (q.predicate.value === RDFS_DOMAIN && q.object.value === classIri) {
+        const propIri = q.subject.value;
+        const usage = allBase.find(
+          u => u.predicate.value === propIri && u.subject.value === subjectIri,
+        );
+        if (usage) return [usage, q];
+      }
+      if (q.predicate.value === RDFS_RANGE && q.object.value === classIri) {
+        const propIri = q.subject.value;
+        const usage = allBase.find(
+          u => u.predicate.value === propIri && u.object.value === subjectIri,
+        );
+        if (usage) return [usage, q];
+      }
+    }
+    return null;
+  }
+
   private _synthesizeDisjointWithJustification(
     allBase: Quad[], subjectIri: string, objectIri: string,
   ): Quad[] | null {
@@ -1255,6 +1280,114 @@ export class RdfReasoner {
            q.object.value === subjectIri,
     );
     if (reverse) return [reverse];
+
+    return null;
+  }
+
+  private _synthesizeRestrictionJustification(
+    allBase: Quad[], store: Store, subjectIri: string, classIri: string,
+  ): Quad[] | null {
+    const OWL_EQUIV = "http://www.w3.org/2002/07/owl#equivalentClass";
+    const OWL_ON_PROP = "http://www.w3.org/2002/07/owl#onProperty";
+    const OWL_SOME = "http://www.w3.org/2002/07/owl#someValuesFrom";
+    const OWL_ALL = "http://www.w3.org/2002/07/owl#allValuesFrom";
+    const OWL_HAS_VALUE = "http://www.w3.org/2002/07/owl#hasValue";
+    const OWL_COMPLEMENT = "http://www.w3.org/2002/07/owl#complementOf";
+    const RDFS_SUBCLASS = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
+    const ig = INFERRED_GRAPH_IRI;
+
+    const restrictionNodes = allBase
+      .filter(q =>
+        (q.predicate.value === OWL_EQUIV || q.predicate.value === RDFS_SUBCLASS) &&
+        q.subject.value === classIri)
+      .map(q => ({ link: q, bnode: q.object.value }));
+
+    for (const { link, bnode } of restrictionNodes) {
+      const propQuad = allBase.find(q => q.subject.value === bnode && q.predicate.value === OWL_ON_PROP);
+      if (!propQuad) {
+        const complementQuad = allBase.find(q => q.subject.value === bnode && q.predicate.value === OWL_COMPLEMENT);
+        if (complementQuad) {
+          const complementClass = complementQuad.object.value;
+          const notMember = !allBase.some(
+            q => q.subject.value === subjectIri && q.predicate.value === RDF_TYPE && q.object.value === complementClass,
+          ) && !store.getQuads(
+            DataFactory.namedNode(subjectIri), DataFactory.namedNode(RDF_TYPE),
+            DataFactory.namedNode(complementClass), DataFactory.namedNode(ig),
+          ).length;
+          if (notMember) {
+            const memberType = allBase.find(
+              q => q.subject.value === subjectIri && q.predicate.value === RDF_TYPE &&
+                   q.object.value !== OWL_THING && q.object.value !== classIri,
+            );
+            if (memberType) return [memberType, link, complementQuad];
+            return [link, complementQuad];
+          }
+        }
+        continue;
+      }
+
+      const propIri = propQuad.object.value;
+
+      const someQuad = allBase.find(q => q.subject.value === bnode && q.predicate.value === OWL_SOME);
+      if (someQuad) {
+        const usage = allBase.find(
+          q => q.subject.value === subjectIri && q.predicate.value === propIri,
+        );
+        if (usage) return [usage, link, propQuad, someQuad];
+        const usageInferred = store.getQuads(
+          DataFactory.namedNode(subjectIri), DataFactory.namedNode(propIri), null, DataFactory.namedNode(ig),
+        );
+        if (usageInferred.length > 0) return [usageInferred[0], link, propQuad, someQuad];
+        const inverseUsage = allBase.find(
+          q => q.object.value === subjectIri && q.predicate.value === propIri,
+        );
+        if (inverseUsage) return [inverseUsage, link, propQuad, someQuad];
+        continue;
+      }
+
+      const allQuad = allBase.find(q => q.subject.value === bnode && q.predicate.value === OWL_ALL);
+      if (allQuad) {
+        const usage = allBase.find(
+          q => q.subject.value === subjectIri && q.predicate.value === propIri,
+        );
+        if (usage) return [usage, link, propQuad, allQuad];
+        return [link, propQuad, allQuad];
+      }
+
+      const hasValQuad = allBase.find(q => q.subject.value === bnode && q.predicate.value === OWL_HAS_VALUE);
+      if (hasValQuad) {
+        const usage = allBase.find(
+          q => q.subject.value === subjectIri && q.predicate.value === propIri &&
+               q.object.value === hasValQuad.object.value,
+        );
+        if (usage) return [usage, link, propQuad, hasValQuad];
+        continue;
+      }
+    }
+
+    // Reverse someValuesFrom: subject is the FILLER, not the restriction owner.
+    const propUsages = allBase.filter(q => q.object.value === subjectIri && q.predicate.value !== RDF_TYPE);
+    for (const usage of propUsages) {
+      const ownerIri = usage.subject.value;
+      const propIri = usage.predicate.value;
+      const ownerTypes = [
+        ...allBase.filter(q => q.subject.value === ownerIri && q.predicate.value === RDF_TYPE).map(q => q.object.value),
+        ...store.getQuads(DataFactory.namedNode(ownerIri), DataFactory.namedNode(RDF_TYPE), null, DataFactory.namedNode(ig)).map(q => q.object.value),
+      ];
+      for (const ownerType of ownerTypes) {
+        const links = allBase.filter(q =>
+          q.subject.value === ownerType &&
+          (q.predicate.value === OWL_EQUIV || q.predicate.value === RDFS_SUBCLASS));
+        for (const link of links) {
+          const bn = link.object.value;
+          const onProp = allBase.find(q => q.subject.value === bn && q.predicate.value === OWL_ON_PROP && q.object.value === propIri);
+          if (!onProp) continue;
+          const some = allBase.find(q => q.subject.value === bn && q.predicate.value === OWL_SOME && q.object.value === classIri);
+          if (!some) continue;
+          return [usage, link, onProp, some];
+        }
+      }
+    }
 
     return null;
   }
@@ -1802,19 +1935,6 @@ export class RdfReasoner {
         return { isEntailed: false, justifications: [] as Quad[][] };
       }
 
-      // ── Store-based justification lookup (universal fast path) ──────
-      // Explanation graph contains kj:justifies quads linking justification
-      // nodes to inferred quoted triples. One Store query, no WASM round-trip.
-      if (mode === "causal") {
-        const justQuads = this._lookupJustificationFromStore(store, subjectIri, predicateIri, objectIri);
-        if (justQuads !== null) {
-          if (justQuads.length > 0) {
-            return { isEntailed: true, justifications: [justQuads] };
-          }
-          return { isEntailed: true, justifications: [] as Quad[][] };
-        }
-      }
-
       // ── Dep-chain fallback (when no Store justification found) ──
       // Uses the dep-chain cache from a prior classify()/reason() call.
       // Zero WASM reloads — just O(1) lookups on the existing state.
@@ -1831,6 +1951,14 @@ export class RdfReasoner {
       }
 
       if (probeKind === "type") {
+        if (mode === "causal") {
+          await this._ensureExplanationGraphFromBuffer(store, "getInferredTripleBuffer");
+          const justQuads = this._lookupJustificationFromStore(store, subjectIri, predicateIri, objectIri);
+          if (justQuads !== null && justQuads.length > 0) {
+            return { isEntailed: true, justifications: [justQuads] };
+          }
+        }
+
         const assertedTypes = allBase
           .filter(q => q.subject.value === subjectIri && q.predicate.value === RDF_TYPE)
           .map(q => q.object.value);
@@ -1866,7 +1994,13 @@ export class RdfReasoner {
         for (const inferredType of inferredTypes) {
           const scNtriples = await this._getSubClassJustificationDirect(inferredType, objectIri);
           if (scNtriples.length === 0) continue;
-          const tjQuads = this._lookupJustificationFromStore(store, subjectIri, RDF_TYPE, inferredType);
+          let tjQuads = this._lookupJustificationFromStore(store, subjectIri, RDF_TYPE, inferredType);
+          if (!tjQuads || tjQuads.length === 0) {
+            tjQuads = this._synthesizeDomainRangeJustification(allBase, subjectIri, inferredType);
+          }
+          if (!tjQuads || tjQuads.length === 0) {
+            tjQuads = this._synthesizeRestrictionJustification(allBase, store, subjectIri, inferredType);
+          }
           if (!tjQuads || tjQuads.length === 0) continue;
           const scQuads = this._parseNTriplesJustification(scNtriples);
           if (scQuads.length === 0) continue;
@@ -1883,6 +2017,18 @@ export class RdfReasoner {
           if (justQuads.length > 0) {
             return { isEntailed: true, justifications: [justQuads] };
           }
+        }
+
+        // Domain/range synthesis: subject uses property P, P has domain/range C
+        const domainSynthesis = this._synthesizeDomainRangeJustification(allBase, subjectIri, objectIri);
+        if (domainSynthesis && domainSynthesis.length > 0) {
+          return { isEntailed: true, justifications: [domainSynthesis] };
+        }
+
+        // OWL restriction synthesis: equivalentClass/subClassOf restriction patterns
+        const restrictionSynthesis = this._synthesizeRestrictionJustification(allBase, store, subjectIri, objectIri);
+        if (restrictionSynthesis && restrictionSynthesis.length > 0) {
+          return { isEntailed: true, justifications: [restrictionSynthesis] };
         }
 
         // sameAs type propagation: subject sameAs partner, partner rdf:type object
