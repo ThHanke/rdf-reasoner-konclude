@@ -542,6 +542,8 @@ Violation detection verified against native Konclude v0.7.0 ground truth:
 | 12  | `owl:NegativeObjectPropertyAssertion` contradiction       | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
 | 13  | `DataAllValuesFrom xsd:minInclusive` (consistent case)    | consistent ✓       | consistent ✓   | **PARITY**                         |
 | 14  | `DataAllValuesFrom xsd:minInclusive` (inconsistent case)  | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
+| 15  | `owl:hasSelf` restriction violated by ABox individual     | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
+| 16  | `owl:allValuesFrom` restriction + filler type clash       | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
 
 **PARITY (WASM surpasses native v0.7.0)** means native Konclude v0.7.0 has a kernel bug for this
 construct; this package fixes it via patches 011–012 (role axiom correctness, NPA builder fix).
@@ -576,6 +578,13 @@ Input ABox axioms accepted:
 - `rdf:type` assertions
 - Object property assertions (`owl:ObjectProperty`)
 - `owl:differentFrom` / `owl:AllDifferent`
+
+Restriction constructs verified working over ABox individuals:
+
+- `owl:hasValue` — role filler assertions inferred from value restrictions
+- `owl:someValuesFrom` — existential restriction propagation
+- `owl:allValuesFrom` — universal restriction checked at consistency / realization
+- `owl:hasSelf` — reflexive self-role assertions inferred for typed individuals
 
 ### Known output gaps
 
