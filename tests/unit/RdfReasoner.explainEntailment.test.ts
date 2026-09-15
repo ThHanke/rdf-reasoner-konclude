@@ -909,6 +909,8 @@ describe("RdfReasoner — explainEntailment", () => {
           id: req.id,
           result: `<http://example.org/Student> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <${Person.value}> .\n`,
         });
+      } else if (req.method === "getSubClassJustification") {
+        simulateWorkerMessage({ id: req.id, result: "" });
       } else if (req.method === "hasTripleJustification") {
         simulateWorkerMessage({ id: req.id, result: false });
       }
