@@ -17,22 +17,22 @@ The comparable metric is **TBox classification time** — the phase where both s
 
 | Ontology | OWL profile | Triples | Native TBox | WASM classify | Ratio |
 |---|---|---|---|---|---|
-| LUBM schema | SHI | 307 | 96 ms | 946 ms | ~9.9× |
-| GALEN | SHIF | 30 817 | 281 ms | 1 420 ms | ~5.1× |
-| Roberts family | SROIQ | 3 866 | 1 920 ms | 2 453 ms | ~1.3× |
-| LUBM+data | SHI | 100 850 | 227 ms | 2 331 ms | ~10.3× |
+| LUBM schema | SHI | 307 | 96 ms | 233 ms | ~2.4× |
+| GALEN | SHIF | 30 817 | 281 ms | 568 ms | ~2.0× |
+| Roberts family | SROIQ | 3 866 | 1 920 ms | 1 872 ms | ~1.0× |
+| LUBM+data | SHI | 100 850 | 227 ms | 1 191 ms | ~5.2× |
 
-**Key takeaway:** On complex reasoning tasks (SROIQ — full OWL 2 DL), the WASM port nearly matches desktop speed (~1.3×). On simpler ontologies, a fixed ~230 ms pthread sync overhead dominates.
+**Key takeaway:** On complex reasoning tasks (SROIQ — full OWL 2 DL), the WASM port matches desktop speed (~1.0×). On simpler ontologies, a fixed ~230 ms pthread sync overhead dominates.
 
 <details>
 <summary>Full timing breakdown (click to expand)</summary>
 
 | Ontology | Native parse | Native TBox | Native realize | WASM init | WASM load | WASM classify | WASM realization | WASM output | TS total |
 |---|---|---|---|---|---|---|---|---|---|
-| LUBM schema | 1 ms | 96 ms | n/a | 299 ms | 7 ms | 946 ms | n/a | 0 ms | 989 ms |
-| GALEN | 86 ms | 281 ms | n/a | 291 ms | 1 184 ms | 1 420 ms | n/a | 9 ms | 3 210 ms |
-| Roberts family | 23 ms | 1 920 ms | 378 ms | 219 ms | 66 ms | 2 453 ms | 55 919 ms | 361 ms | 33 943 ms |
-| LUBM+data | 889 ms | 227 ms | 3 ms | 271 ms | 1 850 ms | 2 331 ms | 2 471 ms | 465 ms | — |
+| LUBM schema | 1 ms | 96 ms | n/a | 966 ms | 7 ms | 233 ms | n/a | 0 ms | — |
+| GALEN | 86 ms | 281 ms | n/a | 872 ms | 1 184 ms | 568 ms | n/a | 9 ms | — |
+| Roberts family | 23 ms | 1 920 ms | 378 ms | 874 ms | 66 ms | 1 872 ms | 28 912 ms | 361 ms | — |
+| LUBM+data | 889 ms | 227 ms | 3 ms | 891 ms | 1 850 ms | 1 191 ms | 1 361 ms | 465 ms | — |
 
 - **WASM init** = `createKoncludeModule()` + thread pool startup. No desktop equivalent. Amortized in real use — the TS layer creates the module once and reuses it.
 - **Native parse** vs **WASM load** = different input formats (OWL/XML vs binary buffer) — not comparable.

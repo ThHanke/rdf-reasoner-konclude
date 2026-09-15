@@ -639,12 +639,12 @@ Compared against desktop Konclude v0.7.0 — same reasoning algorithm, different
 
 | Ontology | OWL profile | Triples | Desktop TBox | This package | Ratio |
 |---|---|---|---|---|---|
-| LUBM schema | SHI | 307 | 96 ms | 946 ms | ~9.9× |
-| GALEN | SHIF | 30 817 | 281 ms | 1 420 ms | ~5.1× |
-| Roberts family | SROIQ | 3 866 | 1 920 ms | 2 453 ms | ~1.3× |
-| LUBM+data | SHI | 100 850 | 227 ms | 2 331 ms | ~10.3× |
+| LUBM schema | SHI | 307 | 96 ms | 233 ms | ~2.4× |
+| GALEN | SHIF | 30 817 | 281 ms | 568 ms | ~2.0× |
+| Roberts family | SROIQ | 3 866 | 1 920 ms | 1 872 ms | ~1.0× |
+| LUBM+data | SHI | 100 850 | 227 ms | 1 191 ms | ~5.2× |
 
-On complex reasoning tasks (full OWL 2 DL), the WASM port nearly matches desktop speed (~1.3×). On simpler ontologies, a fixed ~230 ms pthread sync cost dominates. For repeat calls on an unchanged ontology, this package is **3-231× faster** than desktop Konclude — a store fingerprint detects nothing changed and skips reasoning entirely.
+On complex reasoning tasks (full OWL 2 DL), the WASM port matches desktop speed (~1.0×). On simpler ontologies, a fixed ~230 ms pthread sync cost dominates. For repeat calls on an unchanged ontology, this package is **3-231× faster** than desktop Konclude — a store fingerprint detects nothing changed and skips reasoning entirely.
 
 Full results with overhead analysis, output comparison, incremental reasoning benchmarks, and memory analysis: [`docs/benchmark.md`](docs/benchmark.md).
 
