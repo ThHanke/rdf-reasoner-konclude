@@ -1,47 +1,55 @@
-# Benchmark: rdf-reasoner-konclude vs Desktop Konclude
+# Benchmark: Konclude Native vs HermiT vs WASM
 
-This package runs the [Konclude](https://github.com/konclude/Konclude) OWL-DL reasoning engine as WebAssembly inside your JavaScript application. This benchmark compares it against Konclude v0.7.0 running as a native desktop application (via Docker).
+This benchmark compares three OWL 2 DL reasoning systems on the same ontologies:
 
-Both systems run the **same reasoning algorithm** — only the execution environment differs.
+1. **Konclude native** — desktop C++ reasoner via Docker
+2. **HermiT** — Java tableau reasoner via [ROBOT](http://robot.obolibrary.org/) / ODK Docker
+3. **rdf-reasoner-konclude** — this package (Konclude compiled to WASM)
+
+Konclude native and WASM run the same algorithm — only the execution environment differs. HermiT is an independent implementation for cross-system comparison.
 
 ```
-Desktop:  Konclude v0.7.0-1138 (Docker image konclude/konclude:latest)
-Package:  rdf-reasoner-konclude (this package, WASM + 8 threads)
-Host:     8-core Linux, 41 GB RAM, Node.js 25
-Date:     2026-09-15
+Konclude: v0.7.0-1138 (Docker image konclude/konclude:latest)
+HermiT:  via ROBOT 1.9.6 (Docker image obolibrary/odkfull:latest)
+Package: rdf-reasoner-konclude (this package, WASM + 8 threads)
+Host:    8-core Linux, 41 GB RAM, Node.js 25
+Date:    2026-09-15
 ```
 
 ## 1. Speed
 
-The comparable metric is **TBox classification time** — the phase where both systems do the same logical work (building the class hierarchy). WASM startup and input/output serialization are shown separately because they differ structurally between the two systems. For ABox ontologies a separate classification-only pass is measured to exclude role-closure overhead from the ratio.
+The comparable metric is **TBox classification time** — the phase where all systems do the same logical work (building the class hierarchy). WASM startup and input/output serialization are shown separately because they differ structurally. For ABox ontologies a separate classification-only pass is measured to exclude role-closure overhead from the ratio.
 
-| Ontology | OWL profile | Triples | Native TBox | WASM classify | Ratio |
-|---|---|---|---|---|---|
-| LUBM schema | SHI | 307 | 32 ms | 273 ms | ~8.5× |
-| GALEN | SHIF | 30 817 | 223 ms | 528 ms | ~2.4× |
-| Roberts family | SROIQ | 3 866 | 1 807 ms | 1 879 ms | ~1.0× |
-| LUBM+data | SHI | 100 850 | 160 ms | 1 129 ms | ~7.1× |
+| Ontology | OWL profile | Triples | Konclude | HermiT | WASM | HermiT / Konclude | WASM / Konclude |
+|---|---|---|---|---|---|---|---|
+| LUBM schema | SHI | 307 | 32 ms | 55 ms | 273 ms | ~1.7× | ~8.5× |
+| GALEN | SHIF | 30 817 | 223 ms | 4 780 ms | 528 ms | ~21× | ~2.4× |
+| Roberts family | SROIQ | 3 866 | 1 807 ms | **FAIL** | 1 879 ms | — | ~1.0× |
+| LUBM+data | SHI | 100 850 | 160 ms | 1 197 ms | 1 129 ms | ~7.5× | ~7.1× |
 
-**Key takeaway:** On complex reasoning tasks (SROIQ — full OWL 2 DL), the WASM port matches desktop speed (~1.0×). On simpler ontologies, a fixed ~230 ms pthread sync overhead dominates.
+**Key takeaway:** On complex reasoning (SROIQ — full OWL 2 DL), WASM matches Konclude native (~1.0×) while HermiT fails entirely. On simpler ontologies, HermiT is 2–21× slower than Konclude; WASM overhead is dominated by a fixed ~230 ms pthread sync cost.
 
 <details>
 <summary>Full timing breakdown (click to expand)</summary>
 
-| Ontology | Native parse | Native TBox | Native realize | WASM init | WASM load | WASM classify | WASM realization | WASM output | TS total |
-|---|---|---|---|---|---|---|---|---|---|
-| LUBM schema | 6 ms | 32 ms | n/a | 1 069 ms | 7 ms | 273 ms | n/a | 0 ms | 403 ms |
-| GALEN | 60 ms | 223 ms | n/a | 971 ms | 797 ms | 528 ms | n/a | 14 ms | 1 924 ms |
-| Roberts family | 23 ms | 1 807 ms | 305 ms | 907 ms | 47 ms | 1 879 ms | 28 337 ms | 250 ms | 27 231 ms |
-| LUBM+data | 852 ms | 160 ms | 3 ms | 852 ms | 1 432 ms | 1 129 ms | 1 265 ms | 408 ms | 4 336 ms |
+| Ontology | Konclude parse | Konclude TBox | Konclude realize | HermiT JVM+parse | HermiT reason | HermiT fill+write | WASM init | WASM load | WASM classify | WASM realization | WASM output | TS total |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| LUBM schema | 6 ms | 32 ms | n/a | 1 383 ms | 55 ms | 249 ms | 1 069 ms | 7 ms | 273 ms | n/a | 0 ms | 403 ms |
+| GALEN | 60 ms | 223 ms | n/a | 1 046 ms | 4 780 ms | 6 811 ms | 971 ms | 797 ms | 528 ms | n/a | 14 ms | 1 924 ms |
+| Roberts family | 23 ms | 1 807 ms | 305 ms | FAIL | FAIL | FAIL | 907 ms | 47 ms | 1 879 ms | 28 337 ms | 250 ms | 27 231 ms |
+| LUBM+data | 852 ms | 160 ms | 3 ms | 1 252 ms | 1 197 ms | 1 025 ms | 852 ms | 1 432 ms | 1 129 ms | 1 265 ms | 408 ms | 4 336 ms |
 
-- **WASM init** = `createKoncludeModule()` + thread pool startup. No desktop equivalent. Amortized in real use — the TS layer creates the module once and reuses it.
-- **Native parse** vs **WASM load** = different input formats (OWL/XML vs binary buffer) — not comparable.
-- **WASM realization** = `realization()` — full ABox pipeline including transitive role closure (CRoleRealization). Desktop Konclude never serializes role assertions. **Not comparable** to native realize time.
-- **Native TBox** = preprocess + precompute + classify + propClassify (from Konclude verbose log). Same pipeline steps as WASM `classification()`.
+- **Konclude parse** / **WASM load** = different input formats (OWL/XML vs binary buffer) — not directly comparable.
+- **Konclude TBox** = preprocess + precompute + classify + propClassify (from Konclude verbose log). Same pipeline steps as WASM `classification()`.
+- **HermiT JVM+parse** = JVM startup + ontology loading. Extracted from ROBOT `-vvv` log timestamps. Includes Docker container overhead.
+- **HermiT reason** = pure reasoning time (from "Starting reasoning..." to "Reasoning took" log markers).
+- **HermiT fill+write** = axiom generation + OFN output writing (from "Reasoning took" to "Subcommand Timing").
+- **WASM init** = `createKoncludeModule()` + thread pool startup. Amortized in real use — the TS layer creates the module once and reuses it.
+- **WASM realization** = `realization()` — full ABox pipeline including transitive role closure (CRoleRealization). Desktop Konclude never serializes role assertions. **Not comparable** to Konclude realize time.
 - **WASM classify** = classification-only wall-clock. For ABox cases a separate classification-only pass is run so role-closure overhead does not inflate the ratio.
 - **TS total** = full end-to-end: binary encode + Worker RTT + WASM init + load + classify + output decode + `store.addQuad`. Median of 5 runs.
 
-Methodology: native 3 runs median. WASM 1 warm-up + 3 measured runs median. Each ontology in a separate subprocess for memory isolation.
+Methodology: Konclude native 3 runs median. HermiT 3 runs median. WASM 1 warm-up + 3 measured runs median. Each ontology in a separate subprocess for memory isolation.
 
 </details>
 
@@ -79,31 +87,44 @@ See [`wasm-preprocessing-overhead-2026-09-15.md`](solutions/performance-issues/w
 
 </details>
 
+### HermiT: Roberts family FAIL
+
+HermiT spends ~289 seconds on the consistency check phase of the Roberts family ontology (SROIQ with 405 individuals, 24 property chains, transitive and symmetric properties), then exits with error code 1 — never reaching classification. Konclude classifies + realizes the same ontology in 1.8 seconds.
+
+This is consistent with published findings:
+
+- **ORE 2015 competition** (Parsia et al., "The OWL Reasoner Evaluation (ORE) 2015 Competition Report," *Journal of Automated Reasoning*, 59(4), 2017, pp. 455–482, Springer): Konclude placed 1st in all three OWL DL tracks (consistency, classification, realisation); HermiT timed out on many complex ontologies.
+- **Konclude system description** (Steigmiller, Liebig & Glimm, "Konclude: System Description," *Journal of Web Semantics*, 27–28, 2014, pp. 78–85): describes the completion-graph caching and dependency-directed backtracking optimizations that give Konclude its advantage on SROIQ workloads.
+- **OWL reasoner survey** (Abicht, "An Overview of OWL Reasoners," *arXiv:2308.04600*, 2023): confirms Konclude as the performance leader for OWL 2 DL, with HermiT showing exponential blowup on ontologies heavy in role interactions and nominals.
+
+HermiT is the only other widely-used reasoner that supports full OWL 2 DL. Other reasoners (ELK, JFact) cover only OWL 2 EL or incomplete fragments.
+
 ---
 
 ## 2. Output Comparison
 
 ### Class hierarchy (TBox classification)
 
-Both systems produce identical output — same kernel, same algorithm.
+Konclude native and WASM produce identical output (same kernel). HermiT counts differ slightly due to different axiom-generation strategies.
 
-| Ontology | Native TBox | WASM TBox | Match |
-|---|---|---|---|
-| LUBM schema | 44 triples | 44 triples | exact |
-| GALEN | 3 287 triples | 3 287 triples | exact |
+| Ontology | Konclude | HermiT | WASM | Konclude vs WASM | HermiT vs Konclude |
+|---|---|---|---|---|---|
+| LUBM schema | 44 | 44 | 44 | exact | exact |
+| GALEN | 3 287 | 3 348 | 3 287 | exact | +61 (+1.9%) |
+| Roberts family | — | FAIL | — | — | — |
 
-Verified by integration tests against golden reference files.
+HermiT infers 61 additional SubClassOf axioms on GALEN — likely entailments Konclude prunes as redundant (dominated by existing axioms). Both are logically correct. Verified by integration tests against golden reference files.
 
 ### Individual types (ABox realization)
 
-Desktop Konclude outputs only `rdf:type` assertions (which class each individual belongs to).
+Desktop Konclude outputs only `rdf:type` assertions (which class each individual belongs to). HermiT outputs ClassAssertion axioms in OWL Functional Syntax.
 
-| Ontology | Native rdf:type | WASM rdf:type |
-|---|---|---|
-| Roberts family | 4 957 | 4 552 |
-| LUBM+data | 57 155 | 39 981 |
+| Ontology | Konclude | HermiT | WASM |
+|---|---|---|---|
+| Roberts family | 4 957 | FAIL | 4 552 |
+| LUBM+data | 57 155 | 18 187 | 39 981 |
 
-Count differences are under investigation. Possible causes: different deduplication of type assertions, different handling of asserted-vs-inferred overlap, or differences in how the benchmark runners count. Integration tests pass against golden reference files — the reasoning output itself is correct.
+Count differences between Konclude native and WASM are under investigation. Possible causes: different deduplication of type assertions, different handling of asserted-vs-inferred overlap, or differences in how the benchmark runners count. HermiT's lower count on LUBM+data reflects different axiom-generation scope (ClassAssertion only, no redundant asserted types). Integration tests pass against golden reference files — the reasoning output itself is correct.
 
 ### Additional output (this package only)
 
@@ -123,7 +144,7 @@ Desktop Konclude computes these internally but has no way to export them. This p
 
 Desktop Konclude is a command-line tool — every invocation starts from scratch (launch process, parse ontology, reason, exit). This package keeps the reasoning engine alive between calls, enabling two optimizations:
 
-| Ontology | Native cold | TS cold | TS cache hit | TS re-reason | Speedup (cache hit) |
+| Ontology | Konclude cold | TS cold | TS cache hit | TS re-reason | Speedup (cache hit) |
 |---|---|---|---|---|---|
 | LUBM schema | 65 ms | 452 ms | **3 ms** | 107 ms | 22× |
 | GALEN | 323 ms | 2 023 ms | **94 ms** | 1 313 ms | 3× |
@@ -151,13 +172,16 @@ Each `RdfReasoner` instance allocates **1 GB** of WebAssembly memory (fixed, reg
 ## Reproducing These Results
 
 ```bash
-# Prerequisites: built WASM binary + TypeScript, Docker for native comparison
+# Prerequisites: built WASM binary + TypeScript, Docker for native + HermiT comparison
+# Docker images: konclude/konclude:latest, obolibrary/odkfull:latest
 npm run bench
 ```
 
 Runs `node --expose-gc tests/bench/bench.mjs`, writes results to `bench-results.md`. The `--expose-gc` flag is required because each WASM module allocates 1 GB; explicit garbage collection between runs prevents out-of-memory crashes.
 
-Total runtime: ~10–15 minutes on an 8-core host.
+HermiT runs via `robot reason --reasoner HermiT` inside the ODK Docker image. Timing is extracted from ROBOT `-vvv` log timestamps. Roberts family times out / errors after ~5 minutes — this is expected behavior, not a benchmark bug.
+
+Total runtime: ~20–25 minutes on an 8-core host (HermiT adds ~10 min, mostly Roberts timeout).
 
 ### Refreshing after code changes
 

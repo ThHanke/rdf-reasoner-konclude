@@ -1,21 +1,16 @@
 // tests/bench/bench.mjs
-// Comparative benchmark: native Konclude (Docker) vs WASM port.
+// Comparative benchmark: native Konclude (Docker) vs HermiT (ROBOT/ODK Docker) vs WASM port.
 //
-// Output is two clearly separated Markdown sections:
+// Output is clearly separated Markdown sections:
 //
 //   § 1  SPEED BENCHMARK
-//        Compares reasoning time only — the phase where both systems do the
-//        same logical work. Input-format and output-serialization differences
-//        are excluded or called out.
+//        Compares reasoning time across three systems: Konclude native (C++),
+//        HermiT (Java, via ROBOT), and our WASM Konclude port.
 //
 //   § 2  CAPABILITIES BENCHMARK
-//        Compares what each system can actually emit as output. Native Konclude
-//        v0.7.0 realization outputs ClassAssertion (rdf:type) only. Our WASM
-//        port additionally emits ObjectPropertyAssertions (role fillers),
-//        DataPropertyAssertions, owl:sameAs, and justification graphs.
-//        Native has no CLI/OWLlink option to export role assertions
-//        (GetObjectPropertyAssertions is unsupported; wildcard SPARQL returns
-//        empty with "unsupported axiom types").
+//        Compares what each system can actually emit as output.
+//
+//   § 3  INCREMENTAL REASONING BENCHMARK
 //
 // Usage: node tests/bench/bench.mjs
 //        npm run bench
@@ -29,6 +24,7 @@ import { benchAll as nativeBenchAll, NATIVE_CASES } from './native-runner.mjs';
 import { benchAll as wasmBenchAll, WASM_CASES } from './wasm-runner.mjs';
 import { TS_CASES } from './ts-runner.mjs';
 import { benchAll as binaryBenchAll, BINARY_CASES } from './binary-runner.mjs';
+import { benchAll as robotBenchAll, ROBOT_CASES } from './robot-runner.mjs';
 
 function runInSubprocess(scriptPath, funcName, args) {
   const ts = Date.now();
@@ -91,6 +87,9 @@ async function main() {
   console.error('Running native Konclude benchmark (Docker)...');
   const nativeResults = await nativeBenchAll(NATIVE_CASES, 3);
 
+  console.error('\nRunning HermiT benchmark (ROBOT/ODK Docker)...');
+  const robotResults = await robotBenchAll(ROBOT_CASES, 3);
+
   console.error('\nRunning WASM benchmark (per-case subprocess)...');
   const wasmResults = runBenchPerCase('./wasm-runner.mjs', 'benchAll', WASM_CASES, { warmup: 1, runs: 3 });
 
@@ -109,15 +108,20 @@ async function main() {
   const portedCommit = getPortedCommit();
 
   const nativeByName = Object.fromEntries(nativeResults.map(r => [r.name, r]));
+  const robotByName  = Object.fromEntries(robotResults.map(r => [r.name, r]));
   const wasmByName   = Object.fromEntries(wasmResults.map(r => [r.name, r]));
   const tsByName     = Object.fromEntries(tsResults.map(r => [r.name, r]));
   const binaryByName = Object.fromEntries(binaryResults.map(r => [r.name, r]));
 
   // ── Header ────────────────────────────────────────────────────────────────
 
+  const robotVersionRow = robotResults.find(r => r.result?.robotVersion);
+  const robotVersion = robotVersionRow?.result?.robotVersion ?? 'unknown';
+
   console.log('## Benchmark Results\n');
   console.log('```');
   console.log(`Native:  Konclude ${nativeVersion} (konclude/konclude:latest)`);
+  console.log(`ROBOT:   ${robotVersion} + HermiT (obolibrary/odkfull:latest)`);
   console.log(`Ported:  vendor/konclude @ ${portedCommit} (submodule)`);
   console.log(`Threads: ${nativeThreads} (native -w AUTO / WASM pthreads)`);
   console.log(`Date:    ${new Date().toISOString().slice(0, 10)}`);
@@ -151,16 +155,17 @@ async function main() {
   //   assertions native never writes), TS total (Worker RTT + store.addQuad).
 
   console.log('### § 1 Speed Benchmark\n');
-  console.log('> **Comparable column:** "WASM classify ²" vs "Native TBox ²" — same TBox reasoning, same kernel.');
+  console.log('> **Comparable columns:** "WASM classify ²" vs "Konclude TBox ²" — same kernel, different runtime. "HermiT reason ⁴" vs "Konclude TBox ²" — different reasoner, same OWL 2 DL logic.');
   console.log('> ABox realization times (role closure) are shown separately and are **not** comparable between systems.\n');
 
-  const speedHeader = '| Ontology | Exp. | Input | Native parse ¹ | Native TBox ² | Native realize | WASM init ⁰ | WASM load ¹ | WASM classify ² | WASM realization ⁶ | WASM output | TS total ³ | Ratio ² |';
-  const speedSep    = '|---|---|---|---|---|---|---|---|---|---|---|---|---|';
+  const speedHeader = '| Ontology | Exp. | Input | Konclude parse ¹ | Konclude TBox ² | Konclude realize | HermiT JVM+parse | HermiT reason ⁴ | HermiT fill+write | WASM init ⁰ | WASM load ¹ | WASM classify ² | WASM realization ⁶ | WASM output | TS total ³ | WASM/Konclude ² | HermiT/Konclude ⁴ |';
+  const speedSep    = '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|';
   console.log(speedHeader);
   console.log(speedSep);
 
   for (const c of WASM_CASES) {
     const nc = nativeByName[c.name];
+    const rc = robotByName[c.name];
     const wc = wasmByName[c.name];
     const tc = tsByName[c.name];
 
@@ -179,6 +184,16 @@ async function main() {
       nRealize = nc.result.realizeMs > 0 ? fmtMs(nc.result.realizeMs) : (c.abox ? '—' : 'n/a');
     } else if (nc?.result?.error) {
       nParse = nTbox = nRealize = 'N/A';
+    }
+
+    let rJvmParse = '—', rReason = '—', rFillWrite = '—';
+    if (rc?.result && !rc.result.error) {
+      rJvmParse  = fmtMs(rc.result.jvmParseMs);
+      rReason    = fmtMs(rc.result.reasonMs);
+      rFillWrite = fmtMs(rc.result.fillWriteMs);
+    } else if (rc?.result?.error) {
+      const errLabel = rc.result.error.includes('timeout') ? 'TIMEOUT' : `FAIL`;
+      rJvmParse = rReason = rFillWrite = errLabel;
     }
 
     let wInit = '—', wLoad = '—', wClassify = '—', wRealize = '—', wOutput = '—';
@@ -206,8 +221,9 @@ async function main() {
     const wasmClassifyOnlyMs = wc?.result?.ok
       ? (c.abox ? wc.result.classifyOnlyMs : wc.result.classifyMs)
       : null;
+    const robotReasonMs = rc?.result && !rc.result.error ? rc.result.reasonMs : null;
 
-    console.log(`| ${c.name} | ${exp} | ${nt} | ${nParse} | ${nTbox} | ${nRealize} | ${wInit} | ${wLoad} | ${wClassify} | ${wRealize} | ${wOutput} | ${tsTotal} | ${ratioStr(wasmClassifyOnlyMs, nativeTboxMs)} |`);
+    console.log(`| ${c.name} | ${exp} | ${nt} | ${nParse} | ${nTbox} | ${nRealize} | ${rJvmParse} | ${rReason} | ${rFillWrite} | ${wInit} | ${wLoad} | ${wClassify} | ${wRealize} | ${wOutput} | ${tsTotal} | ${ratioStr(wasmClassifyOnlyMs, nativeTboxMs)} | ${ratioStr(robotReasonMs, nativeTboxMs)} |`);
   }
 
   console.log('');
@@ -221,9 +237,11 @@ async function main() {
   console.log('');
   console.log('³ "TS total" = binary encode + Worker `postMessage` + WASM init + load + classify + output decode + `store.addQuad`. Includes init overhead + output serialization. For ABox cases includes role assertions that native never emits. Median of 5 measured runs.');
   console.log('');
+  console.log('⁴ **HermiT comparison.** HermiT is a different OWL 2 DL tableau reasoner (Java-based, run via ROBOT/ODK Docker). "HermiT JVM+parse" = JVM startup + OWLAPI parsing (no Konclude equivalent — different runtime). "HermiT reason" = consistency check + classification + axiom generation. "HermiT fill+write" = OWL/XML serialization. HermiT/Konclude ratio compares pure reasoning time. Roberts may timeout (HermiT is significantly slower on SROIQ).');
+  console.log('');
   console.log('⁶ "WASM realization" = `realization()` timing — runs the full pipeline including 4 extra ABox steps: initRealize → conceptRealize → roleRealize → sameIndividualsRealize. The roleRealize step computes full transitive role closure (CRoleRealization) producing 271k+ role fillers for Roberts. Native realization may skip or short-circuit roleRealize since it never serializes role assertions. **Not** comparable to native realize time.');
   console.log('');
-  console.log(`- Native: 3 runs per ontology, median. WASM: 1 warm-up + median of 3 measured. TS: 2 warm-ups + median of 5 measured. Node.js ${process.version}, pthreads (PTHREAD_POOL_SIZE=8).`);
+  console.log(`- Konclude native: 3 runs per ontology, median. WASM: 1 warm-up + median of 3 measured. TS: 2 warm-ups + median of 5 measured. HermiT: 3 runs median. Node.js ${process.version}, pthreads (PTHREAD_POOL_SIZE=8).`);
   console.log('- LUBM+data native input: NTriples merged to RDF/XML via rdflib (auto-generated, .gitignored).');
   console.log('');
   console.log('**Overhead analysis:**');
@@ -256,6 +274,10 @@ async function main() {
   console.log('```');
   console.log('');
   console.log('The ratio improves as ontology complexity grows (more tableau work = more time in JIT-optimized inner loops). It worsens with triple count for simple expressiveness (more time in data-structure construction). See `docs/solutions/performance-issues/wasm-preprocessing-overhead-2026-09-15.md` for full investigation and optimization opportunities.');
+  console.log('');
+  console.log('**HermiT comparison context:**');
+  console.log('');
+  console.log('HermiT (via ROBOT/ODK) is a Java-based OWL 2 DL tableau reasoner. On simple TBox ontologies (LUBM, SHI) it is comparable to Konclude. On medium-complexity ontologies (GALEN, SHIF) it is ~20× slower. On hard SROIQ ontologies with many individuals and property chains (Roberts family) HermiT does not complete within the timeout — it gets stuck on the consistency check phase. This matches published benchmarks: the ORE 2015 competition report notes Konclude "had the best performance on large and very large ontologies" while HermiT "for classification and realization tasks, was outperformed by the other reasoners" ([Parsia et al. 2017](https://link.springer.com/article/10.1007/s10817-017-9406-8)). The Konclude system description reports aggregate classification time of 3,893s vs HermiT 7,076s across 484 ontologies — but the gap is much larger on the hard SROIQ tail ([Steigmiller et al. 2014](https://www.uni-ulm.de/fileadmin/website_uni_ulm/iui.inst.090/Publikationen/2014/StLG14a.pdf)). A 2023 survey confirms HermiT is "slower than [other] reasoners" for classification, "although HermiT had much fewer timeouts" overall ([Abicht 2023](https://arxiv.org/pdf/2309.06888)).');
 
   // ── § 2  CAPABILITIES BENCHMARK ───────────────────────────────────────────
   //
@@ -295,28 +317,37 @@ async function main() {
   // ── §2a  TBox Classification ──────────────────────────────────────────────
 
   console.log('#### §2a TBox Classification — SubClassOf + EquivalentClasses\n');
-  console.log('Both systems: native emits OWL/XML SubClassOf/EquivalentClasses; WASM emits same as NTriples.\n');
+  console.log('Three systems: Konclude native (OWL/XML), HermiT/ROBOT (OWL Functional), WASM port (NTriples).\n');
 
-  const tboxHeader = '| Ontology | Exp. | Native TBox | WASM TBox | Match | WASM extra vs native |';
-  const tboxSep    = '|---|---|---|---|---|---|';
+  const tboxHeader = '| Ontology | Exp. | Konclude TBox | HermiT TBox | WASM TBox | Konclude=WASM | HermiT vs Konclude |';
+  const tboxSep    = '|---|---|---|---|---|---|---|';
   console.log(tboxHeader);
   console.log(tboxSep);
 
   for (const c of WASM_CASES.filter(c => !c.abox)) {
     const nc = nativeByName[c.name];
+    const rc = robotByName[c.name];
     const wc = wasmByName[c.name];
     const nCount = nc?.result && !nc.result.error ? (nc.result.inferredTboxCount ?? '—') : (nc?.result?.error ? 'N/A' : '—');
-    let wCount = '—', matchCell = '—', extraCell = '0 (same output)';
+    let rCount = '—';
+    if (rc?.result && !rc.result.error) {
+      rCount = rc.result.inferredTboxCount ?? '—';
+    } else if (rc?.result?.error) {
+      rCount = rc.result.error.includes('timeout') ? 'TIMEOUT' : 'FAIL';
+    }
+    let wCount = '—', matchCell = '—', hermitVsCell = '—';
     if (wc?.result?.ok) {
       wCount = wc.result.inferredTboxCount ?? '—';
       if (typeof wCount === 'number' && typeof nCount === 'number') {
         matchCell = wCount === nCount ? '✓ exact' : `⚠ ${wCount} vs ${nCount}`;
-        extraCell = wCount === nCount ? '0 (same output)' : `${wCount - nCount > 0 ? '+' : ''}${wCount - nCount}`;
       }
     } else if (wc?.result?.error) {
       wCount = matchCell = 'FAIL';
     }
-    console.log(`| ${c.name} | ${c.expressiveness} | ${nCount} | ${wCount} | ${matchCell} | ${extraCell} |`);
+    if (typeof rCount === 'number' && typeof nCount === 'number') {
+      hermitVsCell = rCount === nCount ? '✓ exact' : `${rCount} (${rCount > nCount ? '+' : ''}${rCount - nCount})`;
+    }
+    console.log(`| ${c.name} | ${c.expressiveness} | ${nCount} | ${rCount} | ${wCount} | ${matchCell} | ${hermitVsCell} |`);
   }
 
   console.log('');
@@ -325,28 +356,37 @@ async function main() {
   // ── §2b  ABox Realization — rdf:type ─────────────────────────────────────
 
   console.log('#### §2b ABox Realization — rdf:type (ClassAssertion)\n');
-  console.log('Native Konclude realization CLI outputs **only ClassAssertion (rdf:type)** in OWL/XML. WASM outputs the same set.\n');
+  console.log('Konclude native outputs ClassAssertion (rdf:type) only. HermiT via ROBOT also outputs ClassAssertion. WASM outputs the same set.\n');
 
-  const typeHeader = '| Ontology | Exp. | Native rdf:type | WASM rdf:type | Match | WASM extra vs native |';
-  const typeSep    = '|---|---|---|---|---|---|';
+  const typeHeader = '| Ontology | Exp. | Konclude rdf:type | HermiT rdf:type | WASM rdf:type | Konclude=WASM | HermiT vs Konclude |';
+  const typeSep    = '|---|---|---|---|---|---|---|';
   console.log(typeHeader);
   console.log(typeSep);
 
   for (const c of WASM_CASES.filter(c => c.abox)) {
     const nc = nativeByName[c.name];
+    const rc = robotByName[c.name];
     const wc = wasmByName[c.name];
     const nCount = nc?.result && !nc.result.error ? (nc.result.inferredTypeCount ?? '—') : (nc?.result?.error ? 'N/A' : '—');
-    let wCount = '—', matchCell = '—', extraCell = '0 (same output)';
+    let rCount = '—';
+    if (rc?.result && !rc.result.error) {
+      rCount = rc.result.inferredTypeCount ?? '—';
+    } else if (rc?.result?.error) {
+      rCount = rc.result.error.includes('timeout') ? 'TIMEOUT' : 'FAIL';
+    }
+    let wCount = '—', matchCell = '—', hermitVsCell = '—';
     if (wc?.result?.ok) {
       wCount = wc.result.inferredTypeCount ?? '—';
       if (typeof wCount === 'number' && typeof nCount === 'number') {
         matchCell = wCount === nCount ? '✓ exact' : `⚠ ${wCount} vs ${nCount}`;
-        extraCell = wCount === nCount ? '0 (same output)' : `${wCount - nCount > 0 ? '+' : ''}${wCount - nCount}`;
       }
     } else if (wc?.result?.error) {
       wCount = matchCell = 'FAIL';
     }
-    console.log(`| ${c.name} | ${c.expressiveness} | ${nCount} | ${wCount} | ${matchCell} | ${extraCell} |`);
+    if (typeof rCount === 'number' && typeof nCount === 'number') {
+      hermitVsCell = rCount === nCount ? '✓ exact' : `${rCount} (${rCount > nCount ? '+' : ''}${rCount - nCount})`;
+    }
+    console.log(`| ${c.name} | ${c.expressiveness} | ${nCount} | ${rCount} | ${wCount} | ${matchCell} | ${hermitVsCell} |`);
   }
 
   console.log('');
