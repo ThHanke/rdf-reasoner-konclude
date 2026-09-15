@@ -17,7 +17,10 @@
  							bool conNegated = conDes->isNegated();
  							bool cacheNegated = cacheValue->getCacheValueIdentifier() == CCacheValue::CACHEVALTAGANDNEGATEDCONCEPT;
 -							if (conNegated != cacheNegated || conDes->getConcept() != concept) {
-+							if (conNegated != cacheNegated) {
++							// Tag-equivalent of the old pointer check: descriptor's concept must
++							// have the same tag we looked up by.  Restores fast-exit on mismatched
++							// entries without reintroducing the cross-call pointer mismatch.
++							if (conNegated != cacheNegated || !conDes->getConcept() || conDes->getConcept()->getConceptTag() != conTag) {
  								return false;
  							}
  						} else {
