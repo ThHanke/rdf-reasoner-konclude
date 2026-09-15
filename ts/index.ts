@@ -33,7 +33,7 @@ export { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, KJ_NS, KJ_
 export { createInlineWorker } from "./inlineWorker.js";
 import type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions, LaconicPart, LaconicJustification, LaconicExplainOptions } from "./types.js";
 import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, KJ_JUSTIFIES, KJ_AXIOM } from "./types.js";
-import { injectExplanationsFromBuffer, encodeStoreToBuffers, computeStoreFingerprintDirect, existsInSourceGraphs } from "./n3Inject.js";
+import { injectExplanationsFromBuffer, encodeStoreToBuffers, computeStoreFingerprintDirect, existsInSourceGraphs, clearGraph } from "./n3Inject.js";
 import { buildEntailmentProbe, classifyAxiom, tripleKey as probeTripleKey } from "./entailmentProbe.js";
 import { computeLaconicAsync, groupQuadsIntoAxioms, splitAxiom, axiomKey } from "./laconicJustification.js";
 
@@ -279,7 +279,7 @@ export class RdfReasoner {
       const inferredGraphNode = DataFactory.namedNode(
         opts?.inferredGraph ?? INFERRED_GRAPH_IRI,
       );
-      store.removeQuads(store.getQuads(null, null, null, inferredGraphNode));
+      clearGraph(store, inferredGraphNode.value);
 
       const { tripleBuffer, strTableBuffer } = encodeStoreToBuffers(store);
 
@@ -519,7 +519,7 @@ export class RdfReasoner {
         }
       }
 
-      store.removeQuads(store.getQuads(null, null, null, inferredGraphNode));
+      clearGraph(store, inferredGraphNode.value);
 
       const { tripleBuffer, strTableBuffer } = encodeStoreToBuffers(store);
 
@@ -663,7 +663,7 @@ export class RdfReasoner {
       const inferredGraphNode = DataFactory.namedNode(
         opts?.inferredGraph ?? INFERRED_GRAPH_IRI,
       );
-      store.removeQuads(store.getQuads(null, null, null, inferredGraphNode));
+      clearGraph(store, inferredGraphNode.value);
 
       const { tripleBuffer, strTableBuffer } = encodeStoreToBuffers(store);
 
@@ -742,7 +742,7 @@ export class RdfReasoner {
   private async _classifyInline(store: Store, fingerprint: string, inferredGraph?: string): Promise<void> {
     if (this._classifyCache?.hash === fingerprint) return;
     const ig = DataFactory.namedNode(inferredGraph ?? INFERRED_GRAPH_IRI);
-    store.removeQuads(store.getQuads(null, null, null, ig));
+    clearGraph(store, ig.value);
     const { tripleBuffer, strTableBuffer } = encodeStoreToBuffers(store);
     await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer, false], [tripleBuffer, strTableBuffer]);
     await this._call("classification", []);
@@ -764,7 +764,7 @@ export class RdfReasoner {
   private async _materializeInline(store: Store, fingerprint: string, inferredGraph?: string): Promise<void> {
     if (this._materializeCache?.hash === fingerprint) return;
     const ig = DataFactory.namedNode(inferredGraph ?? INFERRED_GRAPH_IRI);
-    store.removeQuads(store.getQuads(null, null, null, ig));
+    clearGraph(store, ig.value);
     // Capture base quads BEFORE writing inferred quads so someValuesFrom scan
     // only sees the original store contents.
     const { tripleBuffer, strTableBuffer } = encodeStoreToBuffers(store);
@@ -787,7 +787,7 @@ export class RdfReasoner {
   private async _classifyPropertiesInline(store: Store, fingerprint: string, inferredGraph?: string): Promise<void> {
     if (this._classifyPropertiesCache?.hash === fingerprint) return;
     const ig = DataFactory.namedNode(inferredGraph ?? INFERRED_GRAPH_IRI);
-    store.removeQuads(store.getQuads(null, null, null, ig));
+    clearGraph(store, ig.value);
     const { tripleBuffer, strTableBuffer } = encodeStoreToBuffers(store);
     await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer, false], [tripleBuffer, strTableBuffer]);
     await this._call("classification", []);
@@ -817,7 +817,7 @@ export class RdfReasoner {
     const fingerprint = computeStoreFingerprintDirect(store);
     if (this._classifyCache?.hash !== fingerprint) {
       const ig = DataFactory.namedNode(inferredGraph ?? INFERRED_GRAPH_IRI);
-      store.removeQuads(store.getQuads(null, null, null, ig));
+      clearGraph(store, ig.value);
       const { tripleBuffer, strTableBuffer } = encodeStoreToBuffers(store);
       await this._callDirect("loadTripleBuffer", [tripleBuffer, strTableBuffer, false], [tripleBuffer, strTableBuffer]);
       await this._callDirect("classification", []);
