@@ -635,60 +635,20 @@ module.exports = { experiments: { asyncWebAssembly: true } };
 
 ## Performance
 
-Benchmarked on an 8-core Linux host. Native = Konclude v0.7.0 Docker image; WASM = Node.js 25 via this package. All WASM runs use 8 threads. Median of 3 runs after 1 warmup.
+Compared against desktop Konclude v0.7.0 — same reasoning algorithm, different execution environment:
 
-| Ontology           | Expressivity | NTriples | Native ¹ | WASM ² | TS total ³ | TS+expl ⁴ | Expl overhead | Native ratio |
-| ------------------ | ------------ | -------- | -------- | ------ | ---------- | --------- | ------------- | ------------ |
-| LUBM schema        | SHI          | 307      | 33 ms    | 344 ms | 266 ms     | 248 ms    | -7%           | ~10×         |
-| GALEN              | SHIF         | 30 817   | 224 ms   | 1 534 ms | 1 502 ms | 1 561 ms  | +4%           | ~2.9×        |
-| Roberts family     | SROIQ        | 3 866    | 2 062 ms | 32 583 ms | 30 743 ms | 31 114 ms | +1%          | ~15.5×       |
-| LUBM schema + data | SHI          | 100 850  | 164 ms   | 3 647 ms | 4 872 ms | 5 175 ms  | +6%           | ~8.7×        |
+| Ontology | OWL profile | Triples | Desktop | This package | Ratio |
+|---|---|---|---|---|---|
+| LUBM schema | SHI | 307 | 32 ms | 251 ms | ~7.8x |
+| GALEN | SHIF | 30 817 | 219 ms | 537 ms | ~2.5x |
+| Roberts family | SROIQ | 3 866 | 1 722 ms | 1 895 ms | ~1.1x |
+| LUBM+data | SHI | 100 850 | 160 ms | 1 152 ms | ~7.2x |
 
-¹ Native reasoning only (preprocess + precompute + classify/realize). Native uses
-`classification` for TBox-only ontologies and `realization` for ontologies with individuals
-(Roberts family, LUBM + data) — matching WASM's operation selection. LUBM schema ratio is
-dominated by fixed WASM startup cost (pthreads pool init) on a tiny 307-triple ontology.
+On complex reasoning tasks (full OWL 2 DL), the WASM port matches desktop speed (~1.1x). On simpler ontologies, a fixed thread-coordination cost dominates. For repeat calls on an unchanged ontology, this package is **3-67x faster** than desktop Konclude — a store fingerprint detects nothing changed and skips reasoning entirely.
 
-² Raw WASM timing: `loadTripleBuffer` + classify/realization + `getInferredTripleBuffer`.
+Full results with overhead analysis, output comparison, incremental reasoning benchmarks, and memory analysis: [`docs/benchmark.md`](docs/benchmark.md).
 
-³ Full TypeScript layer end-to-end: binary encode + Worker postMessage RTT + buffer decode +
-store.addQuad loop. This is what your application pays when calling `classify(store)` or
-`materialize(store)`.
-
-⁴ Same pipeline with `explanations: true` — includes justification streaming from WASM +
-RDF-star injection into N3 Store explanation graph. Explanation overhead is negligible (0–6%)
-because justification data is streamed inline in the binary buffer with zero extra
-WASM round-trips.
-
-Run `npm run bench` to reproduce (requires a built WASM binary — see [Build from source](#build-from-source)).
-
-### What each fixture tests
-
-**LUBM schema** (SHI, TBox-only) — a shallow university-domain ontology: 49 classes, 25 object
-properties, 36 subclass edges, one transitive property. No individuals. Konclude runs pure
-classification; actual tableau work is trivial. The 207 ms is almost entirely pthread pool
-startup on a 307-triple ontology.
-
-**GALEN** (SHIF, TBox-only) — a medical terminology ontology: 4 740 classes, 413 object
-properties, 150 functional properties, 26 transitive properties, and 3 446 existential
-restrictions (`someValuesFrom`) cross-connected to 3 237 subclass edges. No individuals.
-The dense restriction graph drives TBox saturation — constraints propagate across thousands
-of interleaved concept/role pairs. SHIF adds functional property reasoning on top. This is
-pure classification load.
-
-**Roberts family** (SROIQ, TBox + ABox) — a genealogy ontology: 171 classes, 80 object
-properties, 405 named individuals, 11 symmetric properties, 8 transitive properties, and
-24 property chain axioms (`owl:propertyChainAxiom`). SROIQ is the full OWL 2 DL
-expressiveness. The 405 individuals trigger ABox realization — Konclude computes the type
-of every individual under every applicable concept while propagating role chains across the
-family tree. Role chains require joining property paths, which multiplies the search space.
-This is why 3 866 triples takes 38 s.
-
-**LUBM schema + data** (SHI, TBox + ABox) — the same shallow TBox combined with ~25 000
-individuals (students, professors, courses across multiple universities). SHI has no property
-chains or nominals, so ABox realization is type propagation only: each individual is
-classified under the existing concept hierarchy. Cost scales roughly linearly with individual
-count rather than combinatorially, hence the 1.6× native ratio despite 25 000 instances.
+Run `npm run bench` to reproduce (requires built WASM binary + Docker for desktop comparison).
 
 ## How it works
 

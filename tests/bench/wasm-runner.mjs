@@ -6,7 +6,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { parseNTriples, encodeQuadsForWasm, decodeWasmTripleBuffer } from './wasm-binary.mjs';
+import { parseNTriples, encodeQuadsForWasm, decodeWasmTripleBuffer, countByCategory } from './wasm-binary.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -30,31 +30,42 @@ function median(arr) {
 }
 
 // quads are pre-parsed outside benchOne so NTriples parsing is excluded from timing.
-async function benchOne(Module, quads) {
+// abox=true → realization (TBox+ABox); false → classification (TBox-only).
+// initMs = createKoncludeModule + new KoncludeReasoner (WASM startup, not comparable to native).
+async function benchOne(createModule, quads, abox) {
+  const tInit0 = performance.now();
+  const Module = await createModule({ print: () => {}, printErr: () => {} });
   const reasoner = new Module.KoncludeReasoner();
+  const tInit1 = performance.now();
   try {
     const tLoad0 = performance.now();
     const { triplePtr, tripleCount, strTablePtr, strBytes } = encodeQuadsForWasm(Module, quads);
     try {
-      reasoner.loadTripleBuffer(triplePtr, tripleCount, strTablePtr, strBytes);
+      reasoner.loadTripleBuffer(triplePtr, tripleCount, strTablePtr, strBytes, abox);
     } finally {
       Module._free(triplePtr);
       Module._free(strTablePtr);
     }
     const tLoad1 = performance.now();
-    const ok = reasoner.realization();
+    const ok = abox ? reasoner.realization() : reasoner.classification();
     const tClassify = performance.now();
     const inferred = decodeWasmTripleBuffer(Module, reasoner);
     const tOutput = performance.now();
 
     if (!ok) throw new Error('classify() returned false');
 
+    const counts = countByCategory(inferred);
     return {
-      loadMs:        Math.round(tLoad1 - tLoad0),
-      classifyMs:    Math.round(tClassify - tLoad1),
-      outputMs:      Math.round(tOutput - tClassify),
-      totalMs:       Math.round(tOutput - tLoad0),
-      inferredTriples: countTriples(inferred),
+      initMs:           Math.round(tInit1 - tInit0),
+      loadMs:           Math.round(tLoad1 - tLoad0),
+      classifyMs:       Math.round(tClassify - tLoad1),
+      outputMs:         Math.round(tOutput - tClassify),
+      totalMs:          Math.round(tOutput - tLoad0),
+      inferredTriples:  counts.total,
+      inferredTboxCount:   counts.tboxCount,
+      inferredTypeCount:   counts.typeCount,
+      inferredRoleCount:   counts.roleCount,
+      inferredSameAsCount: counts.sameAsCount,
       ok: true,
     };
   } catch (e) {
@@ -65,10 +76,10 @@ async function benchOne(Module, quads) {
 }
 
 export const WASM_CASES = [
-  { name: 'LUBM schema',        files: ['lubm.nt'],                  expressiveness: 'SHI' },
-  { name: 'GALEN',              files: ['galen.nt'],                 expressiveness: 'SHIF' },
-  { name: 'Roberts family',     files: ['roberts-family.nt'],        expressiveness: 'SROIQ' },
-  { name: 'LUBM schema + data', files: ['lubm.nt', 'lubm-data.nt'], expressiveness: 'SHI' },
+  { name: 'LUBM schema',        files: ['lubm.nt'],                  expressiveness: 'SHI',   abox: false },
+  { name: 'GALEN',              files: ['galen.nt'],                 expressiveness: 'SHIF',  abox: false },
+  { name: 'Roberts family',     files: ['roberts-family.nt'],        expressiveness: 'SROIQ', abox: true  },
+  { name: 'LUBM schema + data', files: ['lubm.nt', 'lubm-data.nt'], expressiveness: 'SHI',   abox: true  },
 ];
 
 export async function benchAll(cases = WASM_CASES, opts = { warmup: 1, runs: 3 }) {
@@ -99,21 +110,38 @@ export async function benchAll(cases = WASM_CASES, opts = { warmup: 1, runs: 3 }
       continue;
     }
 
+    // For ABox cases we run two passes per iteration:
+    //   1. classification() only — gives TBox-only timing, comparable to native
+    //   2. realization()         — full ABox + role closure (not comparable to native speed)
+    // This is necessary because classification() and realization() cannot share a
+    // KoncludeReasoner instance (prepareOntology must be called once).
     async function runFresh() {
-      const Module = await createKoncludeModule({ print: () => {}, printErr: () => {} });
-      return benchOne(Module, quads);
+      return benchOne(createKoncludeModule, quads, c.abox);
     }
+
+    async function runFreshClassifyOnly() {
+      return benchOne(createKoncludeModule, quads, false);
+    }
+
+    // Each createKoncludeModule allocates 1 GB WASM linear memory.
+    // V8 doesn't reclaim these promptly — force GC between runs to avoid OOM.
+    const tryGC = () => { if (globalThis.gc) globalThis.gc(); };
 
     for (let i = 0; i < opts.warmup; i++) {
       await runFresh();
+      tryGC();
+      if (c.abox) { await runFreshClassifyOnly(); tryGC(); }
     }
 
     const runs = [];
+    const classifyOnlyRuns = [];
     for (let i = 0; i < opts.runs; i++) {
       runs.push(await runFresh());
+      tryGC();
+      if (c.abox) { classifyOnlyRuns.push(await runFreshClassifyOnly()); tryGC(); }
     }
 
-    const failed = runs.find(r => !r.ok);
+    const failed = runs.find(r => !r.ok) ?? classifyOnlyRuns.find(r => !r.ok);
     if (failed) {
       process.stderr.write(`FAIL: ${failed.error}\n`);
       results.push({ ...c, tripleCount, result: { ok: false, error: failed.error } });
@@ -122,14 +150,22 @@ export async function benchAll(cases = WASM_CASES, opts = { warmup: 1, runs: 3 }
 
     const result = {
       ok: true,
-      loadMs:          median(runs.map(r => r.loadMs)),
-      classifyMs:      median(runs.map(r => r.classifyMs)),
-      outputMs:        median(runs.map(r => r.outputMs)),
-      totalMs:         median(runs.map(r => r.totalMs)),
-      inferredTriples: runs[0].inferredTriples,
+      initMs:              median(runs.map(r => r.initMs)),
+      loadMs:              median(runs.map(r => r.loadMs)),
+      classifyMs:          median(runs.map(r => r.classifyMs)),
+      outputMs:            median(runs.map(r => r.outputMs)),
+      totalMs:             median(runs.map(r => r.totalMs)),
+      inferredTriples:     runs[0].inferredTriples,
+      inferredTboxCount:   runs[0].inferredTboxCount,
+      inferredTypeCount:   runs[0].inferredTypeCount,
+      inferredRoleCount:   runs[0].inferredRoleCount,
+      inferredSameAsCount: runs[0].inferredSameAsCount,
+      // For ABox cases: classification-only timing for fair speed comparison with native.
+      classifyOnlyMs: c.abox ? median(classifyOnlyRuns.map(r => r.classifyMs)) : null,
     };
 
-    process.stderr.write(`${result.totalMs} ms total (classify: ${result.classifyMs} ms, inferred: ${result.inferredTriples})\n`);
+    const classifyOnlyNote = c.abox ? `, classifyOnly: ${result.classifyOnlyMs} ms` : '';
+    process.stderr.write(`${result.totalMs} ms total (init: ${result.initMs} ms, classify: ${result.classifyMs} ms${classifyOnlyNote}, inferred: ${result.inferredTriples} [type:${result.inferredTypeCount} role:${result.inferredRoleCount} tbox:${result.inferredTboxCount}])\n`);
     results.push({ ...c, tripleCount, result });
   }
 

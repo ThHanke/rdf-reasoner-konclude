@@ -35,24 +35,18 @@ function median(arr) {
     : sorted[mid];
 }
 
-// Count inferred triples in a Konclude OWL/XML output file using the same
-// method as WASM (NTriples-equivalent line count).  Each OWL axiom is expanded
-// to the NTriples it would produce — EquivalentClasses and SameIndividual emit
-// all pairwise symmetric triples, matching getInferredTripleBuffer() output.
-// Returns null if the file can't be parsed.
+// Count inferred triples in a Konclude OWL/XML output file by category.
+// Returns { total, tboxCount, typeCount, roleCount, sameAsCount } or null.
 function countOwlXmlTriples(filePath) {
   const script = `
-import sys, xml.etree.ElementTree as ET
+import sys, json, xml.etree.ElementTree as ET
 try:
     OWL  = 'http://www.w3.org/2002/07/owl#'
-    RDFS = 'http://www.w3.org/2000/01/rdf-schema#'
-    RDF  = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#'
 
     def iri(elem):
-        # <Class IRI="..."/> or <Class abbreviatedIRI="prefix:local"/>
         v = elem.get('IRI') or elem.get('abbreviatedIRI','')
         if v.startswith(':') or ':' not in v:
-            return None  # anonymous / complex; skip
+            return None
         return v
 
     def iris(parent):
@@ -60,41 +54,37 @@ try:
 
     root = ET.parse(sys.argv[1]).getroot()
     ns = OWL
-    count = 0
+    tbox = 0; types = 0; roles = 0; sameAs = 0
     for ax in root:
         tag = ax.tag.replace('{' + ns + '}', '')
         if tag == 'SubClassOf':
             cs = iris(ax)
-            if len(cs) == 2: count += 1
+            if len(cs) == 2: tbox += 1
         elif tag == 'EquivalentClasses':
             cs = iris(ax)
-            # all pairwise both directions
             for i in range(len(cs)):
                 for j in range(len(cs)):
-                    if i != j: count += 1
+                    if i != j: tbox += 1
         elif tag == 'ClassAssertion':
             cs = iris(ax)
-            if len(cs) == 2: count += 1
-        elif tag == 'ObjectPropertyAssertion':
+            if len(cs) == 2: types += 1
+        elif tag in ('ObjectPropertyAssertion', 'DataPropertyAssertion'):
             cs = iris(ax)
-            if len(cs) == 3: count += 1
-        elif tag == 'DataPropertyAssertion':
-            cs = iris(ax)
-            if len(cs) == 3: count += 1
+            if len(cs) == 3: roles += 1
         elif tag == 'SameIndividual':
             cs = iris(ax)
             for i in range(len(cs)):
                 for j in range(len(cs)):
-                    if i != j: count += 1
-    print(count)
+                    if i != j: sameAs += 1
+    total = tbox + types + roles + sameAs
+    print(json.dumps({"total": total, "tboxCount": tbox, "typeCount": types, "roleCount": roles, "sameAsCount": sameAs}))
 except Exception as e:
     import traceback; traceback.print_exc()
     sys.exit(1)
 `;
   const r = spawnSync('python3', ['-c', script, filePath], { encoding: 'utf8', timeout: 60000 });
   if (r.status !== 0 || r.error) return null;
-  const n = parseInt(r.stdout.trim(), 10);
-  return Number.isFinite(n) ? n : null;
+  try { return JSON.parse(r.stdout.trim()); } catch { return null; }
 }
 
 function checkDocker() {
@@ -200,7 +190,15 @@ export function benchOne(owlFile, mountDir, runs = 3, command = 'classification'
   rmSync(outDir, { recursive: true, force: true });
 
   const fields = ['parseMs', 'preprocessMs', 'precomputeMs', 'classifyMs', 'propClassMs', 'realizeMs', 'totalMs'];
-  const result = { nativeVersion, threads, inferredTriples };
+  const counts = inferredTriples ?? {};
+  const result = {
+    nativeVersion, threads,
+    inferredTriples: counts.total ?? null,
+    inferredTboxCount: counts.tboxCount ?? null,
+    inferredTypeCount: counts.typeCount ?? null,
+    inferredRoleCount: counts.roleCount ?? null,
+    inferredSameAsCount: counts.sameAsCount ?? null,
+  };
   for (const f of fields) {
     const vals = timings.map(t => t[f]).filter(v => v != null);
     result[f] = vals.length ? median(vals) : null;
