@@ -1,0 +1,17 @@
+--- a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.cpp
++++ b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.cpp
+@@ -393,6 +393,14 @@
+ 
+ 						if (!prevOntologyData) {
+ 							CBackendRepresentativeMemoryCacheOntologyContext* ontologyContext = new CBackendRepresentativeMemoryCacheOntologyContext(&mContext);
++							// WASM sequential-call fix: reset the per-event counter so that
++							// per-individual update-count thresholds (> 10, > 20 at lines
++							// 1471/1486) work correctly for the first update cycle of each
++							// new ontology.  Without this, mNextIndiUpdateId accumulated from
++							// prior calls causes ALL individuals to enter the slow
++							// "separated memory management new" allocation path on call 2+,
++							// producing a 16x realization slowdown for ABox ontologies.
++							mNextIndiUpdateId = 1;
+ 							ontologyData->setOntologyContext(ontologyContext);
+ 						} else {
+ 							ontologyData->setOntologyContext(prevOntologyData->getOntologyContext());

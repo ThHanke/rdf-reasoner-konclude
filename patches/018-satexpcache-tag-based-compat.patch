@@ -1,0 +1,23 @@
+--- a/Source/Reasoner/Kernel/Algorithm/CSatisfiableExpanderCacheHandler.cpp	2026-09-15 15:33:11.444002791 +0200
++++ b/Source/Reasoner/Kernel/Algorithm/CSatisfiableExpanderCacheHandler.cpp	2026-09-15 15:33:11.444002791 +0200
+@@ -84,15 +84,17 @@
+ 					while (expCacheValueLinker && conNr++ < conSetCount) {
+ 
+ 						CCacheValue* cacheValue = expCacheValueLinker->getCacheValue();
+-						CConcept* concept = (CConcept*)cacheValue->getIdentification();
++						// Use concept tag (stable across calls) not stored pointer
++						// (call-1 ptr fails lookup in call-2 sets -> setCachingError -> 16x regression).
++						cint64 conTag = cacheValue->getTag();
+ 
+ 						CConceptDescriptor* conDes = nullptr;
+ 						CDependencyTrackPoint* depTrackPoint = nullptr;
+ 
+-						if (conSet->getConceptDescriptor(concept,conDes,depTrackPoint)) {
++						if (conSet->getConceptDescriptor(conTag,conDes,depTrackPoint)) {
+ 							bool conNegated = conDes->isNegated();
+ 							bool cacheNegated = cacheValue->getCacheValueIdentifier() == CCacheValue::CACHEVALTAGANDNEGATEDCONCEPT;
+-							if (conNegated != cacheNegated || conDes->getConcept() != concept) {
++							if (conNegated != cacheNegated) {
+ 								return false;
+ 							}
+ 						} else {
