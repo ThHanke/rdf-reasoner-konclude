@@ -637,14 +637,14 @@ module.exports = { experiments: { asyncWebAssembly: true } };
 
 Compared against desktop Konclude v0.7.0 — same reasoning algorithm, different execution environment:
 
-| Ontology | OWL profile | Triples | Desktop | This package | Ratio |
+| Ontology | OWL profile | Triples | Desktop TBox | This package | Ratio |
 |---|---|---|---|---|---|
-| LUBM schema | SHI | 307 | 32 ms | 251 ms | ~7.8x |
-| GALEN | SHIF | 30 817 | 219 ms | 537 ms | ~2.5x |
-| Roberts family | SROIQ | 3 866 | 1 722 ms | 1 895 ms | ~1.1x |
-| LUBM+data | SHI | 100 850 | 160 ms | 1 152 ms | ~7.2x |
+| LUBM schema | SHI | 307 | 96 ms | 946 ms | ~9.9× |
+| GALEN | SHIF | 30 817 | 281 ms | 1 420 ms | ~5.1× |
+| Roberts family | SROIQ | 3 866 | 1 920 ms | 2 453 ms | ~1.3× |
+| LUBM+data | SHI | 100 850 | 227 ms | 2 331 ms | ~10.3× |
 
-On complex reasoning tasks (full OWL 2 DL), the WASM port matches desktop speed (~1.1x). On simpler ontologies, a fixed thread-coordination cost dominates. For repeat calls on an unchanged ontology, this package is **3-67x faster** than desktop Konclude — a store fingerprint detects nothing changed and skips reasoning entirely.
+On complex reasoning tasks (full OWL 2 DL), the WASM port nearly matches desktop speed (~1.3×). On simpler ontologies, a fixed ~230 ms pthread sync cost dominates. For repeat calls on an unchanged ontology, this package is **3-231× faster** than desktop Konclude — a store fingerprint detects nothing changed and skips reasoning entirely.
 
 Full results with overhead analysis, output comparison, incremental reasoning benchmarks, and memory analysis: [`docs/benchmark.md`](docs/benchmark.md).
 
