@@ -43,6 +43,7 @@
 #include <iostream>   // std::cerr for qDebug stubs
 #include <regex>
 #include <thread>     // std::thread::hardware_concurrency
+#include <chrono>     // std::this_thread::sleep_for
 
 // ---------------------------------------------------------------------------
 // Container aliases (QList before QHash/QMap so they can use QList as return type)

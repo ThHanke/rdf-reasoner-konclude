@@ -1,0 +1,17 @@
+--- a/Source/Reasoner/Consistiser/CTotallyPrecomputationThread.cpp
++++ b/Source/Reasoner/Consistiser/CTotallyPrecomputationThread.cpp
+@@ -1905,6 +1905,14 @@
+ 
+ 				totallyPreCompItem->setSaturationCalculationJob(satCalculationJob);
+ 				processCalculationJob(satCalculationJob,totallyPreCompItem,satTestingItem);
++#ifdef __EMSCRIPTEN__
++				// Yield this pthread so KPSet worker Web Workers get CPU time to start
++				// their saturation jobs.  Without this, the precomp thread blocks on
++				// mProcessingWakeUpSemaphore.acquire() via Atomics.wait() before KPSet
++				// workers are scheduled, causing a deadlock with restriction ontologies.
++				// sleep_for maps to Atomics.wait() in a worker pthread -- safe here.
++				std::this_thread::sleep_for(std::chrono::milliseconds(1));
++#endif
+ 			}
+ 
+ 
