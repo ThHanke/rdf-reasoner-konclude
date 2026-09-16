@@ -1,6 +1,15 @@
+# Claude Code (local config, not for repo)
+.claude/
+CLAUDE.md
+
+# Internal development docs (kept locally, not published)
+docs/plans/
+docs/brainstorms/
+docs/solutions/
+2026-05-04-007-rdf-reasoner-konclude-requirements.md
+
 # Git worktrees
 .worktrees/
-.claude/worktrees/
 
 # Native Konclude binary (download via scripts/acquire-native-konclude.sh)
 vendor/konclude/Binaries/
