@@ -48,31 +48,37 @@ test("SharedArrayBuffer is available — COOP/COEP headers correct", async ({
 });
 
 // ---------------------------------------------------------------------------
-// Test 2: classify(store) — subclass chain produces direct subClassOf edges
+// Test 2: classify(store) — equivalentClass drives Hasse diagram re-routing
 // ---------------------------------------------------------------------------
+// Konclude only emits NEW inferences (not re-stated explicit TBox axioms).
+// Pattern: Child ⊑ Base (explicit) + Alias ≡ Base → Child ⊑ Alias is inferred
+// because Konclude picks Alias as the canonical class representative and routes
+// all Hasse edges to it.
 
-test("classify(store): A→B→C chain returns direct subClassOf edges", async ({
+test("classify(store): Child⊑Base + Alias≡Base infers Child⊑Alias", async ({
   page,
 }) => {
   const result = await page.evaluate(async () => {
     const { RdfReasoner, INFERRED_GRAPH_IRI, DataFactory, Store } = window;
     const { namedNode, quad, defaultGraph } = DataFactory;
 
-    const RDFS_SUB = namedNode(
-      "http://www.w3.org/2000/01/rdf-schema#subClassOf",
-    );
+    const RDFS_SUB = namedNode("http://www.w3.org/2000/01/rdf-schema#subClassOf");
     const OWL_CLASS = namedNode("http://www.w3.org/2002/07/owl#Class");
+    const OWL_EQUIV = namedNode("http://www.w3.org/2002/07/owl#equivalentClass");
     const RDF_TYPE = namedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#type");
-    const A = namedNode("http://example.org/A");
-    const B = namedNode("http://example.org/B");
-    const C = namedNode("http://example.org/C");
+
+    // :Base is a plain class. :Alias ≡ :Base.
+    // Inferred: Alias subClassOf Base AND Base subClassOf Alias (new Hasse edges).
+    const Base  = namedNode("http://example.org/Base");
+    const Alias = namedNode("http://example.org/Alias");
+    const Child = namedNode("http://example.org/Child");
 
     const store = new Store();
-    store.addQuad(quad(A, RDF_TYPE, OWL_CLASS, defaultGraph()));
-    store.addQuad(quad(B, RDF_TYPE, OWL_CLASS, defaultGraph()));
-    store.addQuad(quad(C, RDF_TYPE, OWL_CLASS, defaultGraph()));
-    store.addQuad(quad(A, RDFS_SUB, B, defaultGraph()));
-    store.addQuad(quad(B, RDFS_SUB, C, defaultGraph()));
+    store.addQuad(quad(Base,  RDF_TYPE, OWL_CLASS, defaultGraph()));
+    store.addQuad(quad(Alias, RDF_TYPE, OWL_CLASS, defaultGraph()));
+    store.addQuad(quad(Child, RDF_TYPE, OWL_CLASS, defaultGraph()));
+    store.addQuad(quad(Alias, OWL_EQUIV, Base, defaultGraph()));   // Alias ≡ Base
+    store.addQuad(quad(Child, RDFS_SUB,  Base, defaultGraph()));   // Child ⊑ Base (explicit)
 
     const reasoner = new RdfReasoner();
     await reasoner.ready;
@@ -86,16 +92,13 @@ test("classify(store): A→B→C chain returns direct subClassOf edges", async (
   });
 
   const RDFS_SUB = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
+  const ex = "http://example.org/";
 
-  // Konclude returns direct Hasse-diagram edges only (not transitive closure).
+  // Child ⊑ Base (explicit) + Alias≡Base → Konclude picks Alias as canonical and
+  // emits Child ⊑ Alias as a new Hasse edge (not stated in TBox).
   expect(
-    result.some((t) => t.s === "http://example.org/A" && t.p === RDFS_SUB && t.o === "http://example.org/B"),
-    `Expected :A subClassOf :B in inferred triples.\nGot:\n${result.map((t) => `  <${t.s}> <${t.p}> <${t.o}>`).join("\n")}`,
-  ).toBe(true);
-
-  expect(
-    result.some((t) => t.s === "http://example.org/B" && t.p === RDFS_SUB && t.o === "http://example.org/C"),
-    `Expected :B subClassOf :C in inferred triples.\nGot:\n${result.map((t) => `  <${t.s}> <${t.p}> <${t.o}>`).join("\n")}`,
+    result.some((t) => t.s === ex + "Child" && t.p === RDFS_SUB && t.o === ex + "Alias"),
+    `Expected :Child subClassOf :Alias in inferred triples.\nGot:\n${result.map((t) => `  <${t.s}> <${t.p}> <${t.o}>`).join("\n")}`,
   ).toBe(true);
 });
 
@@ -137,21 +140,26 @@ test("checkConsistency(store): simple subclass chain is consistent", async ({
 // Test 4: classify(store) with Turtle parsed via n3.Parser
 // ---------------------------------------------------------------------------
 
-test("classify(store): parse Turtle via n3.Parser, run classification", async ({
+test("classify(store): parse Turtle via n3.Parser, Puppy⊑PetDog infers Puppy⊑Dog", async ({
   page,
 }) => {
   const result = await page.evaluate(async () => {
     const { RdfReasoner, INFERRED_GRAPH_IRI, DataFactory, Store, Parser } = window;
     const { namedNode } = DataFactory;
 
+    // Dog is canonical (has explicit chain Dog⊑Mammal⊑Animal).
+    // PetDog ≡ Dog makes PetDog an alias.
+    // Puppy ⊑ PetDog (explicit, via alias) → Puppy ⊑ Dog (canonical) is inferred.
     const turtle = `
       @prefix ex: <http://example.org/> .
       @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
       @prefix owl: <http://www.w3.org/2002/07/owl#> .
+
       ex:Animal a owl:Class .
       ex:Mammal a owl:Class ; rdfs:subClassOf ex:Animal .
       ex:Dog    a owl:Class ; rdfs:subClassOf ex:Mammal .
-      ex:Poodle a owl:Class ; rdfs:subClassOf ex:Dog .
+      ex:PetDog a owl:Class ; owl:equivalentClass ex:Dog .
+      ex:Puppy  a owl:Class ; rdfs:subClassOf ex:PetDog .
     `;
 
     const store = new Store();
@@ -178,10 +186,11 @@ test("classify(store): parse Turtle via n3.Parser, run classification", async ({
   const RDFS_SUB = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
   const ex = "http://example.org/";
 
-  // Konclude returns direct Hasse-diagram edges only.
-  expect(result.some((t) => t.s === ex + "Mammal" && t.p === RDFS_SUB && t.o === ex + "Animal")).toBe(true);
-  expect(result.some((t) => t.s === ex + "Dog"    && t.p === RDFS_SUB && t.o === ex + "Mammal")).toBe(true);
-  expect(result.some((t) => t.s === ex + "Poodle" && t.p === RDFS_SUB && t.o === ex + "Dog")).toBe(true);
+  // Puppy ⊑ PetDog (explicit, alias) → Puppy ⊑ Dog (canonical) is a new Hasse edge.
+  expect(
+    result.some((t) => t.s === ex + "Puppy" && t.p === RDFS_SUB && t.o === ex + "Dog"),
+    `Expected :Puppy subClassOf :Dog in inferred triples.\nGot:\n${result.map((t) => `  <${t.s}> <${t.p}> <${t.o}>`).join("\n")}`,
+  ).toBe(true);
 });
 
 // ---------------------------------------------------------------------------
