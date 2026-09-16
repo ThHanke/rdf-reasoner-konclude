@@ -195,11 +195,30 @@ else
   echo "patch-konclude-mjs: [SKIP]    getNewWorker already allows on-demand allocation"
 fi
 
-# ── Patch 7: pthreadPoolSize (no-op: keeping Emscripten default of 8) ─────────
-# 8 pre-allocated workers is sufficient — Konclude creates on-demand threads
-# beyond the pool when needed. Previously bumped to 32 during ALIF+ debugging
-# but that caused thread exhaustion in benchmarks (384 workers per subprocess).
-echo "patch-konclude-mjs: [SKIP]    pthreadPoolSize stays at 8 (Emscripten default)"
+# ── Patch 7: increase pthreadPoolSize 8→32 ───────────────────────────────────
+# KPSet classification spawns ~17 threads total. Chrome silently defers/drops
+# workers created mid-classification while 8+ WASM threads are already running:
+# the worker is allocated, its HTTP fetch succeeds, but the module never
+# evaluates. Pre-allocating 32 workers at module init ensures all threads are
+# ready before classify() is called, avoiding on-demand creation in the browser.
+# The "384 threads per subprocess" exhaustion was a benchmark-only issue (12
+# concurrent subprocesses × 32); regular usage runs one instance at a time.
+BEFORE_POOL='var pthreadPoolSize=8;'
+AFTER_POOL='var pthreadPoolSize=32;'
+
+if grep -qF "$BEFORE_POOL" "$DIST_FILE"; then
+  python3 - "$DIST_FILE" <<'PYEOF'
+import sys
+path = sys.argv[1]
+before = 'var pthreadPoolSize=8;'
+after  = 'var pthreadPoolSize=32;'
+text = open(path).read()
+open(path, 'w').write(text.replace(before, after, 1))
+PYEOF
+  echo "patch-konclude-mjs: [APPLIED] pthreadPoolSize 8→32 (pre-allocate for KPSet browser deadlock fix)"
+else
+  echo "patch-konclude-mjs: [SKIP]    pthreadPoolSize already patched"
+fi
 
 # ── Patch 8: force pthreads to use threadPrintErr (fd 2) ─────────────────────
 # In pthread workers, Module["printErr"] points to self.postMessage({type:"log"})
