@@ -1277,3 +1277,55 @@ describe.skipIf(!wasmExists)("Property-type exclusion (R15)", () => {
     expect(leaked, "object-only classifyProperties() must not emit triples involving data property IRIs").toHaveLength(0);
   }, 30_000);
 });
+
+// ---------------------------------------------------------------------------
+// ABox realization: minCardinality and owl:oneOf (formerly known-limitations)
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!wasmExists)("ABox realization: minCardinality and owl:oneOf", () => {
+  it("minCardinality 2: individual satisfying restriction typed as restricted class", async () => {
+    const reasoner = new RdfReasoner();
+    await reasoner.ready;
+    try {
+      const quads = parseTurtle(`
+        @prefix owl: <http://www.w3.org/2002/07/owl#> .
+        @prefix ex:  <http://example.org/> .
+        ex:manages a owl:ObjectProperty .
+        ex:TeamLead a owl:Class ;
+            owl:equivalentClass [ a owl:Restriction ; owl:onProperty ex:manages ; owl:minCardinality 2 ] .
+        ex:dave a owl:NamedIndividual ; ex:manages ex:bob , ex:eve .
+        ex:bob  a owl:NamedIndividual .
+        ex:eve  a owl:NamedIndividual .
+        ex:bob owl:differentFrom ex:eve .
+      `);
+      const inferred = await reasoner.materialize(quads);
+      expect(
+        inferred.some((q) => q.predicate.value === RDF_TYPE && q.subject.value === EX("dave") && q.object.value === EX("TeamLead")),
+        "dave must be inferred as TeamLead via minCardinality 2",
+      ).toBe(true);
+    } finally {
+      reasoner.terminate();
+    }
+  }, 30_000);
+
+  it("owl:oneOf: enumerated individuals typed as nominal class", async () => {
+    const reasoner = new RdfReasoner();
+    await reasoner.ready;
+    try {
+      const quads = parseTurtle(`
+        @prefix owl: <http://www.w3.org/2002/07/owl#> .
+        @prefix ex:  <http://example.org/> .
+        ex:LeadershipTeam a owl:Class ; owl:oneOf (ex:alice ex:dave) .
+        ex:alice a owl:NamedIndividual .
+        ex:dave  a owl:NamedIndividual .
+      `);
+      const inferred = await reasoner.materialize(quads);
+      expect(
+        inferred.some((q) => q.predicate.value === RDF_TYPE && q.subject.value === EX("alice") && q.object.value === EX("LeadershipTeam")),
+        "alice must be inferred as LeadershipTeam via owl:oneOf",
+      ).toBe(true);
+    } finally {
+      reasoner.terminate();
+    }
+  }, 30_000);
+});
