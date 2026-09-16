@@ -491,5 +491,47 @@ describe.skipIf(!wasmExists)(
       },
       30000
     );
+
+    // Cases 15-16 — hasSelf + propertyDisjointWith (fixed by patch-022, 2026-09-16)
+    // WASM now surpasses native: saturation applySELFRule checks disjoint roles.
+    it(
+      "case 15: hasSelf(p) + hasSelf(q) + p owl:propertyDisjointWith q — WASM detects inconsistency",
+      async () => {
+        const quads = parseTurtle(`
+          @prefix :    <http://example.org/reasoner-test#> .
+          @prefix owl: <http://www.w3.org/2002/07/owl#> .
+          :p a owl:ObjectProperty .
+          :q a owl:ObjectProperty .
+          :p owl:propertyDisjointWith :q .
+          :HasSelfP a owl:Class ;
+            owl:equivalentClass [ a owl:Restriction ; owl:onProperty :p ; owl:hasSelf true ] .
+          :HasSelfQ a owl:Class ;
+            owl:equivalentClass [ a owl:Restriction ; owl:onProperty :q ; owl:hasSelf true ] .
+          :a a owl:NamedIndividual , :HasSelfP , :HasSelfQ .
+        `);
+        const consistent = await reasoner.checkConsistency(quads);
+        expect(consistent).toBe(false);
+      },
+      30000
+    );
+
+    it(
+      "case 16: ReflexiveProperty(p) + hasSelf(q) + p owl:propertyDisjointWith q — WASM detects inconsistency",
+      async () => {
+        const quads = parseTurtle(`
+          @prefix :    <http://example.org/reasoner-test#> .
+          @prefix owl: <http://www.w3.org/2002/07/owl#> .
+          :p a owl:ObjectProperty , owl:ReflexiveProperty .
+          :q a owl:ObjectProperty .
+          :p owl:propertyDisjointWith :q .
+          :HasSelfQ a owl:Class ;
+            owl:equivalentClass [ a owl:Restriction ; owl:onProperty :q ; owl:hasSelf true ] .
+          :a a owl:NamedIndividual , :HasSelfQ .
+        `);
+        const consistent = await reasoner.checkConsistency(quads);
+        expect(consistent).toBe(false);
+      },
+      30000
+    );
   }
 );
