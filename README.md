@@ -74,17 +74,18 @@ parser.parse(
   },
 );
 
-const reasoner = new RdfReasoner();
-await reasoner.ready;
+// `using` terminates the Worker automatically at block exit (TS 5.2+ / Node 18+)
+{
+  using reasoner = new RdfReasoner();
+  await reasoner.ready;
 
-await reasoner.reason(store);
+  await reasoner.reason(store);
 
-// Inferred triples are written into the INFERRED_GRAPH_IRI named graph
-const inferred = store.getQuads(null, null, null, INFERRED_GRAPH_IRI);
-console.log(inferred.map((q) => `${q.subject.value} → ${q.object.value}`));
-// e.g. [ ':A → :C' ]  (transitive subClassOf)
-
-reasoner.terminate();
+  // Inferred triples are written into the INFERRED_GRAPH_IRI named graph
+  const inferred = store.getQuads(null, null, null, INFERRED_GRAPH_IRI);
+  console.log(inferred.map((q) => `${q.subject.value} → ${q.object.value}`));
+  // e.g. [ ':A → :C' ]  (transitive subClassOf)
+} // Worker terminated here — or call reasoner.terminate() explicitly
 ```
 
 No Worker setup needed — Node.js 18+ picks up the `"node"` export condition which installs a `worker_threads` shim automatically.
@@ -147,6 +148,34 @@ const report = await reasoner.validate(store);
 // report.consistent, report.errors (Quad[][]), report.warnings (ClassWarning[])
 
 reasoner.terminate(); // shut down the Worker
+```
+
+### Worker lifecycle
+
+`RdfReasoner` owns a background Worker thread. **Always terminate it** when done
+or the thread will leak. Three patterns:
+
+```typescript
+// 1. Explicit terminate() — works everywhere
+const reasoner = new RdfReasoner();
+await reasoner.ready;
+try {
+  await reasoner.classify(store);
+} finally {
+  reasoner.terminate();
+}
+
+// 2. using keyword (TypeScript 5.2+ / Node 18+, recommended)
+{
+  using reasoner = new RdfReasoner();
+  await reasoner.ready;
+  await reasoner.classify(store);
+} // Worker terminated automatically at block exit
+
+// 3. FinalizationRegistry safety net (automatic, non-deterministic)
+// If terminate() / using is omitted, the Worker is terminated when the
+// RdfReasoner instance is garbage-collected.  GC timing is unpredictable —
+// do not rely on this as the primary cleanup strategy.
 ```
 
 `classify(store)`, `materialize(store)`, and `classifyProperties(store)` write

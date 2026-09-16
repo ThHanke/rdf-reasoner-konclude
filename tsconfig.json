@@ -11,7 +11,7 @@
     "sourceMap": true,
     "esModuleInterop": false,
     "skipLibCheck": false,
-    "lib": ["ES2022", "WebWorker"]
+    "lib": ["ES2022", "ES2023", "WebWorker"]
   },
   "include": ["ts/**/*.ts"],
   "exclude": ["node_modules", "dist"]

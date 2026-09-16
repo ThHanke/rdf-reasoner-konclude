@@ -7,7 +7,13 @@
  *   - `reason(quads, opts?)` — runs OWL-DL inference over the input quads
  *   - `classify(quads)` — alias for reason(quads, {mode:'classify'})
  *   - `checkConsistency(quads)` — checks whether the ontology is consistent
- *   - `terminate()` — terminates the underlying Worker
+ *   - `terminate()` / `[Symbol.dispose]()` — terminates the underlying Worker
+ *
+ * **Lifecycle**: always call `terminate()` (or use `using` with TS 5.2+
+ * Explicit Resource Management) when done. The Worker thread will not be
+ * collected automatically by the JS garbage collector. A `FinalizationRegistry`
+ * safety net terminates the Worker on GC if `terminate()` was not called, but
+ * GC timing is non-deterministic — do not rely on it.
  *
  * Named graphs in the input quads are silently dropped (NTriples is
  * triple-only). All returned quads are placed in the DefaultGraph.
@@ -95,6 +101,17 @@ const OWL_INVERSE_OF = "http://www.w3.org/2002/07/owl#inverseOf";
 // RdfReasoner
 // ---------------------------------------------------------------------------
 
+// Module-level registry: terminates the Worker when an RdfReasoner is GC'd
+// without an explicit terminate() call.  The held value is the Worker itself
+// (a plain object ref — not the RdfReasoner) to avoid extending its lifetime.
+const workerRegistry = new FinalizationRegistry<Worker>((worker) => {
+  try {
+    worker.terminate();
+  } catch {
+    // Worker may already be terminated; ignore.
+  }
+});
+
 export class RdfReasoner {
   /** Resolves when the Worker WASM module is ready; rejects on init failure. */
   readonly ready: Promise<void>;
@@ -138,6 +155,11 @@ export class RdfReasoner {
       const W = globalThis.Worker;
       this.worker = new W(url, { type: "module" });
     }
+
+    // Safety net: terminate the Worker if this instance is GC'd without an
+    // explicit terminate() call.  GC timing is non-deterministic — callers
+    // should always call terminate() or use the `using` keyword.
+    workerRegistry.register(this, this.worker);
 
     // Store the readyReject handle so the onerror handler can use it if the
     // Worker crashes before posting {type:'ready'}.
@@ -2743,13 +2765,31 @@ export class RdfReasoner {
     return result;
   }
 
-  /** Terminate the underlying Worker and reject all pending calls. */
+  /**
+   * Terminate the underlying Worker and reject all pending calls.
+   *
+   * Must be called when the reasoner is no longer needed. Alternatively, use
+   * the `using` keyword (TypeScript 5.2+ Explicit Resource Management):
+   * ```ts
+   * {
+   *   using reasoner = new RdfReasoner();
+   *   await reasoner.ready;
+   *   const result = await reasoner.classify(quads);
+   * } // Worker terminated automatically here
+   * ```
+   */
   terminate(): void {
+    workerRegistry.unregister(this);
     this.worker.terminate();
     const err = new Error("Worker terminated");
     for (const entry of this.pending.values()) {
       entry.reject(err);
     }
     this.pending.clear();
+  }
+
+  /** Explicit Resource Management support (`using` keyword, TS 5.2+). */
+  [Symbol.dispose](): void {
+    this.terminate();
   }
 }
