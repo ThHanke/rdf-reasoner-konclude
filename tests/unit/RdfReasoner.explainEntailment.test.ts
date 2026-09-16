@@ -913,6 +913,8 @@ describe("RdfReasoner — explainEntailment", () => {
         simulateWorkerMessage({ id: req.id, result: "" });
       } else if (req.method === "hasTripleJustification") {
         simulateWorkerMessage({ id: req.id, result: false });
+      } else if (req.method === "getInferredTripleBuffer") {
+        simulateWorkerMessage({ id: req.id, result: new ArrayBuffer(0) });
       }
     });
 

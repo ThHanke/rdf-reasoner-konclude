@@ -20,6 +20,8 @@ const mocks = vi.hoisted(() => {
 
   const reasonerReady = Promise.resolve();
   const reasonMock = vi.fn<[unknown], Promise<void>>().mockResolvedValue(undefined);
+  const classifyMock = vi.fn<[unknown], Promise<void>>().mockResolvedValue(undefined);
+  const materializeMock = vi.fn<[unknown], Promise<void>>().mockResolvedValue(undefined);
   const checkConsistencyMock = vi.fn<[unknown], Promise<boolean>>().mockResolvedValue(true);
   const terminateMock = vi.fn<[], void>();
 
@@ -27,6 +29,8 @@ const mocks = vi.hoisted(() => {
   const RdfReasonerMock = vi.fn(function (this: any) {
     this.ready = reasonerReady;
     this.reason = reasonMock;
+    this.classify = classifyMock;
+    this.materialize = materializeMock;
     this.checkConsistency = checkConsistencyMock;
     this.terminate = terminateMock;
   });
@@ -38,6 +42,8 @@ const mocks = vi.hoisted(() => {
     stdoutWrite,
     stderrWrite,
     reasonMock,
+    classifyMock,
+    materializeMock,
     checkConsistencyMock,
     terminateMock,
     RdfReasonerMock,
@@ -88,11 +94,15 @@ describe("cli run()", () => {
     mocks.readFileSyncMock.mockReset();
     mocks.writeFileSyncMock.mockReset();
     mocks.reasonMock.mockReset();
+    mocks.classifyMock.mockReset();
+    mocks.materializeMock.mockReset();
     mocks.checkConsistencyMock.mockReset();
     mocks.terminateMock.mockReset();
     mocks.stdoutWrite.mockReset();
     mocks.stderrWrite.mockReset();
     mocks.reasonMock.mockResolvedValue(undefined);
+    mocks.classifyMock.mockResolvedValue(undefined);
+    mocks.materializeMock.mockResolvedValue(undefined);
     mocks.checkConsistencyMock.mockResolvedValue(true);
   });
 
@@ -121,13 +131,13 @@ describe("cli run()", () => {
     expect(out).toMatch(/\d+\.\d+\.\d+/);
   });
 
-  it("classify: reads file, calls reason(), returns 0", async () => {
+  it("classify: reads file, calls classify(), returns 0", async () => {
     mocks.readFileSyncMock.mockReturnValue(SIMPLE_NT);
     const code = await run(["--input", "ont.nt"]);
     expect(code).toBe(0);
     expect(mocks.readFileSyncMock).toHaveBeenCalledWith("ont.nt", "utf8");
     expect(mocks.RdfReasonerMock).toHaveBeenCalledOnce();
-    expect(mocks.reasonMock).toHaveBeenCalledOnce();
+    expect(mocks.classifyMock).toHaveBeenCalledOnce();
     expect(mocks.terminateMock).toHaveBeenCalledOnce();
   });
 
@@ -193,7 +203,7 @@ describe("cli run()", () => {
 
   it("reasoning failure → stderr message, terminate still called, returns 2", async () => {
     mocks.readFileSyncMock.mockReturnValue(SIMPLE_NT);
-    mocks.reasonMock.mockRejectedValue(new Error("WASM crash"));
+    mocks.classifyMock.mockRejectedValue(new Error("WASM crash"));
     const code = await run(["--input", "ont.nt"]);
     expect(code).toBe(2);
     const err = mocks.stderrWrite.mock.calls.map((c) => c[0]).join("");
