@@ -206,6 +206,17 @@ public:
             delete mSatNodeExpCache;
             mSatNodeExpCache = nullptr;
         }
+        // Disable the satisfiability expander cache for the same reason: it is a
+        // manager-level singleton whose entries survive reset() and are keyed by
+        // concept-set signature.  After a TBox classification run, ABox realization
+        // on the same concepts hits those stale entries and skips ABox saturation,
+        // causing missing transitive rdf:type inferences (R12) and empty TBox output
+        // after a mode switch (R13/R14).
+        if (mSatExpCache) {
+            mSatExpCache->stopThread(true);
+            delete mSatExpCache;
+            mSatExpCache = nullptr;
+        }
         return this;
     }
 
