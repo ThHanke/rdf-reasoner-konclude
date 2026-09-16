@@ -9,7 +9,7 @@ symptoms:
   - AsymmetricProperty bidirectional assertion not flagged as inconsistent (fixed by patches 027-028)
   - IrreflexiveProperty self-reference not flagged as inconsistent (fixed by patches 027-028)
   - NegativePropertyAssertion inconsistency not detected (fixed by patches 025+026)
-  - materialize() hangs on AllDisjointClasses/disjointUnionOf/NPA blank-node NTriples
+  - materialize() hangs on AllDisjointClasses/disjointUnionOf/NPA blank-node NTriples (fixed by patch-030 and patches 020-021)
 root_cause: upstream_limitation
 resolution_type: upstream_fix_required
 severity: medium
@@ -85,8 +85,8 @@ Integration tests: `tests/integration/issue13-owl-violations.test.ts` (consisten
 | FunctionalProperty sameAs (property-characteristics)             | `Alice owl:sameAs Bob` inferred                  | same as R8c                                                      | **PARITY** (plan-041, commit 66c5584)                                               |
 | NegativePropertyAssertion — no spurious positive (owl2dl-parity) | `alice knows bob` must NOT appear                | fresh RdfReasoner avoids BackendAssCache state accumulation      | **PARITY** (plan-041, commit 2ff1cd7)                                               |
 | NPA consistent materialize (property-characteristics)            | no spurious assertions                           | fresh RdfReasoner avoids BackendAssCache state accumulation      | **PARITY** (plan-041, commit 2ff1cd7)                                               |
-| AllDisjointClasses — negative probe (NTriples)                   | `x rdf:type B` must NOT appear                   | materialize() hangs 30s+ on ALIF+ NTriples path                  | **WASM_REGRESSION** (R7a, native works in ~8ms; distinct from patch-030 Turtle fix) |
-| disjointUnionOf — superclass entailment (NTriples)               | `x rdf:type C` probe                             | materialize() hangs 30s+ on ALIF+ NTriples path                  | **WASM_REGRESSION** (R7b, native works in ~8ms; distinct from patch-030 Turtle fix) |
+| AllDisjointClasses — negative probe (NTriples)                   | `x rdf:type B` must NOT appear                   | ✓ (patch-030 saturation-clash-combined)                           | **PARITY** (R7a, fixed by patch-030, 2026-09-16)                                    |
+| disjointUnionOf — superclass entailment (NTriples)               | `x rdf:type C` probe                             | ✓ (patch-030 saturation-clash-combined)                           | **PARITY** (R7b, fixed by patch-030, 2026-09-16)                                    |
 
 ### Classification Taxonomy
 
@@ -185,22 +185,17 @@ See project_upstream_konclude_bugs.md Bug 4.
 Datatype restriction reasoning works correctly. `age=15 >= 10` → consistent; `age=5 < 10` → inconsistent.
 Both match native Konclude ground truth.
 
-### WASM_REGRESSION — materialize() hang on AllDisjointClasses / disjointUnionOf (R7a, R7b)
+### PARITY — materialize() AllDisjointClasses / disjointUnionOf (R7a, R7b, fixed by patch-030)
 
-`materialize()` (full realization pipeline) hangs indefinitely in WASM on consistent ontologies
-with these constructs when used with ABox individuals:
+`materialize()` on ontologies with `owl:AllDisjointClasses` and `owl:disjointUnionOf` now
+completes correctly. Native Konclude v0.7.0 completes in ~8ms; WASM now matches.
 
-- `owl:AllDisjointClasses` + `owl:members` RDF list (R7a)
-- `owl:disjointUnionOf` RDF list (R7b)
+**Fix (patch-030, saturation-clash-combined):** The SI-expressiveness realization hang
+was caused by the saturation not setting clash flags for these constructs before the
+BackendAssCache marked nodes CompletelyHandled. Patch-030 adds the missing clash detection
+in the saturation layer, unblocking the realization pipeline.
 
-**This is a WASM-specific regression.** Native Konclude v0.7.0 completes correctly in ~8ms for
-identical ontologies (confirmed via Unit 2 investigation documented in
-`docs/plans/parity-gap-native-investigation-2026-06-03.md`). The hang is caused by a WASM
-realization thread lifecycle regression — likely related to SI-expressiveness triggering a
-different realization code path that stalls in the WASM pthread environment.
-
-Note: `checkConsistency()` on equivalent Turtle-format ontologies (cases 9, 11) works fine.
-The hang is realization-pipeline specific.
+Tests: `tests/integration/owl2dl-parity.test.ts` lines 604, 632+ (30s timeout, now passes).
 
 ### PARITY — materialize() with NegativePropertyAssertion (plan-041 workaround)
 
@@ -251,8 +246,7 @@ Tests live in `tests/integration/issue13-owl-violations.test.ts` (cases 15-16).
 
 | Classification                                      | Action                                                                                                                 |
 | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| WASM_REGRESSION (R7a/R7b materialize NTriples hang) | Investigate WASM realization thread lifecycle for ALIF+ NTriples path; compare pthread stack/semaphore state vs native |
-| PARITY (all cases 1–16 + R1–R8d)                   | No action needed; all consistency tests passing                                                                        |
+| PARITY (all cases 1–16 + R1–R8d + R7a/R7b)         | No action needed; all tests passing                                                                                    |
 | WASM_BUG_FIXED (case 12, patches 025+026)           | Upstream PRs pending for both NPA bugs                                                                                 |
 | WASM_SURPASSES_NATIVE (cases 3–4, patches 027-028)  | File upstream PRs for AsymmetricProperty + IrreflexiveProperty saturation clash fixes                                  |
 | WASM_SURPASSES_NATIVE (case 10, patch 029)          | File upstream PR for AllDisjointProperties + EquivalentObjectProperties clash fix                                      |
