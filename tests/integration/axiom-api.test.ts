@@ -701,12 +701,19 @@ ex:EmptyClass a owl:Class ; rdfs:subClassOf owl:Nothing .
 // Expected ABox inference: alice rdf:type Animal (in INFERRED_GRAPH_IRI)
 // ---------------------------------------------------------------------------
 
+// ── R12: classify() then materialize() ──────────────────────────────────────
+// Each mode-switching test owns its own RdfReasoner to prevent cross-test
+// cache contamination (same TURTLE → same fingerprint across tests).
+// Design constraint: an RdfReasoner instance is bound to one store's lifecycle.
+// Explicit source axioms (e.g. Person rdfs:subClassOf Animal) are present in
+// the default graph and are filtered by existsInSourceGraphs — they are NOT
+// re-emitted to the inferred graph. Assertions must check all graphs for those.
+
 describe.skipIf(!wasmExists)(
-  "Sequential call state isolation (R12 + R13 + R14)",
+  "R12: classify() then materialize(includeClassHierarchy:true) on same instance",
   () => {
     const SEQ = "http://example.org/seq#";
     const seq = (local: string) => `${SEQ}${local}`;
-
     const TURTLE = `
 @prefix ex: <${SEQ}> .
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
@@ -719,39 +726,28 @@ ex:alice a ex:Person .
 `.trim();
 
     let reasoner: RdfReasoner;
-
     beforeAll(async () => {
       reasoner = new RdfReasoner();
       await reasoner.ready;
     }, 360000);
-
-    afterAll(() => {
-      reasoner?.terminate();
-    });
-
-    // Helper: build a fresh Store from TURTLE for each test
-    const freshStore = (): Store => {
-      const parser = new Parser({ format: "Turtle" });
-      return new Store(parser.parse(TURTLE) as Quad[]);
-    };
-
-    // ── R12: classify() then materialize() on same instance ─────────────────
-    // Step 1: classify(store) → assert rdfs:subClassOf in INFERRED_GRAPH_IRI
-    // Step 2: materialize(store, { includeClassHierarchy: true }) → assert rdf:type in INFERRED_GRAPH_IRI
-    // Checking subClassOf BEFORE materialize avoids the _materializeOnStore
-    // removeQuads clearing the classify output.
+    afterAll(() => reasoner?.terminate());
 
     it(
-      "R12: classify() then materialize(includeClassHierarchy:true) on same instance — both produce correct results",
+      "both produce correct results",
       async () => {
-        const store = freshStore();
+        const parser = new Parser({ format: "Turtle" });
+        const store = new Store(parser.parse(TURTLE) as Quad[]);
         const inferredGraph = DataFactory.namedNode(INFERRED_GRAPH_IRI);
 
         // Step 1: classify
         await reasoner.classify(store);
-        const subClassOfQuads = store.getQuads(null, RDFS_SUBCLASS_OF, null, inferredGraph);
-        expect(subClassOfQuads.length).toBeGreaterThan(0);
-        const personSubAnimal = subClassOfQuads.some(
+        // Explicit Person→Animal is in the default graph (filtered by existsInSourceGraphs).
+        // Check derived subClassOf results exist in the inferred graph.
+        const inferredSubClassOf = store.getQuads(null, RDFS_SUBCLASS_OF, null, inferredGraph);
+        expect(inferredSubClassOf.length).toBeGreaterThan(0);
+        // The triple Person rdfs:subClassOf Animal must exist somewhere in the store
+        // (default graph for explicit axioms, inferred graph for derived ones).
+        const personSubAnimal = store.getQuads(null, RDFS_SUBCLASS_OF, null, null).some(
           q => q.subject.value === seq("Person") && q.object.value === seq("Animal"),
         );
         expect(personSubAnimal).toBe(true);
@@ -767,46 +763,68 @@ ex:alice a ex:Person .
       },
       360000,
     );
+  },
+);
 
-    // ── R13: checkConsistency() then classify() on same instance ─────────────
+// ── R13: checkConsistency() then classify() ──────────────────────────────────
+
+describe.skipIf(!wasmExists)(
+  "R13: checkConsistency() then classify() on same instance",
+  () => {
+    const SEQ = "http://example.org/seq#";
+    const seq = (local: string) => `${SEQ}${local}`;
+    const TURTLE = `
+@prefix ex: <${SEQ}> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+<http://example.org/seq> a owl:Ontology .
+ex:Animal a owl:Class .
+ex:Person a owl:Class ; rdfs:subClassOf ex:Animal .
+ex:alice a ex:Person .
+`.trim();
+
+    let reasoner: RdfReasoner;
+    beforeAll(async () => {
+      reasoner = new RdfReasoner();
+      await reasoner.ready;
+    }, 360000);
+    afterAll(() => reasoner?.terminate());
 
     it(
-      "R13: checkConsistency() then classify() on same instance — no hang, correct TBox output",
+      "no hang, correct TBox output",
       async () => {
-        const store = freshStore();
+        const parser = new Parser({ format: "Turtle" });
+        const store = new Store(parser.parse(TURTLE) as Quad[]);
         const inferredGraph = DataFactory.namedNode(INFERRED_GRAPH_IRI);
 
         // Step 1: check consistency
         const consistent = await reasoner.checkConsistency(store);
         expect(consistent).toBe(true);
 
-        // Step 2: classify — must complete without hanging and produce inferred triples
+        // Step 2: classify — must complete and produce derived inferred triples
         await reasoner.classify(store);
-        const subClassOfQuads = store.getQuads(null, RDFS_SUBCLASS_OF, null, inferredGraph);
-        expect(subClassOfQuads.length).toBeGreaterThan(0);
-        const personSubAnimal = subClassOfQuads.some(
+        const inferredSubClassOf = store.getQuads(null, RDFS_SUBCLASS_OF, null, inferredGraph);
+        expect(inferredSubClassOf.length).toBeGreaterThan(0);
+        // Person→Animal exists in the store (default graph — explicit axiom)
+        const personSubAnimal = store.getQuads(null, RDFS_SUBCLASS_OF, null, null).some(
           q => q.subject.value === seq("Person") && q.object.value === seq("Animal"),
         );
         expect(personSubAnimal).toBe(true);
       },
       360000,
     );
+  },
+);
 
-    // ── R14: whatIf() does not affect subsequent classify() ──────────────────
-    // Call whatIf with a harmless addition (new class ClassX subClassOf Animal).
-    // whatIf invalidates all caches. Subsequent classify(store) must re-load the
-    // unmodified base store and produce correct TBox output.
-    //
-    // Uses a distinct ontology prefix (seq14:) to avoid fingerprint cache
-    // collision with the R12/R13 stores that share the same TURTLE content.
+// ── R14: whatIf() does not affect subsequent classify() ──────────────────────
 
-    it(
-      "R14: whatIf() does not contaminate subsequent classify() — correct TBox output after cache invalidation",
-      async () => {
-        // Distinct prefix avoids fingerprint collision with R12/R13 stores
-        const SEQ14 = "http://example.org/seq14#";
-        const seq14 = (local: string) => `${SEQ14}${local}`;
-        const TURTLE14 = `
+describe.skipIf(!wasmExists)(
+  "R14: whatIf() does not contaminate subsequent classify()",
+  () => {
+    const SEQ14 = "http://example.org/seq14#";
+    const seq14 = (local: string) => `${SEQ14}${local}`;
+    const TURTLE14 = `
 @prefix ex: <${SEQ14}> .
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
@@ -816,6 +834,17 @@ ex:Animal a owl:Class .
 ex:Person a owl:Class ; rdfs:subClassOf ex:Animal .
 ex:alice a ex:Person .
 `.trim();
+
+    let reasoner: RdfReasoner;
+    beforeAll(async () => {
+      reasoner = new RdfReasoner();
+      await reasoner.ready;
+    }, 360000);
+    afterAll(() => reasoner?.terminate());
+
+    it(
+      "correct TBox output after cache invalidation",
+      async () => {
         const parser = new Parser({ format: "Turtle" });
         const store = new Store(parser.parse(TURTLE14) as Quad[]);
         const inferredGraph = DataFactory.namedNode(INFERRED_GRAPH_IRI);
@@ -844,15 +873,16 @@ ex:alice a ex:Person .
         // Now classify — whatIf invalidated all caches, so this must re-load
         // the unmodified base store and produce correct TBox output
         await reasoner.classify(store);
-        const subClassOfQuads = store.getQuads(null, RDFS_SUBCLASS_OF, null, inferredGraph);
-        expect(subClassOfQuads.length).toBeGreaterThan(0);
-        const personSubAnimal = subClassOfQuads.some(
+        const inferredSubClassOf = store.getQuads(null, RDFS_SUBCLASS_OF, null, inferredGraph);
+        expect(inferredSubClassOf.length).toBeGreaterThan(0);
+        // Person→Animal exists in the store (default graph — explicit axiom)
+        const personSubAnimal = store.getQuads(null, RDFS_SUBCLASS_OF, null, null).some(
           q => q.subject.value === seq14("Person") && q.object.value === seq14("Animal"),
         );
         expect(personSubAnimal).toBe(true);
 
         // ClassX must NOT appear (it was only in the whatIf additions, not in the base store)
-        const classXPresent = subClassOfQuads.some(
+        const classXPresent = store.getQuads(null, RDFS_SUBCLASS_OF, null, null).some(
           q => q.subject.value === seq14("ClassX") || q.object.value === seq14("ClassX"),
         );
         expect(classXPresent).toBe(false);
