@@ -550,9 +550,8 @@ construct; this package fixes it via patches 011–012 (role axiom correctness, 
 
 `owl:AllDisjointClasses`, `owl:disjointUnionOf`, and `owl:NegativePropertyAssertion` all work in
 `materialize()` — the JS layer expands list axioms to pairwise form before handing off to WASM.
-The only known remaining gap is `owl:FunctionalProperty` + `owl:InverseFunctionalProperty` on the
-same role with a single filler (ALIF+ precompute hang). This case is tracked in
-`tests/integration/known-limitations.test.ts`.
+`owl:FunctionalProperty` and `owl:InverseFunctionalProperty` (including 1-filler cases) work
+across all API paths — patches 020–021 fix the upstream ALIF+ precompute hang.
 
 ### Classification (`classify`)
 
@@ -564,8 +563,8 @@ Verified working:
 - `owl:minCardinality`, `owl:maxCardinality`, `owl:exactCardinality`
 - `owl:minQualifiedCardinality`, `owl:maxQualifiedCardinality`, `owl:qualifiedCardinality`
 - `owl:ObjectProperty` with `rdfs:domain`, `rdfs:range`, `owl:inverseOf`
-- `owl:TransitiveProperty`, `owl:FunctionalProperty`, `owl:InverseFunctionalProperty`
-- `owl:ReflexiveProperty`, `owl:SymmetricProperty`
+- `owl:TransitiveProperty`, `owl:FunctionalProperty`, `owl:InverseFunctionalProperty` (including 1-filler ALIF+ cases)
+- `owl:ReflexiveProperty`, `owl:SymmetricProperty`, `owl:AsymmetricProperty`, `owl:IrreflexiveProperty`
 - `owl:propertyChainAxiom`
 
 ### ABox realization (`materialize`)
@@ -578,6 +577,7 @@ Input ABox axioms accepted:
 - `rdf:type` assertions
 - Object property assertions (`owl:ObjectProperty`)
 - `owl:differentFrom` / `owl:AllDifferent`
+- `owl:FunctionalProperty` / `owl:InverseFunctionalProperty` (including 1-filler `owl:sameAs` inference)
 
 Restriction constructs verified working over ABox individuals:
 
@@ -585,6 +585,8 @@ Restriction constructs verified working over ABox individuals:
 - `owl:someValuesFrom` — existential restriction propagation
 - `owl:allValuesFrom` — universal restriction checked at consistency / realization
 - `owl:hasSelf` — reflexive self-role assertions inferred for typed individuals
+- `owl:minCardinality` / `owl:minQualifiedCardinality` — ABox `rdf:type` inference from distinct fillers
+- `owl:oneOf` — nominal class membership (`rdf:type`) for enumerated individuals
 
 ### Known output gaps
 

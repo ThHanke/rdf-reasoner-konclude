@@ -103,14 +103,10 @@ describe.skipIf(!wasmExists)("known-limitations: owl:oneOf ABox realization gap"
 // ---------------------------------------------------------------------------
 // ALIF+ hang: FunctionalProperty + InverseFunctionalProperty + 1 filler
 // ---------------------------------------------------------------------------
-// Upstream Konclude bug: when a role has both FP and IFP axioms and the ABox
-// has exactly one filler, the ALIF+ saturation rule triggers a precomputation
-// loop that never terminates in WASM (plan-043, upstream-bug-003).
-// JS workaround in ts/index.ts strips FP/IFP before WASM and materialises
-// sameAs pairs in JS — covers the standard FP-only case but not FP+IFP combos.
+// FIXED by patches 020-021 (trivial-consistency flag + cache reader null guard).
 describe.skipIf(!wasmExists)("known-limitations: ALIF+ (FP+IFP 1-filler hang)", () => {
-  it.skip(
-    "FP+IFP: 1 filler → both sameAs directions via ALIF+ (hangs, plan-043)",
+  it(
+    "FP+IFP: 1 filler → both sameAs directions via ALIF+",
     async () => {
       const reasoner = new RdfReasoner();
       await reasoner.ready;

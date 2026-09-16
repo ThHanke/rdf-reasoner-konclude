@@ -1,0 +1,13 @@
+--- a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.cpp	2026-09-16 09:05:43.380313637 +0200
++++ b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.cpp	2026-09-16 09:06:23.261060896 +0200
+@@ -534,7 +534,9 @@
+ 					}
+ 					reader->fixOntologyData(ontologyData);
+ 					mFixedOntologyIdentifierDataHashLock.unlock();
+-					ontologyData->waitIndividualLabelAssociationIndexed();
++					if (ontologyData) {
++						ontologyData->waitIndividualLabelAssociationIndexed();
++					}
+ 					return reader;
+ 				}
+ 

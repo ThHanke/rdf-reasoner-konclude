@@ -195,29 +195,33 @@ else
   echo "patch-konclude-mjs: [SKIP]    getNewWorker already allows on-demand allocation"
 fi
 
-# ── Patch 7: increase pthreadPoolSize 8→32 ───────────────────────────────────
-# KPSet starts 8 pre-allocated pool workers then spawns ~9 more on-demand during
-# classification (total ~17 threads).  Browser Chromium silently defers/drops
-# script evaluation for workers created mid-classification while 8+ WASM threads
-# are already running — on-demand workers are allocated, their HTTP fetch
-# succeeds, but the module never evaluates.  Pre-allocating 20 workers at module
-# init time ensures all threads are ready before classify() is called, avoiding
-# on-demand creation entirely.  20 gives 3 units of margin beyond observed peak.
-BEFORE_POOL='var pthreadPoolSize=8;'
-AFTER_POOL='var pthreadPoolSize=32;'
+# ── Patch 7: pthreadPoolSize (no-op: keeping Emscripten default of 8) ─────────
+# 8 pre-allocated workers is sufficient — Konclude creates on-demand threads
+# beyond the pool when needed. Previously bumped to 32 during ALIF+ debugging
+# but that caused thread exhaustion in benchmarks (384 workers per subprocess).
+echo "patch-konclude-mjs: [SKIP]    pthreadPoolSize stays at 8 (Emscripten default)"
 
-if grep -qF "$BEFORE_POOL" "$DIST_FILE"; then
+# ── Patch 8: force pthreads to use threadPrintErr (fd 2) ─────────────────────
+# In pthread workers, Module["printErr"] points to self.postMessage({type:"log"})
+# which posts to the Emscripten main thread's onmessage handler. That handler
+# doesn't handle {type:"log"} messages, so all C++ fprintf(stderr,...) output
+# from pthreads is silently dropped. Fix: always set err=threadPrintErr in
+# pthread context, so output goes to fd 2 (process stderr via fs.writeSync).
+BEFORE_PTHREAD_ERR='if(!Module["printErr"])err=threadPrintErr'
+AFTER_PTHREAD_ERR='if(ENVIRONMENT_IS_PTHREAD||!Module["printErr"])err=threadPrintErr'
+
+if grep -qF "$BEFORE_PTHREAD_ERR" "$DIST_FILE"; then
   python3 - "$DIST_FILE" <<'PYEOF'
 import sys
 path = sys.argv[1]
-before = 'var pthreadPoolSize=8;'
-after  = 'var pthreadPoolSize=32;'
+before = 'if(!Module["printErr"])err=threadPrintErr'
+after  = 'if(ENVIRONMENT_IS_PTHREAD||!Module["printErr"])err=threadPrintErr'
 text = open(path).read()
 open(path, 'w').write(text.replace(before, after, 1))
 PYEOF
-  echo "patch-konclude-mjs: [APPLIED] pthreadPoolSize 8→32 (pre-allocate enough workers for KPSet)"
+  echo "patch-konclude-mjs: [APPLIED] force threadPrintErr in pthread workers (fix silent stderr)"
 else
-  echo "patch-konclude-mjs: [SKIP]    pthreadPoolSize already patched"
+  echo "patch-konclude-mjs: [SKIP]    threadPrintErr already forced in pthreads"
 fi
 
 echo "patch-konclude-mjs: done"

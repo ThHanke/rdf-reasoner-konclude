@@ -230,10 +230,11 @@ namespace Konclude {
             s->shouldStop = false;
             s->running    = false;
             s->started    = false;
-            if (pthread_create(&s->thread, nullptr, [](void* arg) -> void* {
+            int rc = pthread_create(&s->thread, nullptr, [](void* arg) -> void* {
                     static_cast<CThread*>(arg)->run();
                     return nullptr;
-                }, this) == 0) {
+                }, this);
+            if (rc == 0) {
                 s->started = true;
             }
         }

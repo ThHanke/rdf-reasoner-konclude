@@ -1,0 +1,26 @@
+--- a/Source/Reasoner/Consistiser/CTotallyPrecomputationThread.cpp	2026-09-16 09:05:43.376313563 +0200
++++ b/Source/Reasoner/Consistiser/CTotallyPrecomputationThread.cpp	2026-09-16 09:06:13.272873744 +0200
+@@ -908,6 +908,7 @@
+ 					consistencyDetected = true;
+ 					detectedConsistency = true;
+ 					LOG(INFO,getLogDomain(),logTr("Trivial consistency detected with merged individual."),getLogObject());
++					totallyPreCompItem->setAllIncompletelyHandledIndividualsRetrieved(true);
+ 				} else if (totallyPreCompItem->hasClashedSaturationIndividuals()) {
+ 					consistencyDetected = true;
+ 					detectedConsistency = false;
+@@ -916,6 +917,7 @@
+ 					consistencyDetected = true;
+ 					detectedConsistency = true;
+ 					LOG(INFO,getLogDomain(),logTr("Trivial consistency detected with individual saturation."),getLogObject());
++					totallyPreCompItem->setAllIncompletelyHandledIndividualsRetrieved(true);
+ 				} else if (!fullCompletionGraphConstruction && totallyPreCompItem->hasIndividualsSaturated() && totallyPreCompItem->hasAllIncompletelyHandledIndividualsRetrieved() && (indiCount > 0 || maxTriplesIndexedIndiId > 0)) {
+ 					consistencyDetected = true;
+ 					detectedConsistency = !totallyPreCompItem->hasIndividualPrecomputationClashed();
+@@ -947,6 +949,7 @@
+ 						} else {
+ 							consistencyDetected = true;
+ 							detectedConsistency = true;
++							totallyPreCompItem->setAllIncompletelyHandledIndividualsRetrieved(true);
+ 						}
+ 					} else {
+ 						satCalcJob = satCalcJobGen.getSatisfiableCalculationJob(indiList);

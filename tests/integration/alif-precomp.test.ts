@@ -4,10 +4,7 @@
  * Verifies that materialize() with owl:FunctionalProperty (Fixture A — 1 filler)
  * completes after a prior checkConsistency() call on the same RdfReasoner instance.
  *
- * Root cause (fixed by patch 034): mCurrRunningTestParallelCount in
- * CPrecomputationThread was not reset when a new ontology item was created.
- * A stale count > 0 from the previous call caused doNextPendingTests() →
- * canProcessMoreTests() → false → deadlock.
+ * Fixed by patches 020-021: trivial-consistency flag + cache reader null guard.
  *
  * See docs/solutions/capability-gaps/alif-plus-delta-debug-fixtures-2026-06-04.md
  */
