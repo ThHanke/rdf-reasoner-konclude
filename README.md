@@ -153,7 +153,13 @@ reasoner.terminate(); // shut down the Worker
 ### Worker lifecycle
 
 `RdfReasoner` owns a background Worker thread. **Always terminate it** when done
-or the thread will leak. Three patterns:
+or the thread will leak.
+
+**Important:** the Worker is tied to the `RdfReasoner` instance — not to the N3
+`Store`. Dropping or garbage-collecting the `Store` does **not** terminate the
+Worker. You must hold a reference to the `RdfReasoner` and terminate it explicitly.
+
+Three patterns:
 
 ```typescript
 // 1. Explicit terminate() — works everywhere
@@ -162,7 +168,7 @@ await reasoner.ready;
 try {
   await reasoner.classify(store);
 } finally {
-  reasoner.terminate();
+  reasoner.terminate(); // store can be dropped freely after this
 }
 
 // 2. using keyword (TypeScript 5.2+ / Node 18+, recommended)
@@ -170,12 +176,13 @@ try {
   using reasoner = new RdfReasoner();
   await reasoner.ready;
   await reasoner.classify(store);
-} // Worker terminated automatically at block exit
+} // Worker terminated automatically at block exit — store lifecycle is separate
 
 // 3. FinalizationRegistry safety net (automatic, non-deterministic)
 // If terminate() / using is omitted, the Worker is terminated when the
-// RdfReasoner instance is garbage-collected.  GC timing is unpredictable —
-// do not rely on this as the primary cleanup strategy.
+// RdfReasoner instance itself is garbage-collected — NOT when the Store is
+// collected. GC timing is unpredictable — do not rely on this as the primary
+// cleanup strategy.
 ```
 
 `classify(store)`, `materialize(store)`, and `classifyProperties(store)` write
