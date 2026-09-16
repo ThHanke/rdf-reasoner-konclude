@@ -10,34 +10,34 @@ Konclude native and WASM run the same algorithm — only the execution environme
 
 ```
 Konclude: v0.7.0-1138 (Docker image konclude/konclude:latest)
-HermiT:  via ROBOT 1.9.6 (Docker image obolibrary/odkfull:latest)
+HermiT:  via ROBOT 1.9.10 (Docker image obolibrary/odkfull:latest)
 Package: rdf-reasoner-konclude (this package, WASM + 8 threads)
 Host:    8-core Linux, 41 GB RAM, Node.js 25
-Date:    2026-09-15
+Date:    2026-09-16
 ```
 
 ## 1. Speed
 
 The comparable metric is **TBox classification time** — the phase where all systems do the same logical work (building the class hierarchy). WASM startup and input/output serialization are shown separately because they differ structurally. For ABox ontologies a separate classification-only pass is measured to exclude role-closure overhead from the ratio.
 
-| Ontology | OWL profile | Triples | Konclude | HermiT | WASM | HermiT / Konclude | WASM / Konclude |
+| Ontology | OWL profile | Triples | Konclude | HermiT | WASM | WASM overhead | HermiT overhead |
 |---|---|---|---|---|---|---|---|
-| LUBM schema | SHI | 307 | 32 ms | 55 ms | 273 ms | ~1.7× | ~8.5× |
-| GALEN | SHIF | 30 817 | 223 ms | 4 780 ms | 528 ms | ~21× | ~2.4× |
-| Roberts family | SROIQ | 3 866 | 1 807 ms | **FAIL** | 1 879 ms | — | ~1.0× |
-| LUBM+data | SHI | 100 850 | 160 ms | 1 197 ms | 1 129 ms | ~7.5× | ~7.1× |
+| LUBM schema | SHI | 307 | 33 ms | 55 ms | 688 ms | ~20.8× | ~1.7× |
+| GALEN | SHIF | 30 817 | 221 ms | 4 644 ms | 904 ms | ~4.1× | ~21× |
+| Roberts family | SROIQ | 3 866 | 1 750 ms | **FAIL** | 2 211 ms | ~1.3× | — |
+| LUBM+data | SHI | 100 850 | 156 ms | 1 110 ms | 1 516 ms | ~9.7× | ~7.1× |
 
-**Key takeaway:** On complex reasoning (SROIQ — full OWL 2 DL), WASM matches Konclude native (~1.0×) while HermiT fails entirely. On simpler ontologies, HermiT is 2–21× slower than Konclude; WASM overhead is dominated by a fixed ~230 ms pthread sync cost.
+**Key takeaway:** On complex reasoning (SROIQ — full OWL 2 DL), WASM overhead is only ~1.3× vs native Konclude while HermiT fails entirely. On simpler ontologies the overhead is higher (~4–21×), dominated by a fixed ~230 ms pthread sync cost. HermiT is 2–21× slower than Konclude on the ontologies it can handle.
 
 <details>
 <summary>Full timing breakdown (click to expand)</summary>
 
 | Ontology | Konclude parse | Konclude TBox | Konclude realize | HermiT JVM+parse | HermiT reason | HermiT fill+write | WASM init | WASM load | WASM classify | WASM realization | WASM output | TS total |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| LUBM schema | 6 ms | 32 ms | n/a | 1 383 ms | 55 ms | 249 ms | 1 069 ms | 7 ms | 273 ms | n/a | 0 ms | 403 ms |
-| GALEN | 60 ms | 223 ms | n/a | 1 046 ms | 4 780 ms | 6 811 ms | 971 ms | 797 ms | 528 ms | n/a | 14 ms | 1 924 ms |
-| Roberts family | 23 ms | 1 807 ms | 305 ms | FAIL | FAIL | FAIL | 907 ms | 47 ms | 1 879 ms | 28 337 ms | 250 ms | 27 231 ms |
-| LUBM+data | 852 ms | 160 ms | 3 ms | 1 252 ms | 1 197 ms | 1 025 ms | 852 ms | 1 432 ms | 1 129 ms | 1 265 ms | 408 ms | 4 336 ms |
+| LUBM schema | 6 ms | 33 ms | n/a | 416 ms | 55 ms | 32 ms | 284 ms | 8 ms | 688 ms | n/a | 1 ms | 693 ms |
+| GALEN | 64 ms | 221 ms | n/a | 1 855 ms | 4 644 ms | 196 ms | 226 ms | 803 ms | 904 ms | n/a | 15 ms | 2 322 ms |
+| Roberts family | 27 ms | 1 750 ms | 302 ms | FAIL | FAIL | FAIL | 166 ms | 43 ms | 2 211 ms | 29 402 ms | 261 ms | 27 613 ms |
+| LUBM+data | 858 ms | 156 ms | 3 ms | 3 512 ms | 1 110 ms | 2 564 ms | 181 ms | 1 411 ms | 1 516 ms | 1 673 ms | 395 ms | 4 771 ms |
 
 - **Konclude parse** / **WASM load** = different input formats (OWL/XML vs binary buffer) — not directly comparable.
 - **Konclude TBox** = preprocess + precompute + classify + propClassify (from Konclude verbose log). Same pipeline steps as WASM `classification()`.
@@ -61,7 +61,7 @@ The overhead decomposes into two independent components:
 
 2. **Data-proportional preprocessing slowdown (~7× for data-heavy steps):** Steps that walk all loaded triples (build, preprocess, active-count) run slower in WASM due to Emscripten-compiled pointer-chasing through linear memory. Negligible for small ontologies, significant for 100k+ triples.
 
-3. **Convergence on compute-heavy tableau workloads:** Roberts (SROIQ, 1.8s native) shows ~1.0× because tight inner-loop tableau operations dominate wall-clock time and JIT to near-native speed. The 230 ms sync overhead is <12% of total.
+3. **Convergence on compute-heavy tableau workloads:** Roberts (SROIQ, 1.8s native) shows ~1.3× because tight inner-loop tableau operations dominate wall-clock time and JIT to near-native speed. The 230 ms sync overhead is <13% of total.
 
 <details>
 <summary>Scaling model (predicting performance for untested ontologies)</summary>
@@ -89,7 +89,7 @@ See [`wasm-preprocessing-overhead-2026-09-15.md`](solutions/performance-issues/w
 
 ### HermiT: Roberts family FAIL
 
-HermiT spends ~289 seconds on the consistency check phase of the Roberts family ontology (SROIQ with 405 individuals, 24 property chains, transitive and symmetric properties), then exits with error code 1 — never reaching classification. Konclude classifies + realizes the same ontology in 1.8 seconds.
+HermiT runs out of memory (Java heap space) on the Roberts family ontology (SROIQ with 405 individuals, 24 property chains, transitive and symmetric properties), exiting with error code 1 — never reaching classification. Konclude classifies + realizes the same ontology in 2.1 seconds.
 
 This is consistent with published findings:
 
@@ -117,14 +117,14 @@ HermiT infers 61 additional SubClassOf axioms on GALEN — likely entailments Ko
 
 ### Individual types (ABox realization)
 
-Desktop Konclude outputs only `rdf:type` assertions (which class each individual belongs to). HermiT outputs ClassAssertion axioms in OWL Functional Syntax.
+Desktop Konclude outputs only `rdf:type` assertions (which class each individual belongs to). HermiT outputs ClassAssertion axioms in OWL Functional Syntax. Both native and WASM counts exclude trivial `rdf:type owl:Thing` assertions (every individual is an owl:Thing by definition — native Konclude emits these, WASM does not).
 
-| Ontology | Konclude | HermiT | WASM |
-|---|---|---|---|
-| Roberts family | 4 957 | FAIL | 4 552 |
-| LUBM+data | 57 155 | 18 187 | 39 981 |
+| Ontology | Konclude | HermiT | WASM | Konclude vs WASM |
+|---|---|---|---|---|
+| Roberts family | 4 552 | FAIL | 4 552 | exact |
+| LUBM+data | 39 981 | 18 143 | 39 981 | exact |
 
-Count differences between Konclude native and WASM are under investigation. Possible causes: different deduplication of type assertions, different handling of asserted-vs-inferred overlap, or differences in how the benchmark runners count. HermiT's lower count on LUBM+data reflects different axiom-generation scope (ClassAssertion only, no redundant asserted types). Integration tests pass against golden reference files — the reasoning output itself is correct.
+Konclude native and WASM produce identical rdf:type output (same kernel). Exact match enforced by integration tests against golden fixtures. HermiT's lower count on LUBM+data reflects different axiom-generation scope (ClassAssertion only, no redundant asserted types).
 
 ### Additional output (this package only)
 
@@ -132,8 +132,8 @@ Desktop Konclude computes these internally but has no way to export them. This p
 
 | Ontology | Role assertions | owl:sameAs | Explanation triples |
 |---|---|---|---|
-| Roberts family | ~272 000 | 0 | 5 920 |
-| LUBM+data | 98 497 | 0 | 159 924 |
+| Roberts family | ~286 000 | 0 | 5 920 |
+| LUBM+data | 98 497 | 0 | 161 551 |
 
 - **Role assertions** = who is related to whom via object/data properties. Desktop Konclude's API does not support exporting these. Roberts count varies across runs (~272k–348k) due to a pthread scheduling race in CRoleRealization — type and TBox counts are stable, only role filler ordering varies.
 - **Explanation triples** = RDF-star justifications showing *why* each inference was made. Enable with `{ explanations: true }`. Desktop Konclude has no explanation output.
@@ -146,10 +146,10 @@ Desktop Konclude is a command-line tool — every invocation starts from scratch
 
 | Ontology | Konclude cold | TS cold | TS cache hit | TS re-reason | Speedup (cache hit) |
 |---|---|---|---|---|---|
-| LUBM schema | 65 ms | 452 ms | **3 ms** | 107 ms | 22× |
-| GALEN | 323 ms | 2 023 ms | **94 ms** | 1 313 ms | 3× |
-| Roberts family | 2 175 ms | 28 610 ms | **62 ms** | 28 135 ms | 35× |
-| LUBM+data | 1 262 ms | 4 538 ms | **424 ms** | 3 792 ms | 3× |
+| LUBM schema | 67 ms | 878 ms | **2 ms** | 95 ms | 34× |
+| GALEN | 322 ms | 2 693 ms | **94 ms** | 1 286 ms | 3× |
+| Roberts family | 2 126 ms | 27 695 ms | **60 ms** | 27 241 ms | 35× |
+| LUBM+data | 1 254 ms | 4 850 ms | **428 ms** | 3 820 ms | 3× |
 
 - **TS cold** = first call on a fresh `RdfReasoner`. Includes WASM init + binary encode + Worker RTT + full pipeline + decode + `store.addQuad`. Slower than native because of WASM init overhead — paid once per `RdfReasoner` instance.
 - **TS cache hit** = calling again on the **same unchanged store**. The TS layer computes a store fingerprint; if it matches the previous call, reasoning is skipped entirely. Cost = fingerprint computation only (no WASM call). **This is 3–35× faster than native.**

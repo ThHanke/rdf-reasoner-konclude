@@ -67,7 +67,7 @@ try:
                     if i != j: tbox += 1
         elif tag == 'ClassAssertion':
             cs = iris(ax)
-            if len(cs) == 2: types += 1
+            if len(cs) == 2 and cs[0] != OWL + 'Thing': types += 1
         elif tag in ('ObjectPropertyAssertion', 'DataPropertyAssertion'):
             cs = iris(ax)
             if len(cs) == 3: roles += 1

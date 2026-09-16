@@ -356,7 +356,7 @@ async function main() {
   // ── §2b  ABox Realization — rdf:type ─────────────────────────────────────
 
   console.log('#### §2b ABox Realization — rdf:type (ClassAssertion)\n');
-  console.log('Konclude native outputs ClassAssertion (rdf:type) only. HermiT via ROBOT also outputs ClassAssertion. WASM outputs the same set.\n');
+  console.log('Konclude native outputs ClassAssertion (rdf:type) only. HermiT via ROBOT also outputs ClassAssertion. WASM outputs the same set. Trivial `rdf:type owl:Thing` assertions are excluded from all counts (native emits them, WASM does not).\n');
 
   const typeHeader = '| Ontology | Exp. | Konclude rdf:type | HermiT rdf:type | WASM rdf:type | Konclude=WASM | HermiT vs Konclude |';
   const typeSep    = '|---|---|---|---|---|---|---|';
