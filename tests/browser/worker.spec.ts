@@ -315,3 +315,62 @@ test("someValuesFrom ABox: Alice rdf:type DogOwner/PetOwner via materialize(stor
     "Expected Alice rdf:type PetOwner via DogOwner ⊑ PetOwner",
   ).toBe(true);
 });
+
+// ---------------------------------------------------------------------------
+// Test 7: Roberts family ontology — real-world OWL-DL classification
+// ---------------------------------------------------------------------------
+// Loads the full Roberts family ontology (~3866 triples) via fetch(), runs
+// classify(), and spot-checks key equivalentClass inferences from the known
+// expected output.  Exercises KPSet at scale in the browser worker.
+
+test("classify(store): Roberts family ontology — key equivalentClass inferences", async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    const { RdfReasoner, INFERRED_GRAPH_IRI, DataFactory, Store, Parser } = window;
+    const { namedNode } = DataFactory;
+
+    const resp = await fetch("/tests/fixtures/roberts-family.nt");
+    const text = await resp.text();
+
+    const store = new Store();
+    await new Promise<void>((resolve, reject) => {
+      new Parser({ format: "N-Triples" }).parse(text, (err, quad) => {
+        if (err) { reject(err); return; }
+        if (quad) store.addQuad(quad);
+        else resolve();
+      });
+    });
+
+    const reasoner = new RdfReasoner();
+    await reasoner.ready;
+    await reasoner.classify(store);
+    reasoner.terminate();
+
+    const inferredGraph = namedNode(INFERRED_GRAPH_IRI);
+    return store
+      .getQuads(null, null, null, inferredGraph)
+      .map((q) => ({ s: q.subject.value, p: q.predicate.value, o: q.object.value }));
+  });
+
+  const OWL_EQUIV = "http://www.w3.org/2002/07/owl#equivalentClass";
+  const rt = "http://www.co-ode.org/roberts/family-tree.owl#";
+
+  // Spot-check key equivalences from roberts-wasm-out.nt
+  expect(result.length).toBeGreaterThanOrEqual(20);
+
+  expect(
+    result.some((t) => t.s === rt + "Woman" && t.p === OWL_EQUIV && t.o === rt + "FemaleDescendent"),
+    `Expected Woman≡FemaleDescendent.\nGot ${result.length} inferred triples.`,
+  ).toBe(true);
+
+  expect(
+    result.some((t) => t.s === rt + "Man" && t.p === OWL_EQUIV && t.o === rt + "MaleDescendent"),
+    `Expected Man≡MaleDescendent.\nGot ${result.length} inferred triples.`,
+  ).toBe(true);
+
+  expect(
+    result.some((t) => t.s === rt + "BloodRelation" && t.p === OWL_EQUIV && t.o === rt + "Person"),
+    `Expected BloodRelation≡Person.\nGot ${result.length} inferred triples.`,
+  ).toBe(true);
+});
