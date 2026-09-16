@@ -741,10 +741,7 @@ ex:alice a ex:Person .
     // Checking subClassOf BEFORE materialize avoids the _materializeOnStore
     // removeQuads clearing the classify output.
 
-    // KNOWN LIMITATION: classify() then materialize() on the same instance does not
-    // produce correct ABox results. The WASM SatExpCache retains classification-mode
-    // tags that interfere with a subsequent realization. Requires C++ reset fix + rebuild.
-    it.skip(
+    it(
       "R12: classify() then materialize(includeClassHierarchy:true) on same instance — both produce correct results",
       async () => {
         const store = freshStore();
@@ -773,9 +770,7 @@ ex:alice a ex:Person .
 
     // ── R13: checkConsistency() then classify() on same instance ─────────────
 
-    // KNOWN LIMITATION: checkConsistency() leaves the WASM kernel in a state
-    // where a subsequent classify() returns empty results. Same root cause as R12.
-    it.skip(
+    it(
       "R13: checkConsistency() then classify() on same instance — no hang, correct TBox output",
       async () => {
         const store = freshStore();
@@ -805,10 +800,7 @@ ex:alice a ex:Person .
     // Uses a distinct ontology prefix (seq14:) to avoid fingerprint cache
     // collision with the R12/R13 stores that share the same TURTLE content.
 
-    // KNOWN LIMITATION: whatIf() uses a fresh reasoner instance internally;
-    // the subsequent classify() on the shared instance returns empty results.
-    // Same root cause as R12/R13 — mode-switching on same instance is broken.
-    it.skip(
+    it(
       "R14: whatIf() does not contaminate subsequent classify() — correct TBox output after cache invalidation",
       async () => {
         // Distinct prefix avoids fingerprint collision with R12/R13 stores
