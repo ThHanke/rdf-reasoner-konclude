@@ -159,7 +159,8 @@ export class RdfReasoner {
     // Safety net: terminate the Worker if this instance is GC'd without an
     // explicit terminate() call.  GC timing is non-deterministic — callers
     // should always call terminate() or use the `using` keyword.
-    workerRegistry.register(this, this.worker);
+    // The unregister token (this) lets terminate() cancel the callback.
+    workerRegistry.register(this, this.worker, this);
 
     // Store the readyReject handle so the onerror handler can use it if the
     // Worker crashes before posting {type:'ready'}.
