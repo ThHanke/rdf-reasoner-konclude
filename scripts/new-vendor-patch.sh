@@ -87,11 +87,17 @@ fi
 PATCH_FILE="${PATCHES_DIR}/${PATCH_NUM}-${DESC}.patch"
 
 # Generate unified diff with vendor-relative paths
-diff -u "${ORIG_TMP}" "${MOD_TMP}" \
+# Normalize CRLF→LF before diffing to avoid whole-file diffs
+NORM_ORIG="$(mktemp)"
+NORM_MOD="$(mktemp)"
+sed 's/\r$//' "${ORIG_TMP}" > "${NORM_ORIG}"
+sed 's/\r$//' "${MOD_TMP}" > "${NORM_MOD}"
+diff -u "${NORM_ORIG}" "${NORM_MOD}" \
     | sed \
-        -e "s|^--- ${ORIG_TMP}.*|--- a/${VENDOR_PATH}|" \
-        -e "s|^+++ ${MOD_TMP}.*|+++ b/${VENDOR_PATH}|" \
+        -e "s|^--- .*|--- a/${VENDOR_PATH}|" \
+        -e "s|^+++ .*|+++ b/${VENDOR_PATH}|" \
     > "${PATCH_FILE}"
+rm -f "${NORM_ORIG}" "${NORM_MOD}"
 
 echo "Generated: ${PATCH_FILE}"
 

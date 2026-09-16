@@ -303,6 +303,18 @@ public:
             CConvertBooleanConfigType* bt = dynamic_cast<CConvertBooleanConfigType*>(ulc->getConfigType());
             if (bt) bt->readFromBoolean(true);
         }
+        // Serialize cache writes on the caller's thread instead of posting to the async
+        // BackendAssCache CThread queue. With async mode, saturation and individual precomp
+        // workers post cache update events from different threads — the interleaving varies
+        // per run, producing nondeterministic role assertion counts (e.g. Roberts family
+        // isRelationOf transitive closure). Synchronous mode eliminates the race by
+        // processing each write immediately under a mutex.
+        CConfigData* tus = mConfig->createAndSetConfig(
+            "Konclude.Cache.RepresentativeBackendCache.ThreadedUpdateSynchronization");
+        if (tus) {
+            CConvertBooleanConfigType* bt = dynamic_cast<CConvertBooleanConfigType*>(tus->getConfigType());
+            if (bt) bt->readFromBoolean(false);
+        }
     }
     ~WasmConfigProvider() {
         delete mConfig;

@@ -91,19 +91,27 @@ done <<< "${FILE_LIST}"
 run_and_diff() {
     python3 "${PYTHON_SCRIPT}" "${VENDOR_DIR}"
 
-    # Step 4: Generate diffs
+    # Step 4: Generate diffs (normalize CRLF→LF before diffing to avoid
+    # whole-file diffs when Python text-mode strips \r)
     > "${PATCH_FILE}"
     while IFS= read -r rel_path; do
         orig="${TRACKING_DIR}/${rel_path}"
         mod="${VENDOR_DIR}/${rel_path}"
+        # Normalize both to LF in temp copies for clean diff
+        local norm_orig norm_mod
+        norm_orig="$(mktemp)"
+        norm_mod="$(mktemp)"
+        sed 's/\r$//' "${orig}" > "${norm_orig}"
+        sed 's/\r$//' "${mod}" > "${norm_mod}"
         # diff returns 1 when files differ — that's expected, not an error
         local diff_out
-        diff_out="$(diff -u "${orig}" "${mod}" || true)"
+        diff_out="$(diff -u "${norm_orig}" "${norm_mod}" || true)"
+        rm -f "${norm_orig}" "${norm_mod}"
         if [ -n "${diff_out}" ]; then
             echo "${diff_out}" \
                 | sed \
-                    -e "s|^--- ${orig}.*|--- a/${rel_path}|" \
-                    -e "s|^+++ ${mod}.*|+++ b/${rel_path}|" \
+                    -e "s|^--- .*|--- a/${rel_path}|" \
+                    -e "s|^+++ .*|+++ b/${rel_path}|" \
                 >> "${PATCH_FILE}"
         fi
     done <<< "${FILE_LIST}"
