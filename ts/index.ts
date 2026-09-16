@@ -899,12 +899,17 @@ export class RdfReasoner {
       const needsClassifyProps = axioms.some(a => this._opForPredicate(a.predicate.value) === "classifyProperties");
 
       // Run needed operations in order; each cross-invalidates others
+      const dg = DataFactory.defaultGraph();
+      const inferred = (a: Quad) =>
+        store.has(DataFactory.quad(a.subject, a.predicate, a.object, ig)) ||
+        store.has(DataFactory.quad(a.subject, a.predicate, a.object, dg));
+
       const classifyResults = new Map<Quad, boolean>();
       if (needsClassify) {
         await this._classifyInline(store, fingerprint, igIri);
         for (const a of axioms) {
           if (this._opForPredicate(a.predicate.value) === "classify") {
-            classifyResults.set(a, store.has(DataFactory.quad(a.subject, a.predicate, a.object, ig)));
+            classifyResults.set(a, inferred(a));
           }
         }
       }
@@ -914,7 +919,7 @@ export class RdfReasoner {
         await this._materializeInline(store, fingerprint, igIri);
         for (const a of axioms) {
           if (this._opForPredicate(a.predicate.value) === "materialize") {
-            materializeResults.set(a, store.has(DataFactory.quad(a.subject, a.predicate, a.object, ig)));
+            materializeResults.set(a, inferred(a));
           }
         }
       }
@@ -924,7 +929,7 @@ export class RdfReasoner {
         await this._classifyPropertiesInline(store, fingerprint, igIri);
         for (const a of axioms) {
           if (this._opForPredicate(a.predicate.value) === "classifyProperties") {
-            classifyPropsResults.set(a, store.has(DataFactory.quad(a.subject, a.predicate, a.object, ig)));
+            classifyPropsResults.set(a, inferred(a));
           }
         }
       }
