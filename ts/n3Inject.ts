@@ -627,3 +627,129 @@ export function injectExplanationsFromBuffer(
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// Managed store — guards inferred/explanation/hypothetical graphs
+// ---------------------------------------------------------------------------
+
+/**
+ * Private symbol used by the reasoner to extract the raw Store from a managed
+ * store proxy, bypassing write guards for its own inference output.
+ * Not exported — internal use only.
+ */
+export const MANAGED_STORE_RAW: unique symbol = Symbol("managedStoreRaw");
+
+/** Graphs written exclusively by the reasoner — external writes are blocked. */
+const MANAGED_GRAPHS = new Set([INFERRED_GRAPH_IRI, EXPLANATION_GRAPH_IRI, HYPOTHETICAL_IRI]);
+
+function guardedGraphValue(arg: unknown): string | undefined {
+  if (arg == null) return undefined;
+  if (typeof arg === "string") return arg;
+  if (typeof (arg as any).value === "string") return (arg as any).value;
+  return undefined;
+}
+
+/**
+ * Wrap an N3 Store so that external code cannot write to the graphs managed
+ * by the reasoner (`INFERRED_GRAPH_IRI`, `EXPLANATION_GRAPH_IRI`,
+ * `HYPOTHETICAL_IRI`). The reasoner bypasses the guard via `MANAGED_STORE_RAW`.
+ *
+ * Guarded write methods: `addQuad`, `add`, `removeQuad`, `remove`, `delete`,
+ * `removeQuads`, `deleteGraph`, `removeMatches`, `deleteMatches`.
+ * Wildcard graph matches in `removeMatches`/`deleteMatches` (graph = null/undefined)
+ * are allowed — use `deleteGraph` explicitly to block the managed graph.
+ *
+ * ```ts
+ * const store = createManagedStore(new Store());
+ * const reasoner = new RdfReasoner();
+ * await reasoner.classify(store);
+ * // Attempting to write to INFERRED_GRAPH_IRI now throws RangeError.
+ * store.addQuad(DataFactory.quad(s, p, o, DataFactory.namedNode(INFERRED_GRAPH_IRI)));
+ * // ↑ RangeError: Cannot write to managed graph "urn:konclude:inferred" ...
+ * ```
+ */
+export function createManagedStore(store: Store): Store {
+  const handler: ProxyHandler<Store> = {
+    get(target, prop) {
+      // Bypass: reasoner extracts the raw store to perform its own writes.
+      if (prop === MANAGED_STORE_RAW) return target;
+
+      const orig = (target as any)[prop];
+      if (typeof orig !== "function") return orig;
+
+      // Guard single-quad mutation methods.
+      if (prop === "addQuad" || prop === "add" ||
+          prop === "removeQuad" || prop === "remove" || prop === "delete") {
+        return function (quad: any) {
+          const g = guardedGraphValue(quad?.graph);
+          if (g !== undefined && MANAGED_GRAPHS.has(g)) {
+            throw new RangeError(
+              `Cannot write to managed graph "${g}" directly. ` +
+              `This graph is written exclusively by RdfReasoner.`
+            );
+          }
+          return orig.call(target, quad);
+        };
+      }
+
+      // Guard removeQuads (array of quads).
+      if (prop === "removeQuads") {
+        return function (quads: any[]) {
+          for (const quad of quads) {
+            const g = guardedGraphValue(quad?.graph);
+            if (g !== undefined && MANAGED_GRAPHS.has(g)) {
+              throw new RangeError(
+                `Cannot write to managed graph "${g}" directly. ` +
+                `This graph is written exclusively by RdfReasoner.`
+              );
+            }
+          }
+          return orig.call(target, quads);
+        };
+      }
+
+      // Guard deleteGraph (NamedNode or string).
+      if (prop === "deleteGraph") {
+        return function (graph: any) {
+          const g = guardedGraphValue(graph);
+          if (g !== undefined && MANAGED_GRAPHS.has(g)) {
+            throw new RangeError(
+              `Cannot delete managed graph "${g}" directly. ` +
+              `This graph is written exclusively by RdfReasoner.`
+            );
+          }
+          return orig.call(target, graph);
+        };
+      }
+
+      // Guard removeMatches / deleteMatches: only block explicit managed graph arg.
+      // Wildcard (null/undefined graph) is allowed — it operates on all graphs.
+      if (prop === "removeMatches" || prop === "deleteMatches") {
+        return function (subject: any, predicate: any, object: any, graph: any) {
+          const g = guardedGraphValue(graph);
+          if (g !== undefined && MANAGED_GRAPHS.has(g)) {
+            throw new RangeError(
+              `Cannot write to managed graph "${g}" directly. ` +
+              `This graph is written exclusively by RdfReasoner.`
+            );
+          }
+          return orig.call(target, subject, predicate, object, graph);
+        };
+      }
+
+      return orig.bind(target);
+    },
+  };
+
+  return new Proxy(store, handler);
+}
+
+/**
+ * Extract the raw N3 Store from a managed store proxy created by
+ * `createManagedStore`, or return the store as-is if it is not managed.
+ * Used internally by the reasoner to bypass write guards.
+ * @internal
+ */
+export function getRawStore(store: Store): Store {
+  return (store as any)[MANAGED_STORE_RAW] ?? store;
+}

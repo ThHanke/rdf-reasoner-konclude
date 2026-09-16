@@ -187,9 +187,50 @@ instance is garbage-collected without an explicit `terminate()` call. This is
 non-deterministic (GC timing is unpredictable) and should not be relied on for
 prompt cleanup — use it only as a last-resort leak prevention backstop.
 
+### Inferred graph access and protection
+
 `classify(store)`, `materialize(store)`, and `classifyProperties(store)` write
 inferred triples into the `INFERRED_GRAPH_IRI` named graph inside the store.
-The graph is cleared before each call — do not store ontology triples there.
+The graph is cleared before each call.
+
+Read from it freely after a reasoning call completes:
+
+```typescript
+const inferred = store.getQuads(null, null, null, INFERRED_GRAPH_IRI);
+```
+
+**External writes to the inferred graph are not safe** — the next reasoning
+call wipes the graph before writing fresh results. Use `createManagedStore` to
+enforce this at the Store level:
+
+```typescript
+import { createManagedStore, INFERRED_GRAPH_IRI } from "rdf-reasoner-konclude";
+import { Store } from "n3";
+
+const store = createManagedStore(new Store());
+// Add your ontology to any other graph — this is unrestricted:
+store.addQuad(DataFactory.quad(s, p, o, DataFactory.namedNode("http://example.org/ontology")));
+
+const reasoner = new RdfReasoner();
+await reasoner.classify(store);
+
+// Read inferred results:
+const inferred = store.getQuads(null, null, null, INFERRED_GRAPH_IRI);
+
+// External writes to managed graphs throw RangeError immediately:
+store.addQuad(DataFactory.quad(s, p, o, DataFactory.namedNode(INFERRED_GRAPH_IRI)));
+// ↑ RangeError: Cannot write to managed graph "urn:konclude:inferred" ...
+
+reasoner.terminate();
+```
+
+Managed graphs (guarded by `createManagedStore`):
+- `INFERRED_GRAPH_IRI` (`"urn:konclude:inferred"`) — inference output
+- `EXPLANATION_GRAPH_IRI` (`"urn:konclude:explanations"`) — justification graph
+- `HYPOTHETICAL_IRI` (`"urn:konclude:hypothetical"`) — whatIf scratch graph
+
+The guard allows `removeMatches(null, null, null, null)` (wildcard clears all
+graphs) but blocks any write that explicitly names a managed graph IRI.
 
 Named graphs in the input are dropped at the WASM boundary (NTriples wire
 format is triple-only). Reasoning runs over the union of all graphs.
