@@ -21,12 +21,15 @@ Usage: owl-reason [options]
 Options:
   -i, --input <file>    Input RDF file (.nt .ttl .nq .trig); reads stdin if omitted
   -o, --output <file>   Output file; writes to stdout if omitted
-  -m, --mode <mode>     classify | consistency  (default: classify)
+  -m, --mode <mode>     classify | materialize | consistency  (default: classify)
   -f, --format <fmt>    Output format: nt | ttl | nq | trig  (default: auto from --input, else nt)
   -v, --version         Print version
   -h, --help            Show this help
 
-Note: --mode consistency is a known incomplete feature (always returns "consistent").
+Modes:
+  classify      TBox-only: class hierarchy + property hierarchy
+  materialize   TBox + ABox: rdf:type assertions + role assertions + owl:sameAs
+  consistency   Check ontology consistency (incomplete — always returns "consistent")
 `;
 
 type CliValues = {
@@ -122,8 +125,8 @@ export async function run(argv: string[]): Promise<number> {
   }
 
   const mode = values.mode ?? "classify";
-  if (mode !== "classify" && mode !== "consistency") {
-    process.stderr.write(`Error: --mode must be "classify" or "consistency", got "${mode}"\n`);
+  if (mode !== "classify" && mode !== "materialize" && mode !== "consistency") {
+    process.stderr.write(`Error: --mode must be "classify", "materialize", or "consistency", got "${mode}"\n`);
     return 2;
   }
 
@@ -182,7 +185,11 @@ export async function run(argv: string[]): Promise<number> {
       return consistent ? 0 : 1;
     }
 
-    await reasoner.reason(store);
+    if (mode === "materialize") {
+      await reasoner.materialize(store);
+    } else {
+      await reasoner.classify(store);
+    }
     const inferred = store.getQuads(
       null,
       null,

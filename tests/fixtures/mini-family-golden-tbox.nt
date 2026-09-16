@@ -1,0 +1,3 @@
+<http://example.org/family#Man> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/family#Person> .
+<http://example.org/family#Person> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://www.w3.org/2002/07/owl#Thing> .
+<http://example.org/family#Woman> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/family#Person> .
