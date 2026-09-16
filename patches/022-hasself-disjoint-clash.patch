@@ -1,0 +1,59 @@
+--- a/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp
++++ b/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp
+@@ -6923,6 +6923,56 @@
+ 					CRole* role = concept->getRole();
+ 					CSortedNegLinker<CConcept*>* conceptOpLinkerIt = concept->getOperandList();
+ 
++					// hasSelf + propertyDisjointWith clash detection.
++					// The saturation creates backward-propagation links but no completion-graph
++					// role links.  When BackendAssCache marks a node CompletelyHandled the
++					// completion's expansion-blocking prevents its own applySELFRule (which
++					// calls createIndividualNodeDisjointRolesLinks) from ever running.
++					// Detect the clash here so the saturation flags the node as CLASHED.
++					//
++					// Check 1: any super-role of role is disjoint with itself.
++					// hasSelf(r) with r owl:propertyDisjointWith r -> immediate clash.
++					{
++						CSortedNegLinker<CRole*>* srIt = role->getIndirectSuperRoleList();
++						while (srIt) {
++							CRole* sr = srIt->getData();
++							if (!srIt->isNegated() && sr->hasDisjointRole(sr)) {
++								updateDirectAddingIndividualStatusFlags(
++									processIndi,
++									CIndividualSaturationProcessNodeStatusFlags::INDSATFLAGCLASHED,
++									mCalcAlgContext);
++								return;
++							}
++							srIt = srIt->getNext();
++						}
++					}
++					// Check 2: existing CCSELF concept in the label uses a role disjoint
++					// with role.  hasSelf(p) in label + hasSelf(q) firing now + p disjoint q
++					// -> clash.  The last of two conflicting hasSelf rules to fire detects it.
++					{
++						CReapplyConceptSaturationLabelSet* existingConSet =
++							processIndi->getReapplyConceptSaturationLabelSet(false);
++						if (existingConSet) {
++							CReapplyConceptSaturationLabelSetIterator it =
++								existingConSet->getIterator(true, false);
++							while (it.hasNext()) {
++								CConceptSaturationDescriptor* cd =
++									it.getConceptSaturationDescriptor();
++								if (cd && !cd->getNegation() &&
++										cd->getConcept()->getOperatorCode() == CCSELF) {
++									CRole* existingSelfRole = cd->getConcept()->getRole();
++									if (role->hasDisjointRole(existingSelfRole)) {
++										updateDirectAddingIndividualStatusFlags(
++											processIndi,
++											CIndividualSaturationProcessNodeStatusFlags::INDSATFLAGCLASHED,
++											mCalcAlgContext);
++										return;
++									}
++								}
++								it.moveNext();
++							}
++						}
++					}
+ 
+ 					CMemoryAllocationManager* taskMemMan = nullptr;
+ 					CRoleBackwardSaturationPropagationHash* backPropHash = nullptr;

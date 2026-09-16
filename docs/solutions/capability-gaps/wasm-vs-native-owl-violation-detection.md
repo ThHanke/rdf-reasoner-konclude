@@ -60,6 +60,8 @@ Integration tests: `tests/integration/issue13-owl-violations.test.ts` (consisten
 | 12   | NegativeObjectPropertyAssertion contradiction         | inconsistent ✓            | inconsistent ✓ | **PARITY** (fixed by patches 025+026)       |
 | 13   | DataAllValuesFrom minInclusive — consistent (age=15)  | consistent ✓              | consistent ✓   | **PARITY**                                  |
 | 14   | DataAllValuesFrom minInclusive — inconsistent (age=5) | inconsistent ✓            | inconsistent ✓ | **PARITY**                                  |
+| 15   | hasSelf(p) + hasSelf(q) + p owl:propertyDisjointWith q | inconsistent ✓ (expected) | consistent ✗  | **OPEN** (patch-022 pending build, 2026-09-16) |
+| 16   | ReflexiveProperty(p) + hasSelf(q) + p owl:propertyDisjointWith q | inconsistent ✓ (expected) | consistent ✗ | **OPEN** (patch-022 pending build, 2026-09-16) |
 
 ## Gap Matrix — ABox materialize inferences (property-characteristics.test.ts, owl2dl-parity.test.ts)
 
@@ -222,10 +224,34 @@ The underlying ALIF+ hang in `materialize()` / `realize` when FP forces `owl:sam
 is an upstream limitation confirmed in native Docker binary.
 See project_upstream_konclude_bugs.md Bug 2.
 
+### Cases 15–16: OPEN — hasSelf + propertyDisjointWith (patch-022, 2026-09-16)
+
+`owl:hasSelf` restriction (or `owl:ReflexiveProperty`) combined with
+`owl:propertyDisjointWith` on the self-role is not flagged as inconsistent.
+
+**Root cause:** The saturation's `applySELFRule` creates backward-propagation
+links but does not check disjoint roles. `BackendAssCache` then marks the node
+`CompletelyHandled`. The completion algorithm's `tryEstablishExpansionBlockingWithBackendCacheSynchronisation`
+trusts this and sets `PRFSYNCHRONIZEDBACKENDSUCCESSOREXPANSIONBLOCKED`, preventing
+the completion's own `applySELFRule` (which correctly calls
+`createIndividualNodeDisjointRolesLinks` + `installIndividualNodeRoleLinkReapplied`)
+from firing. Same pattern as the irreflexive/asymmetric gap fixed by patches 027-028.
+
+**Fix (patch-022):** Add two checks at the top of the saturation `applySELFRule`:
+1. Iterate `role->getIndirectSuperRoleList()`; if any non-negated super-role `sr`
+   has `sr->hasDisjointRole(sr)` → set `INDSATFLAGCLASHED` and return.
+2. Scan the existing concept label for non-negated `CCSELF` concepts; if any uses
+   a role `s` where `role->hasDisjointRole(s)` → set `INDSATFLAGCLASHED` and return.
+   Check 2 fires on the last of two conflicting hasSelf rules to be processed.
+
+**Status:** patch-022 generated; pending `make build-wasm`. Tests in
+`tests/integration/known-limitations.test.ts` (skipped until built).
+
 ## Next Steps
 
 | Classification                                      | Action                                                                                                                 |
 | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| OPEN (cases 15–16, patch-022)                       | Run `make build-wasm` then remove `.skip` from known-limitations tests; move to issue13 suite                          |
 | WASM_REGRESSION (R7a/R7b materialize NTriples hang) | Investigate WASM realization thread lifecycle for ALIF+ NTriples path; compare pthread stack/semaphore state vs native |
 | PARITY (cases 1–14 + R1–R8d, plan-039/041)          | No action needed; all tests passing (322 passing, 2 skipped as of plan-041)                                            |
 | WASM_BUG_FIXED (case 12, patches 025+026)           | Upstream PRs pending for both NPA bugs                                                                                 |

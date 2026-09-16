@@ -103,6 +103,63 @@ describe.skipIf(!wasmExists)("known-limitations: owl:oneOf ABox realization gap"
 // ---------------------------------------------------------------------------
 // ALIF+ hang: FunctionalProperty + InverseFunctionalProperty + 1 filler
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// hasSelf + propertyDisjointWith clash not detected (patch-022 pending build)
+// ---------------------------------------------------------------------------
+// Root cause: saturation applySELFRule creates backward-propagation links but
+// never checks disjoint roles.  BackendAssCache marks the node CompletelyHandled;
+// the completion algorithm's expansion-blocking then skips its own applySELFRule
+// (which calls createIndividualNodeDisjointRolesLinks and would detect the clash).
+// Fix: patch-022 adds two checks at the top of the saturation applySELFRule:
+//   1. self-disjoint: super-role of role disjoint with itself -> immediate clash
+//   2. cross-hasSelf: existing CCSELF in label for a disjoint role -> clash
+// Remove .skip and move to issue13-owl-violations.test.ts after make build-wasm.
+describe.skipIf(!wasmExists)("known-limitations: hasSelf + propertyDisjointWith clash", () => {
+  it.skip("hasSelf(p) + hasSelf(q) + p owl:propertyDisjointWith q -> inconsistent", async () => {
+    const reasoner = new RdfReasoner();
+    await reasoner.ready;
+    try {
+      const quads = parseTurtle(`
+        @prefix :    <http://example.org/reasoner-test#> .
+        @prefix owl: <http://www.w3.org/2002/07/owl#> .
+        :p a owl:ObjectProperty .
+        :q a owl:ObjectProperty .
+        :p owl:propertyDisjointWith :q .
+        :HasSelfP a owl:Class ;
+          owl:equivalentClass [ a owl:Restriction ; owl:onProperty :p ; owl:hasSelf true ] .
+        :HasSelfQ a owl:Class ;
+          owl:equivalentClass [ a owl:Restriction ; owl:onProperty :q ; owl:hasSelf true ] .
+        :a a owl:NamedIndividual , :HasSelfP , :HasSelfQ .
+      `);
+      const consistent = await reasoner.checkConsistency(quads);
+      expect(consistent).toBe(false);
+    } finally {
+      reasoner.terminate();
+    }
+  });
+
+  it.skip("ReflexiveProperty(p) + hasSelf(q) + p owl:propertyDisjointWith q -> inconsistent", async () => {
+    const reasoner = new RdfReasoner();
+    await reasoner.ready;
+    try {
+      const quads = parseTurtle(`
+        @prefix :    <http://example.org/reasoner-test#> .
+        @prefix owl: <http://www.w3.org/2002/07/owl#> .
+        :p a owl:ObjectProperty , owl:ReflexiveProperty .
+        :q a owl:ObjectProperty .
+        :p owl:propertyDisjointWith :q .
+        :HasSelfQ a owl:Class ;
+          owl:equivalentClass [ a owl:Restriction ; owl:onProperty :q ; owl:hasSelf true ] .
+        :a a owl:NamedIndividual , :HasSelfQ .
+      `);
+      const consistent = await reasoner.checkConsistency(quads);
+      expect(consistent).toBe(false);
+    } finally {
+      reasoner.terminate();
+    }
+  });
+});
+
 // FIXED by patches 020-021 (trivial-consistency flag + cache reader null guard).
 describe.skipIf(!wasmExists)("known-limitations: ALIF+ (FP+IFP 1-filler hang)", () => {
   it(
