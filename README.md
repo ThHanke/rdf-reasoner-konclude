@@ -542,11 +542,12 @@ Violation detection verified against native Konclude v0.7.0 ground truth:
 | 12  | `owl:NegativeObjectPropertyAssertion` contradiction       | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
 | 13  | `DataAllValuesFrom xsd:minInclusive` (consistent case)    | consistent ✓       | consistent ✓   | **PARITY**                         |
 | 14  | `DataAllValuesFrom xsd:minInclusive` (inconsistent case)  | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
-| 15  | `owl:hasSelf` restriction violated by ABox individual     | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
-| 16  | `owl:allValuesFrom` restriction + filler type clash       | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
+| 15  | `owl:hasSelf(p)` + `owl:hasSelf(q)` + `p owl:propertyDisjointWith q` | inconsistent ✓ | inconsistent ✓ | **PARITY** (patch-022)             |
+| 16  | `owl:ReflexiveProperty(p)` + `owl:hasSelf(q)` + `p owl:propertyDisjointWith q` | inconsistent ✓ | inconsistent ✓ | **PARITY** (patch-022)  |
 
 **PARITY (WASM surpasses native v0.7.0)** means native Konclude v0.7.0 has a kernel bug for this
-construct; this package fixes it via patches 011–012 (role axiom correctness, NPA builder fix).
+construct; this package fixes it via patches 027–029 (AsymmetricProperty + IrreflexiveProperty
+saturation clash detection; AllDisjointProperties + EquivalentObjectProperties clash fix).
 
 `owl:AllDisjointClasses`, `owl:disjointUnionOf`, and `owl:NegativePropertyAssertion` all work in
 `materialize()` — the JS layer expands list axioms to pairwise form before handing off to WASM.

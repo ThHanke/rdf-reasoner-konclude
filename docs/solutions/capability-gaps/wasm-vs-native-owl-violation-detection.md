@@ -207,18 +207,23 @@ The underlying WASM hang on accumulated BackendAssCache state is an upstream lim
 fixable without upstream realization pipeline changes. But the fresh-instance pattern makes the
 test reliable. Activated in commit 2ff1cd7 (plan-041).
 
-### PARITY — FunctionalProperty / InverseFunctionalProperty (plan-041 workaround)
+### PARITY — FunctionalProperty / InverseFunctionalProperty (patches 020-021, 2026-09-16)
 
-FP/IFP tests pass via a JS-layer workaround: `owl:FunctionalProperty` and
-`owl:InverseFunctionalProperty` declarations are **stripped from the NTriples payload** before
-passing to WASM. This prevents the ALIF+ expressiveness upgrade that causes the native Konclude
-hang. `owl:sameAs` inferences are computed in JS instead: FP multi-filler → sameAs chain;
-IFP multi-subject → sameAs chain. TBox-only fixtures (checkConsistency, classify) just need the
-stripping. Activated in commit 66c5584 (plan-041).
+**1-filler case (fixed):** Patches 020-021 fix two upstream Konclude bugs that caused the ALIF+
+precompute hang for all 1-filler FP/IFP ontologies:
+- Patch 020: trivial-consistency branches in `CTotallyPrecomputationThread` skip individual
+  computation but never set the "all incompletely handled individuals retrieved" flag → downstream
+  `checkAssociationComplete()` never fires → classify/checkConsistency blocked.
+- Patch 021: `createOntologyFixedCacheReader()` dereferences null when the fixed ontology data
+  hash is empty (the trivially-consistent ALIF+ case) → null deref caught by `CThread::catch(...)`,
+  dropping the realizer event → materialize blocked forever.
 
-The underlying ALIF+ hang in `materialize()` / `realize` when FP forces `owl:sameAs` inference
-is an upstream limitation confirmed in native Docker binary.
-See project_upstream_konclude_bugs.md Bug 2.
+Full tests: `tests/integration/alif-hang-minimal.test.ts`. All 1-filler cases pass.
+
+**Multi-filler case (upstream limitation):** The 2-filler `owl:sameAs` inference hang is
+confirmed in native Docker binary — inherent in Konclude v0.7.0. The JS layer strips FP/IFP
+declarations for multi-filler cases and computes `owl:sameAs` chains in JS instead (plan-041,
+commit 66c5584). See project_upstream_konclude_bugs.md Bug 2.
 
 ### Cases 15–16: PARITY — hasSelf + propertyDisjointWith (fixed by patch-022, 2026-09-16)
 
