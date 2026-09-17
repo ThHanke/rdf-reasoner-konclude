@@ -1944,6 +1944,19 @@ void KoncludeReasoner::loadTripleBuffer(int triplePtr, int tripleCount, int strT
     mapper->mapTriples(mImpl->mOntology, mImpl->mOntology->getOntologyTriplesData());
     delete mapper;
 
+    // Free the librdf world/model/storage immediately after mapTriples() — Konclude's
+    // internal structures now own all parsed data and the librdf objects are dead weight.
+    // Without this, each call holds 3 live librdf worlds (current + 2 previous ontologies
+    // for KPSet cache safety), which accumulates ~180-220 MB per reasoning run.
+    // tripleData shell stays alive (needed for getLatestTriplesData()); destructor
+    // null-checks before freeing so setting to nullptr prevents double-free.
+    librdf_free_model(model);
+    librdf_free_storage(indexedStorage);
+    librdf_free_world(world);
+    tripleData->setRedlandIndexedModelData(nullptr);
+    tripleData->setRedlandIndexedStorageData(nullptr);
+    tripleData->setRedlandWorldData(nullptr);
+
     builder->completeBuilding();
     delete builder;
 
