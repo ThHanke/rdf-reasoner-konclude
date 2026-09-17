@@ -11,6 +11,7 @@
 
 #include "KoncludeReasoner.h"
 #include "QtCompat.h"
+#include "compat/WasmTrace.h"
 
 #include <unordered_map>
 #include <unordered_set>
@@ -239,9 +240,7 @@ public:
     // mBackendAssCache, mCompConsCache, mOccStatsCache are all protected fields
     // in CReasonerManagerThread.h — verified against upstream header.
     void threadStopped() override {
-#ifdef WASM_VERBOSE_LOGGING
-        fprintf(stderr, "{dbg} WasmReasonerManagerThread::threadStopped() — manager thread exiting!\n");
-#endif
+        WASM_TRACE1("MGR", "thread_stopped", "manager thread exiting");
         CReasonerManagerThread::threadStopped();
         // mBackendAssCache, mCompConsCache, mOccStatsCache are created in
         // threadStarted() but not stopped by upstream threadStopped().
@@ -952,9 +951,7 @@ KoncludeReasoner::~KoncludeReasoner() {
 // See KoncludeReasoner.h for the wire format comment.
 //
 void KoncludeReasoner::loadTripleBuffer(int triplePtr, int tripleCount, int strTablePtr, int strTableLen, bool forRealization) {
-#ifdef WASM_VERBOSE_LOGGING
     auto t0 = std::chrono::steady_clock::now();
-#endif
 
     if (!strTablePtr || !triplePtr) {
         fprintf(stderr, "{warn} KoncludeReasoner >> loadTripleBuffer called with null pointer\n");
@@ -1949,11 +1946,8 @@ void KoncludeReasoner::loadTripleBuffer(int triplePtr, int tripleCount, int strT
 
     mImpl->mClassified = false;
 
-#ifdef WASM_VERBOSE_LOGGING
-    fprintf(stderr, "{info} KoncludeReasoner >> loadTripleBuffer: %d triples in %.0f ms\n",
-        tripleCount,
+    WASM_TRACE1("LOAD", "done", "triples=%d ms=%.0f", tripleCount,
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
-#endif
 }
 
 // ── shared pipeline helper ─────────────────────────────────────────────────────
@@ -2010,13 +2004,9 @@ bool KoncludeReasoner::runPipeline(KoncludeReasoner::Impl* impl, bool includeRea
         addReq(COntologyProcessingStep::OPSSAMEINDIVIDUALSREALIZE);
     }
 
-#ifdef WASM_VERBOSE_LOGGING
-    fprintf(stderr, "{dbg} runPipeline(realization=%d): calling prepareOntology\n", (int)includeRealization);
-#endif
+    WASM_TRACE1("PIPE", "prepare", "realization=%d", (int)includeRealization);
     impl->mReasonerManager->prepareOntology(impl->mOntology, reqList);
-#ifdef WASM_VERBOSE_LOGGING
-    fprintf(stderr, "{dbg} runPipeline: prepareOntology returned\n");
-#endif
+    WASM_TRACE1("PIPE", "prepared", "done");
     impl->mReasonerManager->waitSynchronization();
 
     for (auto* r : reqList) delete r;
@@ -2055,14 +2045,10 @@ bool KoncludeReasoner::runPipeline(KoncludeReasoner::Impl* impl, bool includeRea
 // Exposed to JS as the "classification" worker command (called by classify()).
 bool KoncludeReasoner::classification() {
     if (mImpl->mLoadError) return false;
-#ifdef WASM_VERBOSE_LOGGING
     auto t0 = std::chrono::steady_clock::now();
-#endif
     bool ok = runPipeline(mImpl, false);
-#ifdef WASM_VERBOSE_LOGGING
-    fprintf(stderr, "{info} KoncludeReasoner >> Finished classification in %.0f ms\n",
+    WASM_TRACE1("CLASSIFY", "done", "ok=%d ms=%.0f", (int)ok,
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
-#endif
     return ok;
 }
 
@@ -2075,14 +2061,10 @@ bool KoncludeReasoner::classification() {
 // Exposed to JS as the "realization" worker command (called by materialize()).
 bool KoncludeReasoner::realization() {
     if (mImpl->mLoadError) return false;
-#ifdef WASM_VERBOSE_LOGGING
     auto t0 = std::chrono::steady_clock::now();
-#endif
     bool ok = runPipeline(mImpl, true);
-#ifdef WASM_VERBOSE_LOGGING
-    fprintf(stderr, "{info} KoncludeReasoner >> Finished realization in %.0f ms\n",
+    WASM_TRACE1("REALIZE", "done", "ok=%d ms=%.0f", (int)ok,
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
-#endif
     return ok;
 }
 
@@ -3268,10 +3250,8 @@ int KoncludeReasoner::buildInferredTripleBuffer(bool withExplanations) {
 
     mImpl->mResultBufferPtr = reinterpret_cast<int>(mImpl->mResultBuffer.data());
 
-#ifdef WASM_VERBOSE_LOGGING
-    fprintf(stderr, "{info} KoncludeReasoner >> buildInferredTripleBuffer: %zu triples, %zu axioms, %zu justs, %zu mappings, %zu bytes\n",
+    WASM_TRACE1("BUILD", "inferred", "triples=%zu axioms=%zu justs=%zu mappings=%zu bytes=%zu",
         tripleIds.size() / 3, axiomTriples.size(), justEntries.size(), tripleMappings.size(), totalLen);
-#endif
 
     return static_cast<int>(totalLen);
 }
@@ -3488,10 +3468,7 @@ int KoncludeReasoner::buildPropertyTripleBuffer(bool withExplanations) {
 
     mImpl->mResultBufferPtr = reinterpret_cast<int>(mImpl->mResultBuffer.data());
 
-#ifdef WASM_VERBOSE_LOGGING
-    fprintf(stderr, "{info} KoncludeReasoner >> buildPropertyTripleBuffer: %zu triples, %zu bytes\n",
-        tripleIds.size() / 3, totalLen);
-#endif
+    WASM_TRACE1("BUILD", "properties", "triples=%zu bytes=%zu", tripleIds.size() / 3, totalLen);
 
     return static_cast<int>(totalLen);
 }

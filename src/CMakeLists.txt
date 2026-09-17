@@ -268,6 +268,9 @@ target_compile_definitions(konclude_kernel
         WASM_LOG_LEVEL=1
 )
 
+set(WASM_TRACE_LEVEL "0" CACHE STRING "Trace verbosity: 0=off, 1=pipeline, 2=detail, 3=hot-path")
+target_compile_definitions(konclude_kernel PUBLIC WASM_TRACE_LEVEL=${WASM_TRACE_LEVEL})
+
 option(WASM_REALIZATION_VERBOSE "Enable realizer verbose fprintf logging for debugging" OFF)
 if(WASM_REALIZATION_VERBOSE)
   target_compile_definitions(konclude_kernel PRIVATE WASM_REALIZATION_VERBOSE)
@@ -318,6 +321,7 @@ endif()
 add_executable(konclude_wasm
     "${CMAKE_SOURCE_DIR}/src/bindings.cpp"
     "${CMAKE_SOURCE_DIR}/src/KoncludeReasoner.cpp"
+    "${CMAKE_SOURCE_DIR}/src/tracing.cpp"
 )
 
 set_target_properties(konclude_wasm PROPERTIES

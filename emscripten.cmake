@@ -28,4 +28,5 @@ set(KONCLUDE_EMSCRIPTEN_LINK_FLAGS
     "-flto"
     "-sEXPORTED_RUNTIME_METHODS=[\"HEAPU8\"]"
     "-sEXPORTED_FUNCTIONS=[\"_malloc\",\"_free\"]"
+    "--no-wasm-opt"
 )
