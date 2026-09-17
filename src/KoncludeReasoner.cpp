@@ -503,34 +503,13 @@ struct KoncludeReasoner::Impl {
         delete bb;
     }
 
-    // Rebuild the manager thread and classification manager from scratch.
-    // Clears all singleton caches (BackendAssCache, preprocessor/classifier
-    // mOntItemHash, etc.) that accumulate state across calls.
-    void rebuildManager() {
-        delete mReasonerManager;
-        delete mClassManager;
-        mReasonerManager = new WasmReasonerManagerThread();
-        mReasonerManager->initializeManager(mConfigProvider);
-        mProcessorCount = CThread::idealThreadCount();
-        CConfigDependedSubsumptionClassifierFactory* classFactory =
-            new CConfigDependedSubsumptionClassifierFactory(mReasonerManager);
-        mClassManager = new CClassificationManager();
-        mClassManager->initializeManager(classFactory, mConfigProvider);
-        mReasonerManager->setClassificationManager(mClassManager);
-    }
-
-    // Nuclear reset: destroy everything and start fresh.  All background threads
-    // are already joined (realizers at end of classify, caches in threadStopped).
-    // Rebuilding the manager thread eliminates all accumulated state — no memory
-    // growth across calls.
+    // Reset: prepare a fresh ontology for the next classify() call.
+    // Realizers from the previous call are already joined at the end of classify(),
+    // so no stopAndClearRealizers() call is needed here.
     void reset() {
-        // Tear down manager first (joins all threads), then free ontologies.
-        rebuildManager();
         delete mPreviousPreviousOntology;
-        mPreviousPreviousOntology = nullptr;
-        delete mPreviousOntology;
-        mPreviousOntology = nullptr;
-        delete mOntology;
+        mPreviousPreviousOntology = mPreviousOntology;
+        mPreviousOntology = mOntology;
         mOntology = nullptr;
         buildFreshOntology();
         mClassified         = false;
