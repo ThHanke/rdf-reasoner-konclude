@@ -54,15 +54,10 @@ namespace Konclude {
                             precomputator = mOntoPrecomputatorHash.constBegin().value();
                         }
                         if (!precomputator) {
-                            WASM_TRACE1("PRECOMP", "create", "");
                             precomputator = new CTotallyPrecomputationThread(mReasonerManager);
                             mOntoPrecomputatorHash.insert(ontology, precomputator);
-                        } else {
-                            WASM_TRACE1("PRECOMP", "reuse", "");
                         }
                         mReadWriteLock.unlock();
-                    } else {
-                        WASM_TRACE1("PRECOMP", "reuse", "");
                     }
 
                     return precomputator;

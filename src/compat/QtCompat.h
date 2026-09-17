@@ -2269,6 +2269,4 @@ inline static bool _wasmInfoDomain(const char* domain) {
 
 #endif // WASM_LOG_OVERRIDE
 
-#include "WasmTrace.h"
-
 #endif // QTCOMPAT_H

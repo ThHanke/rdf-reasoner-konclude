@@ -64,6 +64,21 @@ graphify path "CCalculationTableauApproximationSaturationTaskHandleAlgorithm" "C
 graphify explain "CReasonerManagerThread" --graph vendor/konclude/Source/Reasoner/graphify-out/graph.json
 ```
 
+## Running Tests
+
+Always redirect full test output to a file, then tail the file for a summary:
+
+```bash
+npx vitest run --reporter=verbose 2>&1 > /tmp/vitest-full-output.txt; tail -30 /tmp/vitest-full-output.txt
+```
+
+**Never pipe test runs through `tail` directly** (`npx vitest run | tail -30`) — it discards failure details that appear in the middle of output. Save first, tail second.
+
+To find failures after a run:
+```bash
+grep "FAIL  tests/" /tmp/vitest-full-output.txt
+```
+
 ## Linting
 
 Trunk manages all linters. Run via:

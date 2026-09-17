@@ -101,7 +101,6 @@ namespace Konclude {
         qint64  CThread::getThreadID()            { return threadID; }
 
         void CThread::postEvent(QEvent* event, int /*priority*/) {
-            WASM_TRACE3("THREAD", "post_event", "name=%s", threadName.c_str());
             PthreadState* s = getState(this);
             if (!s) {
                 delete event; return;
@@ -130,7 +129,6 @@ namespace Konclude {
 
         void CThread::run() {
             threadID = nextThreadID++;
-            WASM_TRACE1("THREAD", "run", "id=%lld name=%s", (long long)threadID, threadName.c_str());
 
             bool registered = false;
             if (mWatchDog) registered = mWatchDog->registerThread(this);
@@ -174,7 +172,6 @@ namespace Konclude {
 
             s->running = false;
             threadRuns = false;
-            WASM_TRACE1("THREAD", "exit", "id=%lld name=%s", (long long)threadID, threadName.c_str());
             threadStopped();
             if (mWatchDog) mWatchDog->checkoutThread(this);
         }
@@ -229,7 +226,6 @@ namespace Konclude {
         void CThread::threadStopped()    {}
 
         void CThread::startThread(QThread::Priority /*priority*/) {
-            WASM_TRACE1("THREAD", "start", "name=%s", threadName.c_str());
             PthreadState* s = getOrCreateState(this);
             s->shouldStop = false;
             s->running    = false;
