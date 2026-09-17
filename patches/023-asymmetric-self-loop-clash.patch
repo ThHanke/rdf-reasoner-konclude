@@ -1,0 +1,27 @@
+--- a/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp
++++ b/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp
+@@ -5091,6 +5091,24 @@
+ 							CRole* role = assRoleLinkerIt->getRole();
+ 							CIndividual* othIndi = assRoleLinkerIt->getIndividual();
+ 
++							// Self-loop clash: r(a,a) with AsymmetricProperty(r) or IrreflexiveProperty(r).
++							// Before othIndiNode lookup — reads only precomputed role flags (set during
++							// preprocessing), no ABox iteration (which hangs all tests in saturation).
++							if (othIndi == nominalIndi) {
++								CSortedNegLinker<CRole*>* superRoleIt = role->getIndirectSuperRoleList();
++								while (superRoleIt) {
++									if (!superRoleIt->isNegated() &&
++											(superRoleIt->getData()->isAsymmetric() ||
++											 superRoleIt->getData()->isIrreflexive())) {
++										updateDirectAddingIndividualStatusFlags(
++											indiProcSatNode,
++											CIndividualSaturationProcessNodeStatusFlags::INDSATFLAGCLASHED,
++											calcAlgContext);
++										return;
++									}
++									superRoleIt = superRoleIt->getNext();
++								}
++							}
+ 
+ 							CIndividualSaturationProcessNode* othIndiNode = getIndividualNodeForIndividual(indiProcSatNode,othIndi,saturationID,calcAlgContext);
+ 							if (othIndiNode && (othIndiNode->isInitialized() || othIndiNode == indiProcSatNode)) {

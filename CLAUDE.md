@@ -34,6 +34,36 @@ sudo chown -R $USER dist/
 
 **Multi-file patches:** `new-vendor-patch.sh` handles one file at a time. For changes spanning many vendor files, write a Python script that: (1) calls `git -C vendor/konclude show HEAD:<path>` to get the clean original as bytes, (2) applies `bytes.replace()` substitutions, (3) writes orig and modified to temp files, (4) calls `diff -u orig mod` and fixes the `--- /tmp/...` headers to `--- a/<path>` / `+++ b/<path>`, (5) concatenates all per-file diffs into a single `patches/NNN-name.patch`. Use `diff -u` (not Python `difflib`) to avoid newline format issues.
 
+## Konclude Knowledge Graph (Graphify)
+
+A graphify knowledge graph of `vendor/konclude/Source/Reasoner` (38,462 nodes, 94,143 edges, 889 communities) is available for navigating code paths, call chains, and class hierarchies before writing patches.
+
+**Interactive dashboards** (served at http://docker-dev.iwm.fraunhofer.de:7890):
+- `/graph.html` — force-directed community graph; click a community node to see cross-community connections
+- `/callflow.html` — Mermaid call-flow diagrams across 16 architectural sections with zoom/pan
+
+**Start the server** (if not running):
+```bash
+python3 -m http.server 7890 --directory vendor/konclude/Source/Reasoner/graphify-out &
+```
+
+**Rebuild the graph** after vendor changes:
+```bash
+graphify vendor/konclude/Source/Reasoner
+graphify export html --graph vendor/konclude/Source/Reasoner/graphify-out/graph.json --node-limit 5000
+graphify export callflow-html vendor/konclude/Source/Reasoner --output vendor/konclude/Source/Reasoner/graphify-out/callflow.html
+```
+
+**Before patching any Konclude C++ file:** use graphify to trace call chains — ask "show me callers of X" or "what does Y call" using the graph.json. This prevents wrong-assumption bugs from patching call sites that are in invalid state.
+
+**Before writing any saturation clash patch** (`CCalculationTableauApproximationSaturationTaskHandleAlgorithm`): use graphify to determine if data is precomputed or requires runtime ABox traversal. Rule: role flags (`isAsymmetric()`, `isIrreflexive()`, `getIndirectSuperRoleList()`) are set during the generator/preprocessing layer — safe to read during saturation. Never call `getAssertionRoleLinker()` inside saturation role-assertion processing — this causes deadlocks for all ontologies. Clash checks that only read precomputed role flags go BEFORE the `othIndiNode = getIndividualNodeForIndividual(...)` call (feedback pattern).
+
+**CLI path shortcuts:**
+```bash
+graphify path "CCalculationTableauApproximationSaturationTaskHandleAlgorithm" "CIndividualSaturationProcessNode" --graph vendor/konclude/Source/Reasoner/graphify-out/graph.json
+graphify explain "CReasonerManagerThread" --graph vendor/konclude/Source/Reasoner/graphify-out/graph.json
+```
+
 ## Linting
 
 Trunk manages all linters. Run via:
