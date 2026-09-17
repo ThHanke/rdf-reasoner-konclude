@@ -9,5 +9,7 @@ export default defineConfig({
     // concurrently saturates the pthread pool (PTHREAD_POOL_SIZE=8) and causes
     // random deadlocks in heavy fixtures (roberts-family, GALEN).
     fileParallelism: false,
+    reporters: ['verbose', 'json'],
+    outputFile: '/tmp/vitest-last.json',
   },
 });
