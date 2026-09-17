@@ -41,10 +41,15 @@ namespace Konclude {
                             preprocessor = mOntoPreprocessHash.constBegin().value();
                         }
                         if (!preprocessor) {
+                            WASM_TRACE1("PREPROC", "create", "");
                             preprocessor = new CRequirementConfigPreprocessingThread(mReasonerManager);
                             mOntoPreprocessHash.insert(ontology, preprocessor);
+                        } else {
+                            WASM_TRACE1("PREPROC", "reuse", "");
                         }
                         mReadWriteLock.unlock();
+                    } else {
+                        WASM_TRACE1("PREPROC", "reuse", "");
                     }
 
                     return preprocessor;

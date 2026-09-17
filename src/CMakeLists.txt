@@ -268,14 +268,10 @@ target_compile_definitions(konclude_kernel
         WASM_LOG_LEVEL=1
 )
 
-option(WASM_REALIZATION_VERBOSE "Enable realizer verbose fprintf logging for debugging" OFF)
-if(WASM_REALIZATION_VERBOSE)
-  target_compile_definitions(konclude_kernel PRIVATE WASM_REALIZATION_VERBOSE)
-endif()
-
-option(WASM_PRECOMP_VERBOSE "Enable precomputing verbose logging (slow)" OFF)
-if(WASM_PRECOMP_VERBOSE)
-  target_compile_definitions(konclude_kernel PRIVATE WASM_PRECOMP_VERBOSE)
+set(WASM_TRACE_LEVEL "0" CACHE STRING "Trace verbosity: 0=off, 1=pipeline, 2=detail, 3=hot-path")
+target_compile_definitions(konclude_kernel PRIVATE "WASM_TRACE_LEVEL=${WASM_TRACE_LEVEL}")
+if(WASM_TRACE_LEVEL GREATER 0)
+  target_compile_definitions(konclude_kernel PRIVATE WASM_TRACE_OVERRIDE)
 endif()
 
 # IU-A3: clash-path justification hook — extract dep chains from tableau catch blocks
@@ -318,7 +314,20 @@ endif()
 add_executable(konclude_wasm
     "${CMAKE_SOURCE_DIR}/src/bindings.cpp"
     "${CMAKE_SOURCE_DIR}/src/KoncludeReasoner.cpp"
+    "${CMAKE_SOURCE_DIR}/src/tracing.cpp"
 )
+
+# Level 3: compiler instrumentation on critical vendor files
+if(WASM_TRACE_LEVEL GREATER_EQUAL 3)
+  set(_INSTRUMENTED_FILES
+    "${CMAKE_SOURCE_DIR}/vendor/konclude/Source/Reasoner/Preprocess/CTotallyPrecomputationThread.cpp"
+    "${CMAKE_SOURCE_DIR}/vendor/konclude/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.cpp"
+    "${CMAKE_SOURCE_DIR}/vendor/konclude/Source/Concurrent/CReasonerManagerThread.cpp"
+  )
+  foreach(_f IN LISTS _INSTRUMENTED_FILES)
+    set_source_files_properties(${_f} PROPERTIES COMPILE_OPTIONS "-finstrument-functions;-fno-lto")
+  endforeach()
+endif()
 
 set_target_properties(konclude_wasm PROPERTIES
     OUTPUT_NAME "konclude"

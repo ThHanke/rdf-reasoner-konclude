@@ -69,9 +69,15 @@ interface WorkerInitErrorMessage {
   error: string;
 }
 
+interface WorkerLogMessage {
+  type: "log";
+  msg: string;
+}
+
 type WorkerInboundMessage =
   | WorkerReadyMessage
   | WorkerInitErrorMessage
+  | WorkerLogMessage
   | WorkerResponse;
 
 // ---------------------------------------------------------------------------
@@ -145,8 +151,10 @@ export class RdfReasoner {
   private _lastExplBuffer: ArrayBuffer | null = null;
   private _lastPropertyExplBuffer: ArrayBuffer | null = null;
   private _entailmentProbeCounter = 0;
+  private readonly _onTrace: ((msg: string) => void) | undefined;
 
   constructor(opts?: RdfReasonerOptions) {
+    this._onTrace = opts?.onTrace;
     if (opts?.worker) {
       this.worker = opts.worker;
     } else {
@@ -196,7 +204,12 @@ export class RdfReasoner {
       (event: MessageEvent<WorkerInboundMessage>) => {
         const msg = event.data;
         // Skip init-lifecycle messages (handled by the one-shot listener above).
-        if ("type" in msg) return;
+        if ("type" in msg) {
+          if (msg.type === "log" && this._onTrace) {
+            this._onTrace((msg as WorkerLogMessage).msg);
+          }
+          return;
+        }
 
         const response = msg as WorkerResponse;
         const entry = this.pending.get(response.id);

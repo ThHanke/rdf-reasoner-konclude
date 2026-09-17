@@ -284,10 +284,8 @@ namespace Konclude {
 
 
 		CSingleThreadTaskProcessorUnit* CSingleThreadTaskProcessorUnit::startProcessing() {
-#ifdef WASM_HANG_DIAGNOSTICS
-			fprintf(stderr, "[HANG-DBG] stpu: startProcessing running=%d lastTag=%lld\n",
+			WASM_TRACE1("STPU", "start_processing", "running=%d tag=%lld",
 			    (int)isRunning(), (long long)mLastProcessingStartedTag);
-#endif
 			// Call 2+: unconditionally drain stale signals/events and reset tags so
 			// that signalizeEvent() can release the semaphore for the new classify()
 			// call.  Stale KPSet pthread callbacks arriving after the previous
@@ -354,9 +352,7 @@ namespace Konclude {
 		}
 
 		CThreadActivator* CSingleThreadTaskProcessorUnit::signalizeEvent() {
-#ifdef WASM_HANG_DIAGNOSTICS
-			fprintf(stderr, "[HANG-DBG] stpu: signalize blocked=%d\n", (int)mProcessingBlocked);
-#endif
+			WASM_TRACE2("STPU", "signalize", "blocked=%d", (int)mProcessingBlocked);
 			mEventSignalized = true;
 			if (mProcessingBlocked) {
 				// Reactivate the STPU: release the semaphore unconditionally.
@@ -378,9 +374,7 @@ namespace Konclude {
 				return true;
 			} else {
 				if (type == Concurrent::Events::CHandleEventsEvent::EVENTTYPE) {
-#ifdef WASM_HANG_DIAGNOSTICS
-					fprintf(stderr, "[HANG-DBG] stpu: handle-events-event\n");
-#endif
+					WASM_TRACE2("STPU", "handle_events", "");
 #ifdef KONCLUDE_SCHEDULER_TASK_THREADS_TIME_STATISTICS
 					mComputionTimer.start();
 #endif
@@ -401,16 +395,12 @@ namespace Konclude {
 			// event-draining path before entering the blocking wait.
 			mProcessingBlocked = false;
 			bool eventSafeguardProcessed = false;
-#ifdef WASM_HANG_DIAGNOSTICS
 			static long long stpu_tick_count = 0;
-			fprintf(stderr, "[HANG-DBG] stpu: loop-entry\n");
-#endif
+			WASM_TRACE1("STPU", "loop_entry", "");
 			while (!mProcessingStopped) {
 				if (!mTaskProcessingQueue && mProcessingBlocked) {
 					// block until signalizeEvent() releases the semaphore
-#ifdef WASM_HANG_DIAGNOSTICS
-					fprintf(stderr, "[HANG-DBG] stpu: blocking queue=null ticks=%lld\n", stpu_tick_count);
-#endif
+					WASM_TRACE2("STPU", "block", "ticks=%lld", stpu_tick_count);
 #ifdef KONCLUDE_SCHEDULER_TASK_THREADS_TIME_STATISTICS
 					mStatComputionTime += mComputionTimer.elapsed();
 					mBlockingTimer.start();
@@ -419,9 +409,7 @@ namespace Konclude {
 					mThreadBlocked = true;
 					mProcessingWakeUpSemaphore.acquire(1);
 					mThreadBlocked = false;
-#ifdef WASM_HANG_DIAGNOSTICS
-					fprintf(stderr, "[HANG-DBG] stpu: wake ticks=%lld\n", stpu_tick_count);
-#endif
+					WASM_TRACE2("STPU", "wake", "ticks=%lld", stpu_tick_count);
 #ifdef KONCLUDE_SCHEDULER_TASK_THREADS_TIME_STATISTICS
 					mStatBlockingTime += mBlockingTimer.elapsed();
 					mComputionTimer.start();
@@ -442,11 +430,8 @@ namespace Konclude {
 					CTask* processingTask = mTaskProcessingQueue;
 					mTaskProcessingQueue = mTaskProcessingQueue->getNext();
 					cint64 taskDepth = processingTask->getTaskDepth();
-#ifdef WASM_HANG_DIAGNOSTICS
 					++stpu_tick_count;
-					if (stpu_tick_count <= 5 || stpu_tick_count % 1000 == 0)
-						fprintf(stderr, "[HANG-DBG] stpu: tick=%lld depth=%lld\n", stpu_tick_count, (long long)taskDepth);
-#endif
+					WASM_TRACE3("STPU", "tick", "n=%lld depth=%lld", stpu_tick_count, (long long)taskDepth);
 
 					bool continueProcessing = processTask(processingTask);
 					if (continueProcessing) {

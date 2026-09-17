@@ -61,11 +61,16 @@ namespace Konclude {
                         classifier = mOntoClassifierHash.constBegin().value();
                     }
                     if (!classifier) {
+                        WASM_TRACE1("CLASSIFY", "create", "");
                         classifier = mClassifierFac->createClassifier(ontology, config);
                         mOntoClassifierSet.insert(classifier);
                         mOntoClassifierHash.insert(ontology, classifier);
+                    } else {
+                        WASM_TRACE1("CLASSIFY", "reuse", "");
                     }
                     readWriteLock.unlock();
+                } else {
+                    WASM_TRACE1("CLASSIFY", "reuse", "");
                 }
                 return classifier;
             }
