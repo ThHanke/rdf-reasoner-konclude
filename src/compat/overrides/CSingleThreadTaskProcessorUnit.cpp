@@ -395,12 +395,14 @@ namespace Konclude {
 			// event-draining path before entering the blocking wait.
 			mProcessingBlocked = false;
 			bool eventSafeguardProcessed = false;
+#if WASM_TRACE_LEVEL >= 2
 			static long long stpu_tick_count = 0;
+#endif
 			WASM_TRACE1("STPU", "loop_entry", "");
 			while (!mProcessingStopped) {
 				if (!mTaskProcessingQueue && mProcessingBlocked) {
 					// block until signalizeEvent() releases the semaphore
-					WASM_TRACE2("STPU", "block", "ticks=%lld", stpu_tick_count);
+					WASM_TRACE2("STPU", "block", "");
 #ifdef KONCLUDE_SCHEDULER_TASK_THREADS_TIME_STATISTICS
 					mStatComputionTime += mComputionTimer.elapsed();
 					mBlockingTimer.start();
@@ -409,7 +411,7 @@ namespace Konclude {
 					mThreadBlocked = true;
 					mProcessingWakeUpSemaphore.acquire(1);
 					mThreadBlocked = false;
-					WASM_TRACE2("STPU", "wake", "ticks=%lld", stpu_tick_count);
+					WASM_TRACE2("STPU", "wake", "");
 #ifdef KONCLUDE_SCHEDULER_TASK_THREADS_TIME_STATISTICS
 					mStatBlockingTime += mBlockingTimer.elapsed();
 					mComputionTimer.start();
@@ -430,7 +432,9 @@ namespace Konclude {
 					CTask* processingTask = mTaskProcessingQueue;
 					mTaskProcessingQueue = mTaskProcessingQueue->getNext();
 					cint64 taskDepth = processingTask->getTaskDepth();
+	#if WASM_TRACE_LEVEL >= 2
 					++stpu_tick_count;
+#endif
 					WASM_TRACE3("STPU", "tick", "n=%lld depth=%lld", stpu_tick_count, (long long)taskDepth);
 
 					bool continueProcessing = processTask(processingTask);

@@ -55,7 +55,6 @@ inline void trace(const char* tag, const char* ev, const char* fmt, ...) {
     fprintf(stderr,
         "{\"t\":%.1f,\"tid\":\"%lx\",\"tag\":\"%s\",\"ev\":\"%s\",\"d\":\"%s\"}\n",
         getTimeMs(), (unsigned long)getThreadId(), tag, ev, detail);
-    fflush(stderr);
 }
 
 inline void trace3(const char* tag, const char* ev, const char* fmt, ...) {
