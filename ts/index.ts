@@ -131,11 +131,14 @@ export class RdfReasoner {
    */
   private _queue: Promise<void> = Promise.resolve();
 
-  // Per-operation fingerprint caches. Each slot stores the last input hash and
-  // result so that identical consecutive calls skip the Worker round-trip.
-  private _classifyCache: { hash: string; result: void } | null = null;
-  private _materializeCache: { hash: string; result: void } | null = null;
-  private _classifyPropertiesCache: { hash: string; result: void } | null = null;
+  // Per-operation fingerprint caches. Each slot stores the last input hash AND
+  // the exact store instance so that a cache hit only fires for the same Store
+  // object with unchanged content. Two different Store objects with identical
+  // quads do NOT share a cache hit — the inferred graph lives inside the Store,
+  // so a fresh Store always starts empty and must be populated from scratch.
+  private _classifyCache: { hash: string; store: Store; result: void } | null = null;
+  private _materializeCache: { hash: string; store: Store; result: void } | null = null;
+  private _classifyPropertiesCache: { hash: string; store: Store; result: void } | null = null;
   private _consistencyCache: { hash: string; result: boolean } | null = null;
 
   // Cached explanation buffers — avoids WASM round-trip on cache-hit explanation requests.
@@ -286,15 +289,18 @@ export class RdfReasoner {
   }
 
   private _reasonOnStore(store: Store, opts?: StoreReasoningOptions): Promise<void> {
-    // Known limitation: fingerprint always covers all graphs, including any
-    // custom inferredGraph. If the caller uses a non-default inferredGraph,
-    // the cache may incorrectly report a hit when the inferred graph has
-    // changed between calls. Acceptable for the current use-cases.
+    // Cache contract: a hit requires both the same Store INSTANCE and the same
+    // content fingerprint. Two distinct Store objects with identical quads never
+    // share a cache hit — each fresh Store must be populated from scratch, because
+    // inferred quads live inside the Store object itself and not in the reasoner.
+    // Known limitation: fingerprint covers all graphs including any custom
+    // inferredGraph, so callers using a non-default inferredGraph may see a stale
+    // hit if only the inferred graph changed. Acceptable for current use-cases.
     const fingerprint = computeStoreFingerprintDirect(store);
     const wantExplanations = opts?.explanations === true;
     const result = this._queue.then(async () => {
-      // Cache hit: same store content as last classify call
-      if (this._classifyCache !== null && this._classifyCache.hash === fingerprint) {
+      // Cache hit: same store instance with same content as last classify call
+      if (this._classifyCache !== null && this._classifyCache.hash === fingerprint && this._classifyCache.store === store) {
         if (wantExplanations) {
           await this._ensureExplanationGraphFromBuffer(store, "getInferredTripleBuffer");
         }
@@ -331,7 +337,7 @@ export class RdfReasoner {
         this._lastExplBuffer = null;
       }
 
-      this._classifyCache = { hash: fingerprint, result: undefined as void };
+      this._classifyCache = { hash: fingerprint, store, result: undefined as void };
       this._materializeCache = null;
       this._classifyPropertiesCache = null;
       this._lastPropertyExplBuffer = null;
@@ -524,8 +530,8 @@ export class RdfReasoner {
         opts?.inferredGraph ?? INFERRED_GRAPH_IRI,
       );
 
-      // Cache hit: same store content as last materialize call
-      if (this._materializeCache !== null && this._materializeCache.hash === fingerprint) {
+      // Cache hit: same store instance with same content as last materialize call
+      if (this._materializeCache !== null && this._materializeCache.hash === fingerprint && this._materializeCache.store === store) {
         if (wantExplanations) {
           await this._ensureExplanationGraphFromBuffer(store, "getInferredTripleBuffer");
         }
@@ -581,7 +587,7 @@ export class RdfReasoner {
         );
       }
 
-      this._materializeCache = { hash: fingerprint, result: undefined as void };
+      this._materializeCache = { hash: fingerprint, store, result: undefined as void };
       this._classifyCache = null;
       this._classifyPropertiesCache = null;
       this._lastPropertyExplBuffer = null;
@@ -679,8 +685,8 @@ export class RdfReasoner {
     const fingerprint = computeStoreFingerprintDirect(store);
     const wantExplanations = opts?.explanations === true;
     const result = this._queue.then(async () => {
-      // Cache hit: same store content as last classifyProperties call
-      if (this._classifyPropertiesCache !== null && this._classifyPropertiesCache.hash === fingerprint) {
+      // Cache hit: same store instance with same content as last classifyProperties call
+      if (this._classifyPropertiesCache !== null && this._classifyPropertiesCache.hash === fingerprint && this._classifyPropertiesCache.store === store) {
         if (wantExplanations) {
           await this._ensureExplanationGraphFromBuffer(store, "getPropertyTripleBuffer");
         }
@@ -717,7 +723,7 @@ export class RdfReasoner {
         this._lastPropertyExplBuffer = null;
       }
 
-      this._classifyPropertiesCache = { hash: fingerprint, result: undefined as void };
+      this._classifyPropertiesCache = { hash: fingerprint, store, result: undefined as void };
       this._classifyCache = null;
       this._materializeCache = null;
       this._lastExplBuffer = null;
@@ -768,7 +774,7 @@ export class RdfReasoner {
   }
 
   private async _classifyInline(store: Store, fingerprint: string, inferredGraph?: string): Promise<void> {
-    if (this._classifyCache?.hash === fingerprint) return;
+    if (this._classifyCache?.hash === fingerprint && this._classifyCache.store === store) return;
     const rawStore = getRawStore(store);
     const ig = DataFactory.namedNode(inferredGraph ?? INFERRED_GRAPH_IRI);
     clearGraph(rawStore, ig.value);
@@ -783,7 +789,7 @@ export class RdfReasoner {
       if (existsInSourceGraphs(store, q.subject, q.predicate, q.object)) continue;
       rawStore.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, ig));
     }
-    this._classifyCache = { hash: fingerprint, result: undefined as void };
+    this._classifyCache = { hash: fingerprint, store, result: undefined as void };
     this._materializeCache = null;           // cross-invalidate
     this._classifyPropertiesCache = null;    // cross-invalidate
     this._lastExplBuffer = null;
@@ -791,7 +797,7 @@ export class RdfReasoner {
   }
 
   private async _materializeInline(store: Store, fingerprint: string, inferredGraph?: string): Promise<void> {
-    if (this._materializeCache?.hash === fingerprint) return;
+    if (this._materializeCache?.hash === fingerprint && this._materializeCache.store === store) return;
     const rawStore = getRawStore(store);
     const ig = DataFactory.namedNode(inferredGraph ?? INFERRED_GRAPH_IRI);
     clearGraph(rawStore, ig.value);
@@ -807,7 +813,7 @@ export class RdfReasoner {
       if (existsInSourceGraphs(store, q.subject, q.predicate, q.object)) continue;
       rawStore.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, ig));
     }
-    this._materializeCache = { hash: fingerprint, result: undefined as void };
+    this._materializeCache = { hash: fingerprint, store, result: undefined as void };
     this._classifyCache = null;              // cross-invalidate
     this._classifyPropertiesCache = null;    // cross-invalidate
     this._lastExplBuffer = null;
@@ -815,7 +821,7 @@ export class RdfReasoner {
   }
 
   private async _classifyPropertiesInline(store: Store, fingerprint: string, inferredGraph?: string): Promise<void> {
-    if (this._classifyPropertiesCache?.hash === fingerprint) return;
+    if (this._classifyPropertiesCache?.hash === fingerprint && this._classifyPropertiesCache.store === store) return;
     const rawStore = getRawStore(store);
     const ig = DataFactory.namedNode(inferredGraph ?? INFERRED_GRAPH_IRI);
     clearGraph(rawStore, ig.value);
@@ -827,7 +833,7 @@ export class RdfReasoner {
       if (existsInSourceGraphs(store, q.subject, q.predicate, q.object)) continue;
       rawStore.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, ig));
     }
-    this._classifyPropertiesCache = { hash: fingerprint, result: undefined as void };
+    this._classifyPropertiesCache = { hash: fingerprint, store, result: undefined as void };
     this._classifyCache = null;              // cross-invalidate
     this._materializeCache = null;           // cross-invalidate
     this._lastExplBuffer = null;
@@ -846,7 +852,7 @@ export class RdfReasoner {
    */
   private async _getUnsatisfiableClassesInternal(store: Store, inferredGraph?: string): Promise<string[]> {
     const fingerprint = computeStoreFingerprintDirect(store);
-    if (this._classifyCache?.hash !== fingerprint) {
+    if (this._classifyCache?.hash !== fingerprint || this._classifyCache.store !== store) {
       const rawStore = getRawStore(store);
       const ig = DataFactory.namedNode(inferredGraph ?? INFERRED_GRAPH_IRI);
       clearGraph(rawStore, ig.value);
@@ -856,7 +862,7 @@ export class RdfReasoner {
       const buf = (await this._callDirect("getInferredTripleBuffer", [])) as ArrayBuffer;
       for (const q of decodeBuffers(buf))
         rawStore.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, ig));
-      this._classifyCache = { hash: fingerprint, result: undefined as void };
+      this._classifyCache = { hash: fingerprint, store, result: undefined as void };
       this._materializeCache = null;
       this._classifyPropertiesCache = null;
     }
@@ -2415,6 +2421,16 @@ export class RdfReasoner {
         if (objectIri === OWL_NOTHING && predicateIri === RDFS_SUB_CLASS_OF) {
           const sat = await this._isSatisfiableClassDirect(subjectIri);
           if (!sat) {
+            return { isEntailed: true, justifications: [] as Quad[][] };
+          }
+        }
+        // buildInferredTripleBuffer emits the Hasse diagram (direct edges only),
+        // so a transitively-inferred A ⊑ C with A ⊑ B ⊑ C won't appear in the
+        // inferred graph even though it is entailed. Fall back to the native
+        // classifier which queries the full taxonomy.
+        if (predicateIri === RDFS_SUB_CLASS_OF) {
+          const entailed = await this._isSubClassOfDirect(subjectIri, objectIri);
+          if (entailed) {
             return { isEntailed: true, justifications: [] as Quad[][] };
           }
         }

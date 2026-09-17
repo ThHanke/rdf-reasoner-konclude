@@ -99,12 +99,13 @@ index 96e51beb..fef1a54c 100644
 +									}
 +								}
 +								if (othIndiNode == indiProcSatNode) {
-+									// Self-loop: check if any super-role of `role` is irreflexive —
-+									// IrreflexiveObjectProperty(r) is violated by r(a,a).
++									// Self-loop: violated by IrreflexiveProperty and AsymmetricProperty.
++									// r(a,a) with r asymmetric contradicts ∀x,y: r(x,y)→¬r(y,x) when x=y.
 +									CSortedNegLinker<CRole*>* superRoleIt = role->getIndirectSuperRoleList();
 +									while (superRoleIt) {
 +										if (!superRoleIt->isNegated() &&
-+												superRoleIt->getData()->isIrreflexive()) {
++												(superRoleIt->getData()->isIrreflexive() ||
++												 superRoleIt->getData()->isAsymmetric())) {
 +											updateDirectAddingIndividualStatusFlags(
 +												indiProcSatNode,
 +												CIndividualSaturationProcessNodeStatusFlags::INDSATFLAGCLASHED,

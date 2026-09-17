@@ -714,6 +714,35 @@ describe("RdfReasoner — Store API", () => {
       // Cache was invalidated; a new Worker call was made
       expect(loadCalls).toHaveLength(1);
     });
+
+    it("Different Store instance with identical quads → cache miss; Worker runs and inferred quads are written", async () => {
+      // Regression: cache used to key only on content fingerprint. A fresh Store
+      // with the same quads got a cache hit but its inferred graph was never
+      // populated — callers saw 0 inferred triples on the second call.
+      const reasoner = await makeReadyReasoner();
+      const inferredQuad = quad(alice, rdfType, B, defaultGraph());
+
+      const store1 = new Store([quad(A, subClassOf, B, defaultGraph())]);
+      mockRealizationSequence([inferredQuad]);
+      await reasoner.materialize(store1);
+
+      // Completely fresh Store with identical content
+      const store2 = new Store([quad(A, subClassOf, B, defaultGraph())]);
+      mocks.workerPostMessage.mockClear();
+      mockRealizationSequence([inferredQuad]);
+      await reasoner.materialize(store2);
+
+      // Worker must have been called for store2 (cache miss on new instance)
+      const loadCalls = mocks.workerPostMessage.mock.calls.filter(
+        (c) => (c[0] as { method: string }).method === "loadTripleBuffer",
+      );
+      expect(loadCalls).toHaveLength(1);
+
+      // And store2 must actually contain the inferred quad
+      const ig = namedNode(INFERRED_GRAPH_IRI);
+      const inferred = store2.getQuads(null, null, null, ig);
+      expect(inferred.length).toBeGreaterThan(0);
+    });
   });
 
   // -------------------------------------------------------------------------

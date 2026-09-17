@@ -972,4 +972,57 @@ describe("RdfReasoner — explainEntailment", () => {
     expect(result.isEntailed).toBe(true);
     expect(result.justifications).toHaveLength(1);
   });
+
+  // -------------------------------------------------------------------------
+  // Regression: transitive subClassOf not in Hasse diagram returns false
+  // -------------------------------------------------------------------------
+  // explainEntailment in causal mode checked only the inferred graph (Hasse
+  // diagram — direct edges only). A ⊑ C via A ⊑ B ⊑ C was absent from the
+  // Hasse output and incorrectly returned {isEntailed: false}. Fix: fall back
+  // to _isSubClassOfDirect, which queries the full native taxonomy.
+
+  it("causal mode: transitively-entailed A ⊑ C returns isEntailed:true even when absent from Hasse inferred graph", async () => {
+    const reasoner = await makeReadyReasoner();
+    const store = new Store([
+      quad(A, subClassOf, B, defaultGraph()),
+      quad(B, subClassOf, C, defaultGraph()),
+    ]);
+
+    // Classify first so causal mode has something to check against
+    const hasseBuf = buildCombinedBuffer([
+      quad(A, subClassOf, B, defaultGraph()),
+      quad(B, subClassOf, C, defaultGraph()),
+      // A ⊑ C is intentionally absent — Hasse diagram only emits direct edges
+    ]);
+
+    mocks.workerPostMessage.mockImplementation((msg: unknown) => {
+      const req = msg as { id: number; method: string; args?: unknown[] };
+      if (req.method === "loadTripleBuffer") {
+        simulateWorkerMessage({ id: req.id, result: true });
+      } else if (req.method === "classification") {
+        simulateWorkerMessage({ id: req.id, result: true });
+      } else if (req.method === "getInferredTripleBuffer") {
+        simulateWorkerMessage({ id: req.id, result: hasseBuf });
+      } else if (req.method === "hasNativeJustification") {
+        simulateWorkerMessage({ id: req.id, result: false });
+      } else if (req.method === "hasJustificationByType") {
+        simulateWorkerMessage({ id: req.id, result: false });
+      } else if (req.method === "isSubClassOf") {
+        // Native classifier correctly reports A ⊑ C (transitive)
+        const [sub, sup] = req.args as string[];
+        simulateWorkerMessage({ id: req.id, result: sub === A.value && sup === C.value });
+      }
+    });
+
+    await reasoner.classify(store);
+
+    const result = await reasoner.explainEntailment(
+      store,
+      A.value,
+      RDFS_SUBCLASS_OF,
+      C.value,
+    );
+
+    expect(result.isEntailed).toBe(true);
+  });
 });

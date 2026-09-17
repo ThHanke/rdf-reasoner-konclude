@@ -492,6 +492,25 @@ describe.skipIf(!wasmExists)(
       30000
     );
 
+    // Case 17 — AsymmetricProperty self-loop: r(a,a) with r asymmetric → inconsistent.
+    // OWL 2 DL: AsymmetricProperty(r) means ∀x,y: r(x,y)→¬r(y,x); setting x=y=a
+    // gives r(a,a)→¬r(a,a), which is a contradiction.
+    // Fixed by patch-012 extension (2026-09-17): asymmetric check added to self-loop branch.
+    it(
+      "case 17: AsymmetricProperty self-loop r(a,a) — WASM detects inconsistency",
+      async () => {
+        const quads = parseTurtle(`
+          @prefix :    <http://example.org/reasoner-test#> .
+          @prefix owl: <http://www.w3.org/2002/07/owl#> .
+          :parentOf a owl:ObjectProperty , owl:AsymmetricProperty .
+          :alice a owl:NamedIndividual ; :parentOf :alice .
+        `);
+        const consistent = await reasoner.checkConsistency(quads);
+        expect(consistent).toBe(false);
+      },
+      30000
+    );
+
     // Cases 15-16 — hasSelf + propertyDisjointWith (fixed by patch-022, 2026-09-16)
     // WASM now surpasses native: saturation applySELFRule checks disjoint roles.
     it(
