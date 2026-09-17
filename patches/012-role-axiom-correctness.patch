@@ -1,8 +1,6 @@
-diff --git a/Source/Reasoner/Generator/CConcreteOntologyUpdateBuilder.cpp b/Source/Reasoner/Generator/CConcreteOntologyUpdateBuilder.cpp
-index fd93c079..4916ca62 100644
 --- a/Source/Reasoner/Generator/CConcreteOntologyUpdateBuilder.cpp
 +++ b/Source/Reasoner/Generator/CConcreteOntologyUpdateBuilder.cpp
-@@ -1785,6 +1785,22 @@ namespace Konclude {
+@@ -1785,6 +1785,22 @@
  								roleLinker->init(role,false);
  								invRole->addDisjointRoleLinker(roleLinker);
  							}
@@ -25,15 +23,12 @@ index fd93c079..4916ca62 100644
  							role->setAsymmetric(true);
  						} else if (expType == CBuildExpression::BETTRANSITIVEOBJECTPROPERTY) {
  							// TODO: build RR [= R ??
-diff --git a/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp b/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp
-index 96e51beb..fef1a54c 100644
 --- a/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp
 +++ b/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp
-@@ -5093,11 +5093,86 @@ namespace Konclude {
+@@ -5093,11 +5093,87 @@
  
  
  							CIndividualSaturationProcessNode* othIndiNode = getIndividualNodeForIndividual(indiProcSatNode,othIndi,saturationID,calcAlgContext);
--							if (othIndiNode && (othIndiNode->isInitialized() || othIndiNode == indiProcSatNode)) {
 +							// AllDisjointProperties + EquivalentObjectProperties clash:
 +							// If role is equivalent to another role that it is also disjoint with,
 +							// any ABox assertion using role is a clash (e.g. DisjointObjectProperties(p,q)
@@ -79,7 +74,7 @@ index 96e51beb..fef1a54c 100644
 +									disjRoleIt = disjRoleIt->getNext();
 +								}
 +							}
-+							if (othIndiNode && (othIndiNode->isInitialized() || othIndiNode == indiProcSatNode)) {
+ 							if (othIndiNode && (othIndiNode->isInitialized() || othIndiNode == indiProcSatNode)) {
  								createRoleAssertionLink(indiProcSatNode,othIndiNode,role,false,calcAlgContext);
  								indiProcSatNode->addRoleAssertion(othIndiNode,role,false);
  								createRoleAssertionLink(othIndiNode,indiProcSatNode,role,true,calcAlgContext);
@@ -100,7 +95,7 @@ index 96e51beb..fef1a54c 100644
 +								}
 +								if (othIndiNode == indiProcSatNode) {
 +									// Self-loop: violated by IrreflexiveProperty and AsymmetricProperty.
-+									// r(a,a) with r asymmetric contradicts ∀x,y: r(x,y)→¬r(y,x) when x=y.
++									// r(a,a) with r asymmetric contradicts forall x,y: r(x,y)->not r(y,x) when x=y.
 +									CSortedNegLinker<CRole*>* superRoleIt = role->getIndirectSuperRoleList();
 +									while (superRoleIt) {
 +										if (!superRoleIt->isNegated() &&
