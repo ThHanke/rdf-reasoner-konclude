@@ -8,6 +8,11 @@ if (typeof globalThis.Worker === 'undefined') {
     constructor(_url: URL | string, _opts?: unknown) {
       const path = new URL('../dist/worker-node.mjs', import.meta.url).pathname;
       this._w = new NodeWorker(path);
+      this._w.on('message', (data: any) => {
+        if (data && data.type === 'log' && data.msg) {
+          process.stderr.write(`[wasm] ${data.msg}\n`);
+        }
+      });
     }
     postMessage(msg: unknown) { this._w.postMessage(msg); }
     addEventListener(type: string, fn: Function) {
