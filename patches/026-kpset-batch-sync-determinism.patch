@@ -1,0 +1,16 @@
+--- a/Source/Reasoner/Classifier/CSubsumptionClassifierThread.cpp	2026-09-18 12:20:27.932687799 +0200
++++ b/Source/Reasoner/Classifier/CSubsumptionClassifierThread.cpp	2026-09-18 12:20:27.932687799 +0200
+@@ -234,7 +234,13 @@
+ 					CTestCalculatedCallbackEvent *tcue = (CTestCalculatedCallbackEvent *)event;
+ 					interpreteTestResults(tcue);
+ 					currRunningTestParallelCount--;
++#ifdef WASM_BUILD
++					if (currRunningTestParallelCount == 0) {
++						doNextPendingTests();
++					}
++#else
+ 					doNextPendingTests();
++#endif
+ 					return true;
+ 				} else if (type == CCallbackClassifiedOntologyEvent::EVENTTYPE) {
+ 					CCallbackClassifiedOntologyEvent *ccoe = (CCallbackClassifiedOntologyEvent *)event;

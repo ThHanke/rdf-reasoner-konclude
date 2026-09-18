@@ -241,6 +241,10 @@ export interface RdfReasonerOptions {
    *  new Worker is created. Use this when your bundler (e.g. Vite) cannot
    *  statically analyze `new Worker(url)` in library code. */
   worker?: Worker;
+  /** Optional callback for trace/log messages from the WASM worker.
+   *  Receives Emscripten main-thread stdout/stderr output. pthread output
+   *  goes directly to terminal stderr and does not reach this callback. */
+  onTrace?: (msg: string) => void;
 }
 
 /**

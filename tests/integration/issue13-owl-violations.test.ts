@@ -495,7 +495,9 @@ describe.skipIf(!wasmExists)(
     // Case 17 — AsymmetricProperty self-loop: r(a,a) with r asymmetric → inconsistent.
     // OWL 2 DL: AsymmetricProperty(r) means ∀x,y: r(x,y)→¬r(y,x); setting x=y=a
     // gives r(a,a)→¬r(a,a), which is a contradiction.
-    // Fixed by patch-012 extension (2026-09-17): asymmetric check added to self-loop branch.
+    // Fixed by patch-027 (2026-09-18): added isAsymmetric() to the existing self-loop
+    // branch in initializeRoleAssertions that already checked isIrreflexive().
+    // Reads only precomputed role flags — no ABox iteration, safe in saturation.
     it(
       "case 17: AsymmetricProperty self-loop r(a,a) — WASM detects inconsistency",
       async () => {

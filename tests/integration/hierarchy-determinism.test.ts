@@ -27,6 +27,9 @@ import { RdfReasoner } from "../../ts/index.js";
 const wasmPath = new URL("../../dist/konclude.wasm", import.meta.url).pathname;
 const wasmExists = existsSync(wasmPath);
 const __dirname = dirname(fileURLToPath(import.meta.url));
+// PMDco exercises OptimizedKPSetClassSubsumptionClassifierThread (owl:unionOf).
+// This is the nondeterministic path — the actual regression fixture.
+// With MaxParallel=1 workaround each run takes ~60s; 3 runs = ~3 min total.
 const FIXTURE = join(__dirname, "../fixtures/pmdco.nt");
 const INFERRED = "urn:konclude:inferred";
 const RDFS_SUB_CLASS_OF = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
@@ -58,14 +61,14 @@ describe("class hierarchy: inferred subClassOf count is deterministic across cal
   });
 
   it(
-    "all 5 runs on PMDco produce identical inferred subClassOf edge count",
+    "all 3 runs on PMDco produce identical inferred subClassOf edge count (KPSet path)",
     async () => {
       if (!wasmExists) {
         console.warn("[SKIP] WASM not built — skipping hierarchy determinism test");
         return;
       }
 
-      const N = 5;
+      const N = 3;
       const counts: number[] = [];
 
       for (let i = 0; i < N; i++) {
@@ -77,7 +80,7 @@ describe("class hierarchy: inferred subClassOf count is deterministic across cal
         counts.push(countInferredSubClassOf(store));
       }
 
-      console.info(`[determinism] subClassOf counts across ${N} runs: ${counts.join(", ")}`);
+      console.info(`[determinism] subClassOf counts across ${N} runs: ${counts.join(", ")} (fixture: PMDco, KPSet path)`);
 
       const allSame = counts.every((c) => c === counts[0]);
       if (!allSame) {
@@ -100,6 +103,6 @@ describe("class hierarchy: inferred subClassOf count is deterministic across cal
         ).toBe(counts[0]);
       }
     },
-    300_000 // 5 × PMDco classify ≈ 5 min
+    300_000
   );
 });

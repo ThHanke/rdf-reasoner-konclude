@@ -1,0 +1,13 @@
+--- a/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.cpp	2026-09-18 08:54:39.473602299 +0200
++++ b/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.cpp	2026-09-18 08:54:39.473602299 +0200
+@@ -65,8 +65,8 @@
+ 				mConfPossSubsumCalcOrderTopDown = true;
+ 				mConfPossSubsumCalcOrderBottomUp = false;
+ 
+-				mConfPossSubsumPseudoModelPretest = true;
+-				mConfPossSubsumPseudoModelTest = true;
++				mConfPossSubsumPseudoModelPretest = false;
++				mConfPossSubsumPseudoModelTest = false;
+ 				mConfWriteDebuggingData = false;
+ 
+ 				mStatProcesedSubsumMessCount = 0;

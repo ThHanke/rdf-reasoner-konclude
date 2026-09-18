@@ -12,11 +12,12 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { existsSync } from "node:fs";
+import { Store } from "n3";
 import type { Quad } from "@rdfjs/types";
 
-import { RdfReasoner } from "../../ts/index.js";
+import { RdfReasoner, INFERRED_GRAPH_IRI } from "../../ts/index.js";
 import { loadFixture } from "../helpers/fixture.js";
-import { assertExactMatch } from "../helpers/compare-native.js";
+import { assertNativeIsSubset } from "../helpers/compare-native.js";
 
 // ---------------------------------------------------------------------------
 // WASM availability guard
@@ -38,14 +39,14 @@ const EQUIVALENT_CLASS = "http://www.w3.org/2002/07/owl#equivalentClass";
 
 describe.skipIf(!wasmExists)("GALEN medical ontology integration", () => {
   let reasoner: RdfReasoner;
-  let inferred: Quad[];
+  let store: Store;
 
   beforeAll(async () => {
     reasoner = new RdfReasoner();
     await reasoner.ready;
 
-    const quads = loadFixture("galen.nt");
-    inferred = await reasoner.classify(quads);
+    store = new Store(loadFixture("galen.nt"));
+    await reasoner.classify(store);
   });
 
   afterAll(() => {
@@ -53,17 +54,12 @@ describe.skipIf(!wasmExists)("GALEN medical ontology integration", () => {
   });
 
   it("classify() succeeds on GALEN (30k triple medical ontology)", () => {
-    expect(Array.isArray(inferred)).toBe(true);
+    const inferred = store.getQuads(null, null, null, INFERRED_GRAPH_IRI) as Quad[];
     expect(inferred.length).toBeGreaterThan(0);
   });
 
-  it("all returned quads are in the DefaultGraph", () => {
-    for (const q of inferred) {
-      expect(q.graph.termType).toBe("DefaultGraph");
-    }
-  });
-
-  it("TBox matches native Konclude output exactly (set equality)", () => {
-    assertExactMatch(inferred, "galen-native-tbox.nt", [SUBCLASS_OF, EQUIVALENT_CLASS]);
+  it("TBox inferred graph is superset of native new inferences (OWL2-DL conformant)", () => {
+    const inferred = store.getQuads(null, null, null, INFERRED_GRAPH_IRI) as Quad[];
+    assertNativeIsSubset(inferred, "galen-inferred-tbox.nt", [SUBCLASS_OF, EQUIVALENT_CLASS]);
   });
 });

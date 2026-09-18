@@ -623,10 +623,10 @@ Violation detection verified against native Konclude v0.7.0 ground truth:
 | 14  | `DataAllValuesFrom xsd:minInclusive` (inconsistent case)  | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
 | 15  | `owl:hasSelf(p)` + `owl:hasSelf(q)` + `p owl:propertyDisjointWith q` | inconsistent ✓ | inconsistent ✓ | **PARITY** (patch-022)             |
 | 16  | `owl:ReflexiveProperty(p)` + `owl:hasSelf(q)` + `p owl:propertyDisjointWith q` | inconsistent ✓ | inconsistent ✓ | **PARITY** (patch-022)  |
+| 17  | `owl:AsymmetricProperty(r)` + `r(a, a)` self-loop                    | inconsistent ✓ | inconsistent ✓ | **PARITY (WASM surpasses native)** (patch-027) |
 
 **PARITY (WASM surpasses native v0.7.0)** means native Konclude v0.7.0 has a kernel bug for this
-construct; this package fixes it via patches 027–029 (AsymmetricProperty + IrreflexiveProperty
-saturation clash detection; AllDisjointProperties + EquivalentObjectProperties clash fix).
+construct; this package fixes it via patch-027 (AsymmetricProperty self-loop saturation clash detection).
 
 `owl:AllDisjointClasses`, `owl:disjointUnionOf`, and `owl:NegativePropertyAssertion` all work in
 `materialize()` — the JS layer expands list axioms to pairwise form before handing off to WASM.

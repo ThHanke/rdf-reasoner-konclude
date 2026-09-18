@@ -14,9 +14,10 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { existsSync } from "node:fs";
+import { Store } from "n3";
 import type { Quad } from "@rdfjs/types";
 
-import { RdfReasoner } from "../../ts/index.js";
+import { RdfReasoner, INFERRED_GRAPH_IRI } from "../../ts/index.js";
 import { loadFixture } from "../helpers/fixture.js";
 import { assertExactMatch } from "../helpers/compare-native.js";
 
@@ -34,8 +35,9 @@ describe.skipIf(!wasmExists)("Mini-family role realization (12 individuals)", ()
   beforeAll(async () => {
     reasoner = new RdfReasoner();
     await reasoner.ready;
-    const inputQuads = loadFixture("mini-family.nt");
-    inferred = await reasoner.materialize(inputQuads, { includeClassHierarchy: true });
+    const store = new Store(loadFixture("mini-family.nt"));
+    await reasoner.materialize(store, { includeClassHierarchy: true });
+    inferred = store.getQuads(null, null, null, INFERRED_GRAPH_IRI) as Quad[];
   }, 30000);
 
   afterAll(() => {
@@ -43,7 +45,6 @@ describe.skipIf(!wasmExists)("Mini-family role realization (12 individuals)", ()
   });
 
   it("materialize() returns inferred quads", () => {
-    expect(Array.isArray(inferred)).toBe(true);
     expect(inferred.length).toBeGreaterThan(0);
   });
 
@@ -132,8 +133,9 @@ describe.skipIf(!wasmExists)("Mini-family role realization (12 individuals)", ()
     const reasoner2 = new RdfReasoner();
     await reasoner2.ready;
     try {
-      const inputQuads = loadFixture("mini-family.nt");
-      const inferred2 = await reasoner2.materialize(inputQuads, { includeClassHierarchy: true });
+      const store2 = new Store(loadFixture("mini-family.nt"));
+      await reasoner2.materialize(store2, { includeClassHierarchy: true });
+      const inferred2 = store2.getQuads(null, null, null, INFERRED_GRAPH_IRI) as Quad[];
       const roleCount1 = inferred.filter(
         (q) =>
           q.predicate.value !== RDF_TYPE &&

@@ -43,6 +43,7 @@ import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, KJ_JUSTIFI
 import { injectExplanationsFromBuffer, encodeStoreToBuffers, computeStoreFingerprintDirect, existsInSourceGraphs, clearGraph, createManagedStore, getRawStore } from "./n3Inject.js";
 import { buildEntailmentProbe, classifyAxiom, tripleKey as probeTripleKey } from "./entailmentProbe.js";
 import { computeLaconicAsync, groupQuadsIntoAxioms, splitAxiom, axiomKey } from "./laconicJustification.js";
+import { canonicalInferredHierarchy, type Edge } from "./canonicalHierarchy.js";
 
 // ---------------------------------------------------------------------------
 // Internal message types (mirroring ts/worker.ts)
@@ -69,9 +70,15 @@ interface WorkerInitErrorMessage {
   error: string;
 }
 
+interface WorkerLogMessage {
+  type: "log";
+  msg: string;
+}
+
 type WorkerInboundMessage =
   | WorkerReadyMessage
   | WorkerInitErrorMessage
+  | WorkerLogMessage
   | WorkerResponse;
 
 // ---------------------------------------------------------------------------
@@ -98,6 +105,74 @@ const OWL_SOME_VALUES_FROM = "http://www.w3.org/2002/07/owl#someValuesFrom";
 const OWL_ALL_VALUES_FROM = "http://www.w3.org/2002/07/owl#allValuesFrom";
 const OWL_HAS_VALUE = "http://www.w3.org/2002/07/owl#hasValue";
 const OWL_INVERSE_OF = "http://www.w3.org/2002/07/owl#inverseOf";
+// ---------------------------------------------------------------------------
+// Root-class owl:Thing edge restoration
+// ---------------------------------------------------------------------------
+
+/**
+ * OWL 2 DL Hasse convention: every root named class (no named superclass in
+ * the computed Hasse) must have an explicit X ⊑ owl:Thing triple.
+ * Konclude's parallel KPSet Hasse reduction drops these nondeterministically.
+ * This helper identifies root classes and returns the missing quads.
+ *
+ * equivalentClassEdges: A≡B pairs treated as bidirectional subClassOf so that
+ * named-parent status propagates through equivalence groups (A≡B, B⊑C → A is
+ * not a root class even if the Hasse never explicitly has A⊑C).
+ *
+ * @param assertedEdges       Named-class subClassOf pairs from the asserted store
+ * @param inferredEdges       Named-class subClassOf pairs from WASM output
+ * @param equivalentClassEdges Named-class equivalentClass pairs (A,B means A≡B)
+ * @param existingKeys        Set of "s\0p\0o" keys already present (to skip duplicates)
+ */
+function missingRootThingEdges(
+  assertedEdges: readonly Edge[],
+  inferredEdges: readonly Edge[],
+  equivalentClassEdges: readonly Edge[],
+  existingKeys: Set<string>,
+  extraClasses?: readonly string[],
+): Quad[] {
+  const OWL_THING_IRI = OWL_THING;
+  const OWL_NOTHING_IRI = OWL_NOTHING;
+  const SENTINELS = new Set([OWL_THING_IRI, OWL_NOTHING_IRI]);
+
+  // Treat equivalentClass as bidirectional subClassOf when computing the Hasse.
+  // This ensures A≡B means A inherits any named parent of B and vice versa.
+  const equivAsSubClass: Edge[] = equivalentClassEdges.flatMap(
+    ([a, b]) => [[a, b], [b, a]] as Edge[],
+  );
+  const allAsserted: readonly Edge[] = [...assertedEdges, ...equivAsSubClass];
+
+  // canonical gives the minimal Hasse — classes that have a non-owl:Thing
+  // parent in the canonical result have a named parent.
+  const canonical = canonicalInferredHierarchy(allAsserted, inferredEdges);
+  const hasNonThingCanonicalParent = new Set(
+    canonical.filter(([, o]) => !SENTINELS.has(o)).map(([s]) => s),
+  );
+  const hasAssertedNamedParent = new Set(
+    allAsserted.filter(([, o]) => !SENTINELS.has(o)).map(([s]) => s),
+  );
+
+  // All named classes visible anywhere in the hierarchy or explicitly declared.
+  const allClasses = new Set([
+    ...[...inferredEdges, ...allAsserted].flatMap(([s, o]) => [s, o]),
+    ...(extraClasses ?? []),
+  ].filter(c => !SENTINELS.has(c)));
+
+  const result: Quad[] = [];
+  for (const cls of allClasses) {
+    if (hasNonThingCanonicalParent.has(cls) || hasAssertedNamedParent.has(cls)) continue;
+    const k = `${cls}\0${RDFS_SUB_CLASS_OF}\0${OWL_THING_IRI}`;
+    if (existingKeys.has(k)) continue;
+    existingKeys.add(k);
+    result.push(DataFactory.quad(
+      DataFactory.namedNode(cls),
+      DataFactory.namedNode(RDFS_SUB_CLASS_OF),
+      DataFactory.namedNode(OWL_THING_IRI),
+    ) as unknown as Quad);
+  }
+  return result;
+}
+
 // ---------------------------------------------------------------------------
 // RdfReasoner
 // ---------------------------------------------------------------------------
@@ -145,8 +220,10 @@ export class RdfReasoner {
   private _lastExplBuffer: ArrayBuffer | null = null;
   private _lastPropertyExplBuffer: ArrayBuffer | null = null;
   private _entailmentProbeCounter = 0;
+  private readonly _onTrace: ((msg: string) => void) | undefined;
 
   constructor(opts?: RdfReasonerOptions) {
+    this._onTrace = opts?.onTrace;
     if (opts?.worker) {
       this.worker = opts.worker;
     } else {
@@ -196,7 +273,12 @@ export class RdfReasoner {
       (event: MessageEvent<WorkerInboundMessage>) => {
         const msg = event.data;
         // Skip init-lifecycle messages (handled by the one-shot listener above).
-        if ("type" in msg) return;
+        if ("type" in msg) {
+          if (msg.type === "log" && this._onTrace) {
+            this._onTrace((msg as WorkerLogMessage).msg);
+          }
+          return;
+        }
 
         const response = msg as WorkerResponse;
         const entry = this.pending.get(response.id);
@@ -322,16 +404,62 @@ export class RdfReasoner {
 
       if (wantExplanations) {
         const decoded = decodeBuffers(resultBuf, { withJustifications: true });
+        const writtenKeys = new Set<string>();
         for (const q of decoded.quads) {
           if (existsInSourceGraphs(store, q.subject, q.predicate, q.object)) continue;
+          rawStore.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode));
+          writtenKeys.add(`${q.subject.value}\0${q.predicate.value}\0${q.object.value}`);
+        }
+        // Restore X ⊑ owl:Thing for root classes that WASM Hasse dropped.
+        const namedNamedFilter = (q: Quad) =>
+          q.subject.termType === "NamedNode" && q.object.termType === "NamedNode";
+        const assertedEdges = store
+          .getQuads(null, DataFactory.namedNode(RDFS_SUB_CLASS_OF), null, null)
+          .filter(namedNamedFilter)
+          .map(q => [q.subject.value, q.object.value] as [string, string]);
+        const equivalentClassEdges = store
+          .getQuads(null, DataFactory.namedNode(OWL_EQUIVALENT_CLASS), null, null)
+          .filter(namedNamedFilter)
+          .map(q => [q.subject.value, q.object.value] as [string, string]);
+        const inferredEdges = decoded.quads
+          .filter(q => q.predicate.value === RDFS_SUB_CLASS_OF && namedNamedFilter(q))
+          .map(q => [q.subject.value, q.object.value] as [string, string]);
+        const declaredClasses = store
+          .getQuads(null, DataFactory.namedNode(RDF_TYPE), DataFactory.namedNode(OWL_CLASS), null)
+          .filter(q => q.subject.termType === "NamedNode")
+          .map(q => q.subject.value);
+        for (const q of missingRootThingEdges(assertedEdges, inferredEdges, equivalentClassEdges, writtenKeys, declaredClasses)) {
           rawStore.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode));
         }
         injectExplanationsFromBuffer(rawStore, resultBuf, EXPLANATION_GRAPH_IRI);
         this._lastExplBuffer = resultBuf;
       } else {
         const inferredQuads = decodeBuffers(resultBuf);
+        const writtenKeys = new Set<string>();
         for (const q of inferredQuads) {
           if (existsInSourceGraphs(store, q.subject, q.predicate, q.object)) continue;
+          rawStore.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode));
+          writtenKeys.add(`${q.subject.value}\0${q.predicate.value}\0${q.object.value}`);
+        }
+        // Restore X ⊑ owl:Thing for root classes that WASM Hasse dropped.
+        const namedNamedFilter = (q: Quad) =>
+          q.subject.termType === "NamedNode" && q.object.termType === "NamedNode";
+        const assertedEdges = store
+          .getQuads(null, DataFactory.namedNode(RDFS_SUB_CLASS_OF), null, null)
+          .filter(namedNamedFilter)
+          .map(q => [q.subject.value, q.object.value] as [string, string]);
+        const equivalentClassEdges = store
+          .getQuads(null, DataFactory.namedNode(OWL_EQUIVALENT_CLASS), null, null)
+          .filter(namedNamedFilter)
+          .map(q => [q.subject.value, q.object.value] as [string, string]);
+        const inferredEdges = inferredQuads
+          .filter(q => q.predicate.value === RDFS_SUB_CLASS_OF && namedNamedFilter(q))
+          .map(q => [q.subject.value, q.object.value] as [string, string]);
+        const declaredClasses = store
+          .getQuads(null, DataFactory.namedNode(RDF_TYPE), DataFactory.namedNode(OWL_CLASS), null)
+          .filter(q => q.subject.termType === "NamedNode")
+          .map(q => q.subject.value);
+        for (const q of missingRootThingEdges(assertedEdges, inferredEdges, equivalentClassEdges, writtenKeys, declaredClasses)) {
           rawStore.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode));
         }
         this._lastExplBuffer = null;
@@ -572,13 +700,68 @@ export class RdfReasoner {
         this._lastExplBuffer = null;
       }
 
-      const inferredQuads = opts?.includeClassHierarchy === true
+      let inferredQuads = opts?.includeClassHierarchy === true
         ? allQuads
         : allQuads.filter(
             (q) =>
               q.predicate.value !== "http://www.w3.org/2000/01/rdf-schema#subClassOf" &&
               q.predicate.value !== "http://www.w3.org/2002/07/owl#equivalentClass",
           );
+
+      // Canonicalise the inferred named-class subClassOf hierarchy.
+      // Konclude's Hasse reduction is nondeterministic in parallel mode: different
+      // callback arrival orders leave different redundant transitive edges in the
+      // output. The transitive closure is stable; re-deriving a canonical minimal
+      // Hasse from it makes the output deterministic across runs.
+      if (opts?.includeClassHierarchy === true) {
+        const RDFS_SUB = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
+        const assertedEdges: Edge[] = [];
+        for (const q of store.getQuads(null, DataFactory.namedNode(RDFS_SUB), null, null)) {
+          if (q.subject.termType === "NamedNode" && q.object.termType === "NamedNode") {
+            assertedEdges.push([q.subject.value, q.object.value]);
+          }
+        }
+        const inferredSubClassOf = inferredQuads
+          .filter(q => q.predicate.value === RDFS_SUB &&
+                       q.subject.termType === "NamedNode" &&
+                       q.object.termType === "NamedNode")
+          .map(q => [q.subject.value, q.object.value] as Edge);
+        const canonical = canonicalInferredHierarchy(assertedEdges, inferredSubClassOf);
+        const canonicalSet = new Set(canonical.map(([s, o]) => `${s}\0${o}`));
+        inferredQuads = inferredQuads.filter(q =>
+          q.predicate.value !== RDFS_SUB ||
+          q.subject.termType !== "NamedNode" ||
+          q.object.termType !== "NamedNode" ||
+          q.object.value === OWL_THING ||
+          q.subject.value === OWL_NOTHING ||
+          canonicalSet.has(`${q.subject.value}\0${q.object.value}`),
+        );
+        // Add back canonical edges that Konclude may have omitted (pruned too aggressively)
+        const existingKeys = new Set(inferredQuads.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`));
+        for (const [s, o] of canonical) {
+          const k = `${s}\0${RDFS_SUB}\0${o}`;
+          if (!existingKeys.has(k)) {
+            inferredQuads.push(DataFactory.quad(
+              DataFactory.namedNode(s), DataFactory.namedNode(RDFS_SUB), DataFactory.namedNode(o),
+            ) as unknown as Quad);
+            existingKeys.add(k);
+          }
+        }
+        // Restore X ⊑ owl:Thing for root classes that WASM Hasse dropped.
+        // equivalentClass pairs propagate named-parent status so equivalent
+        // classes are not incorrectly treated as root classes.
+        const equivalentClassEdges: Edge[] = store
+          .getQuads(null, DataFactory.namedNode(OWL_EQUIVALENT_CLASS), null, null)
+          .filter(q => q.subject.termType === "NamedNode" && q.object.termType === "NamedNode")
+          .map(q => [q.subject.value, q.object.value] as Edge);
+        const declaredClasses = store
+          .getQuads(null, DataFactory.namedNode(RDF_TYPE), DataFactory.namedNode(OWL_CLASS), null)
+          .filter(q => q.subject.termType === "NamedNode")
+          .map(q => q.subject.value);
+        for (const q of missingRootThingEdges(assertedEdges, inferredSubClassOf, equivalentClassEdges, existingKeys, declaredClasses)) {
+          inferredQuads.push(q);
+        }
+      }
 
       for (const q of inferredQuads) {
         if (existsInSourceGraphs(store, q.subject, q.predicate, q.object)) continue;
