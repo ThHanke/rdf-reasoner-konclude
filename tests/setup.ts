@@ -1,4 +1,15 @@
 import { Worker as NodeWorker } from 'node:worker_threads';
+import { appendFileSync, writeFileSync } from 'node:fs';
+
+const LIVE_LOG = '/tmp/wasm-live.log';
+// Truncate at start so old runs don't confuse tail -f
+try { writeFileSync(LIVE_LOG, ''); } catch {}
+
+function wasmLog(msg: string) {
+  const line = `[wasm] ${msg}\n`;
+  process.stderr.write(line);
+  try { appendFileSync(LIVE_LOG, line); } catch {}
+}
 
 if (typeof globalThis.Worker === 'undefined') {
   class NodeWorkerShim {
@@ -10,7 +21,7 @@ if (typeof globalThis.Worker === 'undefined') {
       this._w = new NodeWorker(path);
       this._w.on('message', (data: any) => {
         if (data && data.type === 'log' && data.msg) {
-          process.stderr.write(`[wasm] ${data.msg}\n`);
+          wasmLog(data.msg);
         }
       });
     }
