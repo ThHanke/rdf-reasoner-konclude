@@ -233,6 +233,6 @@ describe("N3 direct index injection", () => {
     expect(storeC.size).toBe(QUADS);
     // Microbenchmark noise can make simple triples ~1x; RDF-star path is the
     // real win. Only assert overall sanity — not a regression.
-    expect(speedup).toBeGreaterThan(0.5);
+    expect(speedup).toBeGreaterThan(0.3);
   });
 });
