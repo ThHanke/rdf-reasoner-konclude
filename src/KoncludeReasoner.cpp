@@ -2517,64 +2517,16 @@ int KoncludeReasoner::buildInferredTripleBuffer(bool withExplanations) {
                 return *std::min_element(iris.begin(), iris.end());
             };
 
-            // subClassOf — deterministic canonical Hasse reduction.
-            //
-            // finishOntologyClassification() runs its Hasse reduction while parallel
-            // KPSet worker threads are still interacting with the pruning state, so
-            // some redundant (transitive) edges can survive into CTaxonomy depending
-            // on callback arrival order.  The confirmed subsumption SET (transitive
-            // closure) is always correct and stable — only the reduction is
-            // nondeterministic.
-            //
-            // Fix: BFS every named class upward through all taxonomy parents to
-            // collect the full transitive closure here, then apply a fresh
-            // transitive reduction in this single-threaded output path.  The
-            // reduction retains (child→parent) only when parent is NOT reachable
-            // from child via any other direct ancestor, guaranteeing a canonical
-            // minimal Hasse regardless of what finishOntologyClassification left.
-
-            // Step 1: collect transitive closure per node via BFS.
-            // allAncestors[node] = set of all named ancestor nodes (excl. owl:Thing node).
-            std::unordered_map<CHierarchyNode*, std::unordered_set<CHierarchyNode*>> allAncestors;
+            // subClassOf
             for (auto& [node, iris] : nodeToIris) {
-                std::string rep = nodeRep(node);
-                if (rep.empty() || rep == owlNothing || rep == owlThing) continue;
-                std::unordered_set<CHierarchyNode*>& anc = allAncestors[node];
-                std::vector<CHierarchyNode*> queue;
-                queue.push_back(node);
-                for (size_t qi = 0; qi < queue.size(); ++qi) {
-                    CHierarchyNode* cur = queue[qi];
-                    QSet<CHierarchyNode*>* pset = cur->getParentNodeSet();
-                    if (!pset) continue;
-                    for (CHierarchyNode* p : *pset) {
-                        if (!nodeToIris.count(p)) continue;
-                        std::string pRep = nodeRep(p);
-                        if (pRep.empty() || pRep == owlNothing) continue;
-                        if (anc.insert(p).second) queue.push_back(p);
-                    }
-                }
-            }
-
-            // Step 2: transitive reduction — keep (child→parent) only if parent
-            // is not reachable from child via another ancestor.
-            for (auto& [node, ancestors] : allAncestors) {
                 std::string childIri = nodeRep(node);
-                if (childIri.empty()) continue;
-
-                // Build reachable-via-intermediary set: union of allAncestors[a]
-                // for each direct ancestor a (i.e., everything reachable in ≥2 steps).
-                std::unordered_set<CHierarchyNode*> indirect;
-                for (CHierarchyNode* anc : ancestors) {
-                    auto it2 = allAncestors.find(anc);
-                    if (it2 != allAncestors.end()) {
-                        indirect.insert(it2->second.begin(), it2->second.end());
-                    }
-                }
-
-                for (CHierarchyNode* parentNode : ancestors) {
-                    if (indirect.count(parentNode)) continue; // redundant transitive edge
+                if (childIri.empty() || childIri == owlNothing || childIri == owlThing) continue;
+                QSet<CHierarchyNode*>* parents = node->getParentNodeSet();
+                if (!parents) continue;
+                for (CHierarchyNode* parentNode : *parents) {
+                    if (nodeToIris.count(parentNode) == 0) continue;
                     std::string parentIri = nodeRep(parentNode);
-                    if (parentIri.empty() || parentIri == owlThing) continue;
+                    if (parentIri.empty() || parentIri == owlNothing) continue;
                     uint32_t tIdx = emitTriple(intern.intern(childIri), pSubClass, intern.intern(parentIri));
                     auto subIt = mImpl->mConceptByIri.find(childIri);
                     auto supIt = mImpl->mConceptByIri.find(parentIri);
