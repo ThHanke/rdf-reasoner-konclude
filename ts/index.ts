@@ -404,8 +404,31 @@ export class RdfReasoner {
 
       if (wantExplanations) {
         const decoded = decodeBuffers(resultBuf, { withJustifications: true });
+        const writtenKeys = new Set<string>();
         for (const q of decoded.quads) {
           if (existsInSourceGraphs(store, q.subject, q.predicate, q.object)) continue;
+          rawStore.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode));
+          writtenKeys.add(`${q.subject.value}\0${q.predicate.value}\0${q.object.value}`);
+        }
+        // Restore X ⊑ owl:Thing for root classes that WASM Hasse dropped.
+        const namedNamedFilter = (q: Quad) =>
+          q.subject.termType === "NamedNode" && q.object.termType === "NamedNode";
+        const assertedEdges = store
+          .getQuads(null, DataFactory.namedNode(RDFS_SUB_CLASS_OF), null, null)
+          .filter(namedNamedFilter)
+          .map(q => [q.subject.value, q.object.value] as [string, string]);
+        const equivalentClassEdges = store
+          .getQuads(null, DataFactory.namedNode(OWL_EQUIVALENT_CLASS), null, null)
+          .filter(namedNamedFilter)
+          .map(q => [q.subject.value, q.object.value] as [string, string]);
+        const inferredEdges = decoded.quads
+          .filter(q => q.predicate.value === RDFS_SUB_CLASS_OF && namedNamedFilter(q))
+          .map(q => [q.subject.value, q.object.value] as [string, string]);
+        const declaredClasses = store
+          .getQuads(null, DataFactory.namedNode(RDF_TYPE), DataFactory.namedNode(OWL_CLASS), null)
+          .filter(q => q.subject.termType === "NamedNode")
+          .map(q => q.subject.value);
+        for (const q of missingRootThingEdges(assertedEdges, inferredEdges, equivalentClassEdges, writtenKeys, declaredClasses)) {
           rawStore.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode));
         }
         injectExplanationsFromBuffer(rawStore, resultBuf, EXPLANATION_GRAPH_IRI);
