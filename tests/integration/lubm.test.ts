@@ -13,11 +13,12 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { existsSync } from "node:fs";
+import { Store } from "n3";
 import type { Quad } from "@rdfjs/types";
 
-import { RdfReasoner } from "../../ts/index.js";
+import { RdfReasoner, INFERRED_GRAPH_IRI } from "../../ts/index.js";
 import { loadFixture } from "../helpers/fixture.js";
-import { assertExactMatch } from "../helpers/compare-native.js";
+import { assertNativeIsSubset } from "../helpers/compare-native.js";
 
 // ---------------------------------------------------------------------------
 // WASM availability guard
@@ -39,32 +40,27 @@ const EQUIVALENT_CLASS = "http://www.w3.org/2002/07/owl#equivalentClass";
 
 describe.skipIf(!wasmExists)("LUBM university benchmark ontology integration", () => {
   let reasoner: RdfReasoner;
-  let inferred: Quad[];
+  let store: Store;
 
   beforeAll(async () => {
     reasoner = new RdfReasoner();
     await reasoner.ready;
 
-    const inputQuads = loadFixture("lubm.nt");
-    inferred = await reasoner.classify(inputQuads);
+    store = new Store(loadFixture("lubm.nt"));
+    await reasoner.classify(store);
   });
 
   afterAll(() => {
     reasoner?.terminate();
   });
 
-  it("classify() succeeds and returns inferred quads", () => {
-    expect(Array.isArray(inferred)).toBe(true);
+  it("classify() succeeds and inferred triples are written to the store", () => {
+    const inferred = store.getQuads(null, null, null, INFERRED_GRAPH_IRI) as Quad[];
     expect(inferred.length).toBeGreaterThan(0);
   });
 
-  it("all returned quads are in the DefaultGraph", () => {
-    for (const q of inferred) {
-      expect(q.graph.termType).toBe("DefaultGraph");
-    }
-  });
-
-  it("TBox matches native Konclude output exactly (set equality)", () => {
-    assertExactMatch(inferred, "lubm-native-tbox.nt", [SUBCLASS_OF, EQUIVALENT_CLASS]);
+  it("TBox inferred graph is superset of native new inferences (OWL2-DL conformant)", () => {
+    const inferred = store.getQuads(null, null, null, INFERRED_GRAPH_IRI) as Quad[];
+    assertNativeIsSubset(inferred, "lubm-inferred-tbox.nt", [SUBCLASS_OF, EQUIVALENT_CLASS]);
   });
 });

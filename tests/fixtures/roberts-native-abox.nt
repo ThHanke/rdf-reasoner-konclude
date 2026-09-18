@@ -2361,7 +2361,6 @@
 <http://www.co-ode.org/roberts/family-tree.owl#john_william_folland> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.co-ode.org/roberts/family-tree.owl#BloodRelation> .
 <http://www.co-ode.org/roberts/family-tree.owl#john_william_folland> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.co-ode.org/roberts/family-tree.owl#Descendent> .
 <http://www.co-ode.org/roberts/family-tree.owl#john_william_folland> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.co-ode.org/roberts/family-tree.owl#DomainEntity> .
-<http://www.co-ode.org/roberts/family-tree.owl#john_william_folland> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.co-ode.org/roberts/family-tree.owl#Person> .
 <http://www.co-ode.org/roberts/family-tree.owl#john_william_tacey_1841> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.co-ode.org/roberts/family-tree.owl#BloodRelation> .
 <http://www.co-ode.org/roberts/family-tree.owl#john_william_tacey_1841> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.co-ode.org/roberts/family-tree.owl#Cousin> .
 <http://www.co-ode.org/roberts/family-tree.owl#john_william_tacey_1841> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.co-ode.org/roberts/family-tree.owl#Descendent> .

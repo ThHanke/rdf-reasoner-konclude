@@ -79,6 +79,30 @@ export function assertExactMatch(
 }
 
 /**
+ * Asserts WASM output is a superset of the native fixture for the given predicates.
+ * Fails only when WASM is MISSING triples that native has. Extra WASM triples are
+ * allowed — valid OWL2-DL inferences may exceed native Konclude's output.
+ */
+export function assertNativeIsSubset(
+  wasm: Quad[],
+  fixtureFile: string,
+  predicates: string[],
+): void {
+  const wasmTriples = new Set(filterWasmQuads(wasm, predicates));
+  const nativeTriples = loadNativeFixture(fixtureFile);
+
+  const onlyInNative = nativeTriples.filter((t) => !wasmTriples.has(t));
+  if (onlyInNative.length > 0) {
+    throw new Error(
+      `WASM missing ${onlyInNative.length} triples that native Konclude produced:\n` +
+        JSON.stringify(onlyInNative),
+    );
+  }
+
+  expect(onlyInNative).toHaveLength(0);
+}
+
+/**
  * Same as assertExactMatch but excludes specific NTriples strings from BOTH sets
  * before comparing.
  */

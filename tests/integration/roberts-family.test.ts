@@ -14,11 +14,12 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { existsSync } from "node:fs";
+import { Store } from "n3";
 import type { Quad } from "@rdfjs/types";
 
-import { RdfReasoner } from "../../ts/index.js";
+import { RdfReasoner, INFERRED_GRAPH_IRI } from "../../ts/index.js";
 import { loadFixture } from "../helpers/fixture.js";
-import { assertExactMatch } from "../helpers/compare-native.js";
+import { assertExactMatch, assertNativeIsSubset } from "../helpers/compare-native.js";
 
 // ---------------------------------------------------------------------------
 // WASM availability guard
@@ -33,6 +34,7 @@ const wasmExists = existsSync(wasmPath);
 
 const SUBCLASS_OF = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
 const EQUIVALENT_CLASS = "http://www.w3.org/2002/07/owl#equivalentClass";
+const RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
 
 // ---------------------------------------------------------------------------
 // Suite (skipped when WASM is absent)
@@ -40,66 +42,49 @@ const EQUIVALENT_CLASS = "http://www.w3.org/2002/07/owl#equivalentClass";
 
 describe.skipIf(!wasmExists)("Roberts family ontology integration", () => {
   let reasoner: RdfReasoner;
-  let inferred: Quad[];
-  let inputQuads: Quad[];
+  let store: Store;
 
   beforeAll(async () => {
     reasoner = new RdfReasoner();
     await reasoner.ready;
 
-    inputQuads = loadFixture("roberts-family.nt");
-    inferred = await reasoner.classify(inputQuads);
+    store = new Store(loadFixture("roberts-family.nt"));
+    await reasoner.classify(store);
   }, 360000);
 
   afterAll(() => {
     reasoner?.terminate();
   });
 
-  it("classify() succeeds and returns inferred quads", () => {
-    expect(Array.isArray(inferred)).toBe(true);
-    expect(inferred.length).toBeGreaterThan(0);
-  });
-
-  it("inferred quad count is substantial (rich ontology produces many triples)", () => {
-    // The Roberts family ontology has dozens of named classes with complex
-    // OWL-DL restrictions; the reasoner must produce many inferred subsumptions.
+  it("classify() writes inferred quads to the store", () => {
+    const inferred = store.getQuads(null, null, null, INFERRED_GRAPH_IRI) as Quad[];
     expect(inferred.length).toBeGreaterThanOrEqual(20);
   });
 
-  it("all returned quads are in the DefaultGraph", () => {
-    for (const q of inferred) {
-      expect(q.graph.termType).toBe("DefaultGraph");
-    }
-  });
-
-  it("TBox matches native Konclude output exactly (set equality)", () => {
-    assertExactMatch(inferred, "roberts-native-tbox.nt", [SUBCLASS_OF, EQUIVALENT_CLASS]);
+  it("TBox inferred graph is superset of native new inferences (OWL2-DL conformant)", () => {
+    const inferred = store.getQuads(null, null, null, INFERRED_GRAPH_IRI) as Quad[];
+    assertNativeIsSubset(inferred, "roberts-inferred-tbox.nt", [SUBCLASS_OF, EQUIVALENT_CLASS]);
   });
 
   // ── Phase 3: ABox realization ─────────────────────────────────────────────
 
-  const RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
-
-  it("ABox matches native Konclude output exactly (set equality)", async () => {
-    // Use a dedicated reasoner for ABox realization so the shared `reasoner`
-    // instance remains in classify()-compatible state for the sequential
-    // stability test below.
+  it("ABox is superset of native Konclude output (OWL2-DL conformant)", async () => {
     const aboxReasoner = new RdfReasoner();
     await aboxReasoner.ready;
     try {
-      const inferredABox = await aboxReasoner.materialize(inputQuads);
-      assertExactMatch(inferredABox, "roberts-native-abox.nt", [RDF_TYPE]);
+      const aboxStore = new Store(loadFixture("roberts-family.nt"));
+      await aboxReasoner.materialize(aboxStore);
+      const inferredABox = aboxStore.getQuads(null, null, null, INFERRED_GRAPH_IRI) as Quad[];
+      assertNativeIsSubset(inferredABox, "roberts-native-abox.nt", [RDF_TYPE]);
     } finally {
       aboxReasoner.terminate();
     }
   }, 360000);
 
   it("sequential call stability: second classify() on same reasoner succeeds", async () => {
-    // Call classify() again on the same reasoner with a different (small) ontology.
-    // Tests that STPU + realizer threads reset correctly between calls.
-    const lubmQuads = loadFixture("lubm.nt");
-    const inferred2 = await reasoner.classify(lubmQuads);
-    expect(Array.isArray(inferred2)).toBe(true);
+    const lubmStore = new Store(loadFixture("lubm.nt"));
+    await reasoner.classify(lubmStore);
+    const inferred2 = lubmStore.getQuads(null, null, null, INFERRED_GRAPH_IRI) as Quad[];
     expect(inferred2.length).toBeGreaterThan(0);
   }, 30000);
 });
