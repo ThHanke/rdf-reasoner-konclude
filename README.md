@@ -726,20 +726,11 @@ module.exports = { experiments: { asyncWebAssembly: true } };
 
 ## Performance
 
-Compared against desktop Konclude v0.7.0 — same reasoning algorithm, different execution environment:
+On complex OWL 2 DL reasoning (SROIQ, Roberts family), this package matches native Konclude at ~1.1×. On simpler ontologies a fixed ~230 ms pthread sync cost dominates (~2–8×). For repeat calls on an unchanged ontology, a store fingerprint skips reasoning entirely — **3–67× faster** than spawning desktop Konclude as a subprocess.
 
-| Ontology | OWL profile | Triples | Desktop TBox | This package | Ratio |
-|---|---|---|---|---|---|
-| LUBM schema | SHI | 307 | 96 ms | 233 ms | ~2.4× |
-| GALEN | SHIF | 30 817 | 281 ms | 568 ms | ~2.0× |
-| Roberts family | SROIQ | 3 866 | 1 920 ms | 1 872 ms | ~1.0× |
-| LUBM+data | SHI | 100 850 | 227 ms | 1 191 ms | ~5.2× |
+Full benchmark — speed, output comparison vs native Konclude and HermiT, incremental reasoning, memory: [`docs/benchmark.md`](docs/benchmark.md).
 
-On complex reasoning tasks (full OWL 2 DL), the WASM port matches desktop speed (~1.0×). On simpler ontologies, a fixed ~230 ms pthread sync cost dominates. For repeat calls on an unchanged ontology, this package is **3-231× faster** than desktop Konclude — a store fingerprint detects nothing changed and skips reasoning entirely.
-
-Full results with overhead analysis, output comparison, incremental reasoning benchmarks, and memory analysis: [`docs/benchmark.md`](docs/benchmark.md).
-
-Run `npm run bench` to reproduce (requires built WASM binary + Docker for desktop comparison).
+Run `npm run bench` to reproduce (requires built WASM binary + Docker).
 
 ## How it works
 
