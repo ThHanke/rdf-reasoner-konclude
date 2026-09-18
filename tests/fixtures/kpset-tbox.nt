@@ -1,0 +1,79 @@
+# Minimal KPSet TBox fixture — forces OptimizedKPSetClassSubsumptionClassifierThread.
+# owl:unionOf creates non-deterministic tableau choices, triggering KPSet class classification.
+# ~20 classes, produces inferred rdfs:subClassOf edges, fast (<1s per run).
+<http://example.org/kpset> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .
+
+# Named classes
+<http://example.org/kpset#Thing> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<http://example.org/kpset#A> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<http://example.org/kpset#B> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<http://example.org/kpset#C> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<http://example.org/kpset#D> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<http://example.org/kpset#E> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<http://example.org/kpset#F> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<http://example.org/kpset#G> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<http://example.org/kpset#H> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<http://example.org/kpset#I> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<http://example.org/kpset#J> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<http://example.org/kpset#K> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<http://example.org/kpset#L> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<http://example.org/kpset#M> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+
+# Property
+<http://example.org/kpset#p> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<http://example.org/kpset#q> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+
+# Simple hierarchy
+<http://example.org/kpset#A> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/kpset#Thing> .
+<http://example.org/kpset#B> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/kpset#Thing> .
+<http://example.org/kpset#C> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/kpset#A> .
+<http://example.org/kpset#D> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/kpset#A> .
+<http://example.org/kpset#E> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/kpset#B> .
+<http://example.org/kpset#F> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/kpset#B> .
+
+# owl:unionOf — forces non-deterministic tableau (triggers KPSet class classifier)
+_:u1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+_:u1 <http://www.w3.org/2002/07/owl#unionOf> _:list1 .
+_:list1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <http://example.org/kpset#C> .
+_:list1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> _:list1b .
+_:list1b <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <http://example.org/kpset#E> .
+_:list1b <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
+<http://example.org/kpset#G> <http://www.w3.org/2002/07/owl#equivalentClass> _:u1 .
+
+_:u2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+_:u2 <http://www.w3.org/2002/07/owl#unionOf> _:list2 .
+_:list2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <http://example.org/kpset#D> .
+_:list2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> _:list2b .
+_:list2b <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <http://example.org/kpset#F> .
+_:list2b <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
+<http://example.org/kpset#H> <http://www.w3.org/2002/07/owl#equivalentClass> _:u2 .
+
+# Restrictions to deepen tableau expansion
+_:r1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Restriction> .
+_:r1 <http://www.w3.org/2002/07/owl#onProperty> <http://example.org/kpset#p> .
+_:r1 <http://www.w3.org/2002/07/owl#someValuesFrom> <http://example.org/kpset#G> .
+<http://example.org/kpset#I> <http://www.w3.org/2000/01/rdf-schema#subClassOf> _:r1 .
+
+_:r2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Restriction> .
+_:r2 <http://www.w3.org/2002/07/owl#onProperty> <http://example.org/kpset#p> .
+_:r2 <http://www.w3.org/2002/07/owl#someValuesFrom> <http://example.org/kpset#H> .
+<http://example.org/kpset#J> <http://www.w3.org/2000/01/rdf-schema#subClassOf> _:r2 .
+
+_:r3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Restriction> .
+_:r3 <http://www.w3.org/2002/07/owl#onProperty> <http://example.org/kpset#q> .
+_:r3 <http://www.w3.org/2002/07/owl#someValuesFrom> <http://example.org/kpset#I> .
+<http://example.org/kpset#K> <http://www.w3.org/2000/01/rdf-schema#subClassOf> _:r3 .
+
+_:r4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Restriction> .
+_:r4 <http://www.w3.org/2002/07/owl#onProperty> <http://example.org/kpset#q> .
+_:r4 <http://www.w3.org/2002/07/owl#someValuesFrom> <http://example.org/kpset#J> .
+<http://example.org/kpset#L> <http://www.w3.org/2000/01/rdf-schema#subClassOf> _:r4 .
+
+# Additional union to create subsumption between I and K via union of unions
+_:u3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+_:u3 <http://www.w3.org/2002/07/owl#unionOf> _:list3 .
+_:list3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <http://example.org/kpset#K> .
+_:list3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> _:list3b .
+_:list3b <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <http://example.org/kpset#L> .
+_:list3b <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
+<http://example.org/kpset#M> <http://www.w3.org/2002/07/owl#equivalentClass> _:u3 .

@@ -281,6 +281,11 @@ if(WASM_PRECOMP_VERBOSE)
   target_compile_definitions(konclude_kernel PRIVATE WASM_PRECOMP_VERBOSE)
 endif()
 
+option(KPSET_TRACE "Enable KPSet classifier sync trace logging (diagnostic)" OFF)
+if(KPSET_TRACE)
+  target_compile_definitions(konclude_kernel PRIVATE KPSET_TRACE)
+endif()
+
 # IU-A3: clash-path justification hook — extract dep chains from tableau catch blocks
 target_compile_definitions(konclude_kernel PRIVATE WASM_JUSTIFICATION_HOOK)
 

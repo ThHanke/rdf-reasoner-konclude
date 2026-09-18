@@ -1,0 +1,84 @@
+--- a/Source/Reasoner/Classifier/Events/CTestCalculatedCallbackEvent.cpp	2026-09-18 11:32:18.548964908 +0200
++++ b/Source/Reasoner/Classifier/Events/CTestCalculatedCallbackEvent.cpp	2026-09-18 11:32:18.548964908 +0200
+@@ -54,7 +54,11 @@
+ 
+ 				void CTestCalculatedCallbackEvent::doCallback() {
+ 					CThread* t = recThread.exchange(nullptr, std::memory_order_acq_rel);
+-					if (t && workItem->mGeneration == mExpectedGeneration) {
++					bool genOk = (workItem->mGeneration == mExpectedGeneration);
++#ifdef KPSET_TRACE
++					fprintf(stderr, "{kpset} cb t=%s gen=%s\n", t ? "ok" : "null", genOk ? "match" : "drop");
++#endif
++					if (t && genOk) {
+ 						t->postEvent(this);
+ 					}
+ 				}
+--- a/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.cpp	2026-09-18 11:32:18.552964978 +0200
++++ b/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.cpp	2026-09-18 11:32:18.552964978 +0200
+@@ -19,6 +19,11 @@
+  */
+ 
+ #include "COptimizedKPSetClassSubsumptionClassifierThread.h"
++#ifdef KPSET_TRACE
++#include <vector>
++#include <algorithm>
++#include <cstdio>
++#endif
+ 
+ namespace Konclude {
+ 
+@@ -1750,6 +1755,12 @@
+ 								COptimizedKPSetClassTestingItem* subsumerItem = optKPSetClassificationItem->getConceptSatisfiableTestItem(subsumerConcept);
+ 								if (subsumedItem != subsumerItem) {
+ 									subsumedItem->addSubsumingConceptItem(subsumerItem);
++#ifdef KPSET_TRACE
++									fprintf(stderr, "{kpset} told subsumed=%lld subsumer=%lld cnt=%lld\n",
++										(long long)subsumedItem->getTestingConcept()->getConceptTag(),
++										(long long)subsumerItem->getTestingConcept()->getConceptTag(),
++										(long long)subsumedItem->getSubsumingConceptItemCount());
++#endif
+ 									if (possSubsumMap) {
+ 										COptimizedKPSetClassPossibleSubsumptionData* possSubsumData = possSubsumMap->value(subsumerConcept,nullptr);
+ 										if (possSubsumData) {
+@@ -2132,6 +2143,12 @@
+ 						possSubsumData->setSubsumptionConfirmed(true);
+ 					}
+ 					subsumedItem->addSubsumingConceptItem(subsumerItem);
++#ifdef KPSET_TRACE
++					fprintf(stderr, "{kpset} confirm subsumed=%lld subsumer=%lld cnt=%lld\n",
++						(long long)subsumedItem->getTestingConcept()->getConceptTag(),
++						(long long)subsumerItem->getTestingConcept()->getConceptTag(),
++						(long long)subsumedItem->getSubsumingConceptItemCount());
++#endif
+ 					subsumedItem->addUpPropagationItem(subsumerItem);
+ 					subsumerItem->addDownPropagationItem(subsumedItem);
+ 					propagateDownSubsumption(optKPSetClassificationItem,subsumedItem,subsumerItem);
+@@ -2532,6 +2549,28 @@
+ 
+ 					LOG(INFO,getLogDomain(),logTr("Sorting classes for Ontology '%1'.").arg(ontology->getTerminologyName()),getLogObject());
+ 
++#ifdef KPSET_TRACE
++					{
++						for (QList<COptimizedKPSetClassTestingItem*>::const_iterator dIt = satItemList->constBegin(), dItEnd = satItemList->constEnd(); dIt != dItEnd; ++dIt) {
++							COptimizedKPSetClassTestingItem* dItem = *dIt;
++							QSet<COptimizedKPSetClassTestingItem*>* dSubs = dItem->getSubsumingConceptItemSet();
++							std::vector<long long> dTags;
++							dTags.reserve(dSubs->size());
++							for (COptimizedKPSetClassTestingItem* ds : *dSubs) {
++								dTags.push_back((long long)ds->getTestingConcept()->getConceptTag());
++							}
++							std::sort(dTags.begin(), dTags.end());
++							fprintf(stderr, "{kpset} item=%lld cnt=%d subsumers=",
++								(long long)dItem->getTestingConcept()->getConceptTag(), (int)dSubs->size());
++							for (size_t di = 0; di < dTags.size(); di++) {
++								if (di) fprintf(stderr, ",");
++								fprintf(stderr, "%lld", dTags[di]);
++							}
++							fprintf(stderr, "\n");
++						}
++					}
++#endif
++
+ 					for (QList<COptimizedKPSetClassTestingItem*>::const_iterator it = satItemList->constBegin(), itEnd = satItemList->constEnd(); it != itEnd; ++it) {
+ 						COptimizedKPSetClassTestingItem* item = *it;
+ 
