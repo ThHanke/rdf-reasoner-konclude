@@ -283,3 +283,100 @@ describe.skipIf(!wasmExists)("isSatisfiable / getUnsatisfiableClasses", () => {
     expect(classes).toEqual([]);
   }, 360000);
 });
+
+// ---------------------------------------------------------------------------
+// Skolemized blank-node restrictions (urn:vg:bnode: scheme)
+//
+// Mirrors the ontosphere applyBatch scenario where blank restriction nodes are
+// skolemized to urn:vg:bnode: IRIs before being handed to the reasoner.
+// Two restrictions share owl:onProperty but have DIFFERENT owl:someValuesFrom
+// fillers; Konclude must NOT collapse ClassA ≡ ClassB.
+// ---------------------------------------------------------------------------
+
+const SKOLEM_EX = "http://example.org/collapse-test#";
+const SKOLEM = (s: string) => `${SKOLEM_EX}${s}`;
+const OWL = (s: string) => `http://www.w3.org/2002/07/owl#${s}`;
+const RDF = (s: string) => `http://www.w3.org/1999/02/22-rdf-syntax-ns#${s}`;
+
+describe.skipIf(!wasmExists)("Skolemized blank-node restrictions (urn:vg:bnode: IRIs)", () => {
+  let reasoner: RdfReasoner;
+  let quads: Quad[];
+
+  beforeAll(async () => {
+    reasoner = new RdfReasoner();
+    await reasoner.ready;
+
+    const nn = (iri: string): any => ({ termType: "NamedNode", value: iri });
+    const dg = nn("");
+    const q = (s: any, p: any, o: any): Quad => ({ subject: s, predicate: p, object: o, graph: dg } as any);
+
+    const R1 = nn("urn:vg:bnode:restriction-r1");
+    const R2 = nn("urn:vg:bnode:restriction-r2");
+    const ClassA = nn(SKOLEM("ClassA"));
+    const ClassB = nn(SKOLEM("ClassB"));
+    const hasPart = nn(SKOLEM("hasPart"));
+    const FillerA = nn(SKOLEM("FillerA"));
+    const FillerB = nn(SKOLEM("FillerB"));
+    const ind1 = nn(SKOLEM("ind1"));
+    const p1 = nn(SKOLEM("p1"));
+    const ontology = nn("http://example.org/collapse-test");
+
+    quads = [
+      q(ontology, nn(RDF("type")), nn(OWL("Ontology"))),
+      q(ClassA, nn(RDF("type")), nn(OWL("Class"))),
+      q(ClassB, nn(RDF("type")), nn(OWL("Class"))),
+      q(FillerA, nn(RDF("type")), nn(OWL("Class"))),
+      q(FillerB, nn(RDF("type")), nn(OWL("Class"))),
+      q(hasPart, nn(RDF("type")), nn(OWL("ObjectProperty"))),
+      q(R1, nn(RDF("type")), nn(OWL("Restriction"))),
+      q(R1, nn(OWL("onProperty")), hasPart),
+      q(R1, nn(OWL("someValuesFrom")), FillerA),
+      q(R2, nn(RDF("type")), nn(OWL("Restriction"))),
+      q(R2, nn(OWL("onProperty")), hasPart),
+      q(R2, nn(OWL("someValuesFrom")), FillerB),
+      q(ClassA, nn(OWL("equivalentClass")), R1),
+      q(ClassB, nn(OWL("equivalentClass")), R2),
+      q(ind1, nn(RDF("type")), nn(OWL("NamedIndividual"))),
+      q(ind1, hasPart, p1),
+      q(p1, nn(RDF("type")), nn(OWL("NamedIndividual"))),
+      q(p1, nn(RDF("type")), FillerA),
+    ];
+  }, 30000);
+
+  afterAll(() => reasoner?.terminate());
+
+  it("TBox: no spurious ClassA ≡ ClassB equivalence (different someValuesFrom fillers)", async () => {
+    const inferred = await reasoner.classify(quads);
+    const OWL_EQUIV = OWL("equivalentClass");
+    const spurious =
+      inferred.some(
+        (q) =>
+          q.subject.value === SKOLEM("ClassA") &&
+          q.predicate.value === OWL_EQUIV &&
+          q.object.value === SKOLEM("ClassB"),
+      ) ||
+      inferred.some(
+        (q) =>
+          q.subject.value === SKOLEM("ClassB") &&
+          q.predicate.value === OWL_EQUIV &&
+          q.object.value === SKOLEM("ClassA"),
+      );
+    expect(spurious).toBe(false);
+  }, 360000);
+
+  it("ABox: ind1 rdf:type ClassA inferred (hasPart p1, p1 rdf:type FillerA → ∃hasPart.FillerA)", async () => {
+    const inferred = await reasoner.materialize(quads);
+    expect(
+      hasType(inferred, SKOLEM("ind1"), SKOLEM("ClassA")),
+      "ind1 must be inferred as ClassA",
+    ).toBe(true);
+  }, 360000);
+
+  it("ABox: ind1 NOT rdf:type ClassB (p1 only satisfies FillerA, not FillerB)", async () => {
+    const inferred = await reasoner.materialize(quads);
+    expect(
+      hasType(inferred, SKOLEM("ind1"), SKOLEM("ClassB")),
+      "ind1 must NOT be inferred as ClassB",
+    ).toBe(false);
+  }, 360000);
+});
