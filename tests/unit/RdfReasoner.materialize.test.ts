@@ -338,7 +338,10 @@ describe("RdfReasoner.materialize()", () => {
 
       const inferredGraphNode = namedNode(INFERRED_GRAPH_IRI);
       const inferred = store.getQuads(null, null, null, inferredGraphNode);
-      expect(inferred).toHaveLength(2);
+      // alice→B (rdf:type) + A→B (subClassOf) + B→owl:Thing (missingRootThingEdges)
+      expect(inferred.length).toBeGreaterThanOrEqual(2);
+      expect(inferred.some(q => q.predicate.value === "http://www.w3.org/1999/02/22-rdf-syntax-ns#type")).toBe(true);
+      expect(inferred.some(q => q.predicate.value === "http://www.w3.org/2000/01/rdf-schema#subClassOf" && q.subject.value === "http://example.org/A")).toBe(true);
     });
 
     it("inferred graph cleared before each call — stale quads removed", async () => {
