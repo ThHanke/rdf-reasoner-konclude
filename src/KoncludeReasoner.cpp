@@ -2528,7 +2528,6 @@ int KoncludeReasoner::buildInferredTripleBuffer(bool withExplanations) {
                     std::string parentIri = nodeRep(parentNode);
                     if (parentIri.empty() || parentIri == owlNothing) continue;
                     uint32_t tIdx = emitTriple(intern.intern(childIri), pSubClass, intern.intern(parentIri));
-                    // Record justification from dep chain
                     auto subIt = mImpl->mConceptByIri.find(childIri);
                     auto supIt = mImpl->mConceptByIri.find(parentIri);
                     if (subIt != mImpl->mConceptByIri.end() && supIt != mImpl->mConceptByIri.end()) {
