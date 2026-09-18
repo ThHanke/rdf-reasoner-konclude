@@ -1,0 +1,19 @@
+--- a/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp
++++ b/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp
+@@ -5158,12 +5158,13 @@
+ 									}
+ 								}
+ 								if (othIndiNode == indiProcSatNode) {
+-									// Self-loop: check if any super-role of `role` is irreflexive —
+-									// IrreflexiveObjectProperty(r) is violated by r(a,a).
++									// Self-loop: r(a,a) with IrreflexiveProperty(r) or AsymmetricProperty(r) is a clash.
++									// Both flags are precomputed during preprocessing — safe to read in saturation.
+ 									CSortedNegLinker<CRole*>* superRoleIt = role->getIndirectSuperRoleList();
+ 									while (superRoleIt) {
+ 										if (!superRoleIt->isNegated() &&
+-												superRoleIt->getData()->isIrreflexive()) {
++												(superRoleIt->getData()->isIrreflexive() ||
++												 superRoleIt->getData()->isAsymmetric())) {
+ 											updateDirectAddingIndividualStatusFlags(
+ 												indiProcSatNode,
+ 												CIndividualSaturationProcessNodeStatusFlags::INDSATFLAGCLASHED,
