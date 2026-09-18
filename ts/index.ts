@@ -43,6 +43,7 @@ import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, KJ_JUSTIFI
 import { injectExplanationsFromBuffer, encodeStoreToBuffers, computeStoreFingerprintDirect, existsInSourceGraphs, clearGraph, createManagedStore, getRawStore } from "./n3Inject.js";
 import { buildEntailmentProbe, classifyAxiom, tripleKey as probeTripleKey } from "./entailmentProbe.js";
 import { computeLaconicAsync, groupQuadsIntoAxioms, splitAxiom, axiomKey } from "./laconicJustification.js";
+import { canonicalInferredHierarchy, type Edge } from "./canonicalHierarchy.js";
 
 // ---------------------------------------------------------------------------
 // Internal message types (mirroring ts/worker.ts)
@@ -585,13 +586,51 @@ export class RdfReasoner {
         this._lastExplBuffer = null;
       }
 
-      const inferredQuads = opts?.includeClassHierarchy === true
+      let inferredQuads = opts?.includeClassHierarchy === true
         ? allQuads
         : allQuads.filter(
             (q) =>
               q.predicate.value !== "http://www.w3.org/2000/01/rdf-schema#subClassOf" &&
               q.predicate.value !== "http://www.w3.org/2002/07/owl#equivalentClass",
           );
+
+      // Canonicalise the inferred named-class subClassOf hierarchy.
+      // Konclude's Hasse reduction is nondeterministic in parallel mode: different
+      // callback arrival orders leave different redundant transitive edges in the
+      // output. The transitive closure is stable; re-deriving a canonical minimal
+      // Hasse from it makes the output deterministic across runs.
+      if (opts?.includeClassHierarchy === true) {
+        const RDFS_SUB = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
+        const assertedEdges: Edge[] = [];
+        for (const q of store.getQuads(null, DataFactory.namedNode(RDFS_SUB), null, null)) {
+          if (q.subject.termType === "NamedNode" && q.object.termType === "NamedNode") {
+            assertedEdges.push([q.subject.value, q.object.value]);
+          }
+        }
+        const inferredSubClassOf = inferredQuads
+          .filter(q => q.predicate.value === RDFS_SUB &&
+                       q.subject.termType === "NamedNode" &&
+                       q.object.termType === "NamedNode")
+          .map(q => [q.subject.value, q.object.value] as Edge);
+        const canonical = canonicalInferredHierarchy(assertedEdges, inferredSubClassOf);
+        const canonicalSet = new Set(canonical.map(([s, o]) => `${s}\0${o}`));
+        inferredQuads = inferredQuads.filter(q =>
+          q.predicate.value !== RDFS_SUB ||
+          q.subject.termType !== "NamedNode" ||
+          q.object.termType !== "NamedNode" ||
+          canonicalSet.has(`${q.subject.value}\0${q.object.value}`),
+        );
+        // Add back canonical edges that Konclude may have omitted (pruned too aggressively)
+        const existingKeys = new Set(inferredQuads.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`));
+        for (const [s, o] of canonical) {
+          const k = `${s}\0${RDFS_SUB}\0${o}`;
+          if (!existingKeys.has(k)) {
+            inferredQuads.push(DataFactory.quad(
+              DataFactory.namedNode(s), DataFactory.namedNode(RDFS_SUB), DataFactory.namedNode(o),
+            ) as unknown as Quad);
+          }
+        }
+      }
 
       for (const q of inferredQuads) {
         if (existsInSourceGraphs(store, q.subject, q.predicate, q.object)) continue;
