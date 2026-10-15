@@ -244,7 +244,7 @@ const enc = new TextEncoder();
  * Produces identical output to encodeToBuffers(store.getQuads(null,null,null,null))
  * after inferred/hypothetical/explanation graphs have been removed.
  */
-export function encodeStoreToBuffers(store: Store): EncodedBuffers {
+export function encodeStoreToBuffers(store: Store, extraExcludedGraphs: readonly string[] = []): EncodedBuffers {
   assertN3Internals(store);
   const s = store as any;
   const entities = s._entityIndex._entities;
@@ -273,7 +273,7 @@ export function encodeStoreToBuffers(store: Store): EncodedBuffers {
   for (const gIdStr of Object.keys(graphs)) {
     const gId = Number(gIdStr);
     const graphEntity = entities[gId] as string;
-    if (graphEntity && EXCLUDED_GRAPHS.has(graphEntity)) continue;
+    if (graphEntity && (EXCLUDED_GRAPHS.has(graphEntity) || extraExcludedGraphs.includes(graphEntity))) continue;
 
     const graphItem = graphs[gId];
     const subjects = graphItem.subjects;
@@ -355,49 +355,6 @@ function entityToNTriples(entityStr: string): string {
     return `"${escaped}"^^<http://www.w3.org/2001/XMLSchema#string>`;
   }
   return `<${entityStr}>`;
-}
-
-/**
- * Compute store fingerprint directly from N3 internals, bypassing getQuads().
- * Produces identical output to computeStoreFingerprint(store.getQuads(...)).
- */
-export function computeStoreFingerprintDirect(store: Store): string {
-  assertN3Internals(store);
-  const s = store as any;
-  const entities = s._entityIndex._entities;
-  const graphs = s._graphs;
-
-  const strings: string[] = [];
-
-  for (const gIdStr of Object.keys(graphs)) {
-    const gId = Number(gIdStr);
-    const graphEntity = entities[gId] as string;
-    if (graphEntity && EXCLUDED_GRAPHS.has(graphEntity)) continue;
-
-    const graphItem = graphs[gId];
-    const subjects = graphItem.subjects;
-    for (const sIdStr of Object.keys(subjects)) {
-      const sNt = entityToNTriples(entities[Number(sIdStr)]);
-      const predicates = subjects[sIdStr];
-      for (const pIdStr of Object.keys(predicates)) {
-        const pNt = entityToNTriples(entities[Number(pIdStr)]);
-        const objects = predicates[pIdStr];
-        for (const oIdStr of Object.keys(objects)) {
-          strings.push(`${sNt} ${pNt} ${entityToNTriples(entities[Number(oIdStr)])} .`);
-        }
-      }
-    }
-  }
-
-  strings.sort();
-  const combined = strings.join("");
-
-  let hash = 5381;
-  for (let i = 0; i < combined.length; i++) {
-    hash = (((hash << 5) + hash) ^ combined.charCodeAt(i)) >>> 0;
-  }
-
-  return hash.toString(16).padStart(8, "0");
 }
 
 /**

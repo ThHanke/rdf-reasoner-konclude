@@ -2,6 +2,7 @@
 #include <unordered_map>
 #include <vector>
 #include <shared_mutex>
+#include <mutex>
 #include <cstdint>
 
 // Thread-safe cache for justification data captured during classification

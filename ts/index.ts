@@ -21,29 +21,19 @@
 
 import type { Quad } from "@rdfjs/types";
 import { Store, DataFactory } from "n3";
-import { encodeToBuffers, decodeBuffers, computeStoreFingerprint } from "./intern.js";
+import { encodeToBuffers, decodeBuffers } from "./intern.js";
 
-// Duck-type check for N3.Store — resilient to duplicate n3 module instances
-// (e.g. file:-linked packages with their own node_modules).
-function isStore(input: unknown): input is Store {
-  return (
-    input != null &&
-    typeof (input as Store).getQuads === "function" &&
-    typeof (input as Store).addQuad === "function" &&
-    typeof (input as Store).removeQuads === "function"
-  );
-}
 
 export type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions, LaconicPart, LaconicJustification, LaconicExplainOptions } from "./types.js";
 export { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, KJ_NS, KJ_JUSTIFICATION, KJ_JUSTIFIES, KJ_AXIOM } from "./types.js";
 export { createInlineWorker } from "./inlineWorker.js";
 export { createManagedStore } from "./n3Inject.js";
 import type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions, LaconicPart, LaconicJustification, LaconicExplainOptions } from "./types.js";
-import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, KJ_JUSTIFIES, KJ_AXIOM } from "./types.js";
-import { injectExplanationsFromBuffer, encodeStoreToBuffers, computeStoreFingerprintDirect, existsInSourceGraphs, clearGraph, createManagedStore, getRawStore } from "./n3Inject.js";
+import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, KJ_JUSTIFIES, KJ_AXIOM, ReasonerStalledError } from "./types.js";
+export { ReasonerStalledError } from "./types.js";
+import { injectExplanationsFromBuffer, encodeStoreToBuffers, existsInSourceGraphs, clearGraph, createManagedStore, getRawStore } from "./n3Inject.js";
 import { buildEntailmentProbe, classifyAxiom, tripleKey as probeTripleKey } from "./entailmentProbe.js";
 import { computeLaconicAsync, groupQuadsIntoAxioms, splitAxiom, axiomKey } from "./laconicJustification.js";
-import { canonicalInferredHierarchy, type Edge } from "./canonicalHierarchy.js";
 
 // ---------------------------------------------------------------------------
 // Internal message types (mirroring ts/worker.ts)
@@ -59,6 +49,7 @@ interface WorkerResponse {
   id: number;
   result?: unknown;
   error?: string;
+  heapBytes?: number;
 }
 
 interface WorkerReadyMessage {
@@ -98,6 +89,8 @@ const RDFS_CLASS = "http://www.w3.org/2000/01/rdf-schema#Class";
 const OWL_THING = "http://www.w3.org/2002/07/owl#Thing";
 const OWL_NOTHING = "http://www.w3.org/2002/07/owl#Nothing";
 const OWL_SAME_AS = "http://www.w3.org/2002/07/owl#sameAs";
+const OWL_FUNCTIONAL_PROPERTY = "http://www.w3.org/2002/07/owl#FunctionalProperty";
+const OWL_INVERSE_FUNCTIONAL_PROPERTY = "http://www.w3.org/2002/07/owl#InverseFunctionalProperty";
 const RDFS_DOMAIN = "http://www.w3.org/2000/01/rdf-schema#domain";
 const RDFS_RANGE = "http://www.w3.org/2000/01/rdf-schema#range";
 const OWL_ON_PROPERTY = "http://www.w3.org/2002/07/owl#onProperty";
@@ -105,74 +98,6 @@ const OWL_SOME_VALUES_FROM = "http://www.w3.org/2002/07/owl#someValuesFrom";
 const OWL_ALL_VALUES_FROM = "http://www.w3.org/2002/07/owl#allValuesFrom";
 const OWL_HAS_VALUE = "http://www.w3.org/2002/07/owl#hasValue";
 const OWL_INVERSE_OF = "http://www.w3.org/2002/07/owl#inverseOf";
-// ---------------------------------------------------------------------------
-// Root-class owl:Thing edge restoration
-// ---------------------------------------------------------------------------
-
-/**
- * OWL 2 DL Hasse convention: every root named class (no named superclass in
- * the computed Hasse) must have an explicit X ⊑ owl:Thing triple.
- * Konclude's parallel KPSet Hasse reduction drops these nondeterministically.
- * This helper identifies root classes and returns the missing quads.
- *
- * equivalentClassEdges: A≡B pairs treated as bidirectional subClassOf so that
- * named-parent status propagates through equivalence groups (A≡B, B⊑C → A is
- * not a root class even if the Hasse never explicitly has A⊑C).
- *
- * @param assertedEdges       Named-class subClassOf pairs from the asserted store
- * @param inferredEdges       Named-class subClassOf pairs from WASM output
- * @param equivalentClassEdges Named-class equivalentClass pairs (A,B means A≡B)
- * @param existingKeys        Set of "s\0p\0o" keys already present (to skip duplicates)
- */
-function missingRootThingEdges(
-  assertedEdges: readonly Edge[],
-  inferredEdges: readonly Edge[],
-  equivalentClassEdges: readonly Edge[],
-  existingKeys: Set<string>,
-  extraClasses?: readonly string[],
-): Quad[] {
-  const OWL_THING_IRI = OWL_THING;
-  const OWL_NOTHING_IRI = OWL_NOTHING;
-  const SENTINELS = new Set([OWL_THING_IRI, OWL_NOTHING_IRI]);
-
-  // Treat equivalentClass as bidirectional subClassOf when computing the Hasse.
-  // This ensures A≡B means A inherits any named parent of B and vice versa.
-  const equivAsSubClass: Edge[] = equivalentClassEdges.flatMap(
-    ([a, b]) => [[a, b], [b, a]] as Edge[],
-  );
-  const allAsserted: readonly Edge[] = [...assertedEdges, ...equivAsSubClass];
-
-  // canonical gives the minimal Hasse — classes that have a non-owl:Thing
-  // parent in the canonical result have a named parent.
-  const canonical = canonicalInferredHierarchy(allAsserted, inferredEdges);
-  const hasNonThingCanonicalParent = new Set(
-    canonical.filter(([, o]) => !SENTINELS.has(o)).map(([s]) => s),
-  );
-  const hasAssertedNamedParent = new Set(
-    allAsserted.filter(([, o]) => !SENTINELS.has(o)).map(([s]) => s),
-  );
-
-  // All named classes visible anywhere in the hierarchy or explicitly declared.
-  const allClasses = new Set([
-    ...[...inferredEdges, ...allAsserted].flatMap(([s, o]) => [s, o]),
-    ...(extraClasses ?? []),
-  ].filter(c => !SENTINELS.has(c)));
-
-  const result: Quad[] = [];
-  for (const cls of allClasses) {
-    if (hasNonThingCanonicalParent.has(cls) || hasAssertedNamedParent.has(cls)) continue;
-    const k = `${cls}\0${RDFS_SUB_CLASS_OF}\0${OWL_THING_IRI}`;
-    if (existingKeys.has(k)) continue;
-    existingKeys.add(k);
-    result.push(DataFactory.quad(
-      DataFactory.namedNode(cls),
-      DataFactory.namedNode(RDFS_SUB_CLASS_OF),
-      DataFactory.namedNode(OWL_THING_IRI),
-    ) as unknown as Quad);
-  }
-  return result;
-}
-
 // ---------------------------------------------------------------------------
 // RdfReasoner
 // ---------------------------------------------------------------------------
@@ -192,7 +117,8 @@ export class RdfReasoner {
   /** Resolves when the Worker WASM module is ready; rejects on init failure. */
   readonly ready: Promise<void>;
 
-  private readonly worker: Worker;
+  private worker: Worker;
+  private _workerUrl: URL | null = null;
   private nextId = 0;
   private readonly pending = new Map<
     number,
@@ -206,30 +132,45 @@ export class RdfReasoner {
    */
   private _queue: Promise<void> = Promise.resolve();
 
-  // Per-operation fingerprint caches. Each slot stores the last input hash AND
-  // the exact store instance so that a cache hit only fires for the same Store
-  // object with unchanged content. Two different Store objects with identical
-  // quads do NOT share a cache hit — the inferred graph lives inside the Store,
-  // so a fresh Store always starts empty and must be populated from scratch.
-  private _classifyCache: { hash: string; store: Store; result: void } | null = null;
-  private _materializeCache: { hash: string; store: Store; result: void } | null = null;
-  private _classifyPropertiesCache: { hash: string; store: Store; result: void } | null = null;
-  private _consistencyCache: { hash: string; result: boolean } | null = null;
+  // Per-operation result caches. Each slot stores the C++ content generation (from `sync`) AND the
+  // exact store instance so that a cache hit only fires for the same Store object with unchanged
+  // content. Two different Store objects with identical quads do NOT share a hit — the inferred graph
+  // lives inside the Store, so a fresh Store is populated from the reasoner's (cached) result.
+  private _classifyCache: { gen: number; store: Store; result: void } | null = null;
+  private _materializeCache: { gen: number; store: Store; result: void } | null = null;
+  private _classifyPropertiesCache: { gen: number; store: Store; result: void } | null = null;
+  private _consistencyCache: { gen: number; result: boolean } | null = null;
 
   // Cached explanation buffers — avoids WASM round-trip on cache-hit explanation requests.
-  private _lastExplBuffer: ArrayBuffer | null = null;
-  private _lastPropertyExplBuffer: ArrayBuffer | null = null;
+  private _lastExplBuffer: { gen: number; store: Store; buf: ArrayBuffer } | null = null;
+  private _lastPropertyExplBuffer: { gen: number; store: Store; buf: ArrayBuffer } | null = null;
   private _entailmentProbeCounter = 0;
   private readonly _onTrace: ((msg: string) => void) | undefined;
 
+  // Stall recovery: the Worker is restarted and the current store's WASM state is replayed
+  // when a blocking call shows no sign of life (see RdfReasonerOptions.stallTimeoutMs).
+  private readonly _stallTimeoutMs: number;
+  private readonly _recycleHeapBytes: number;
+  private _lastHeapBytes = 0;
+  private readonly _workerFactory: (() => Worker) | undefined;
+  private _lastActivity = Date.now();
+  private _lastLoad: unknown[] | null = null;          // copies of the last loadTripleBuffer args
+  private _stateCalls: string[] = [];                  // idempotent state calls since that load
+
   constructor(opts?: RdfReasonerOptions) {
     this._onTrace = opts?.onTrace;
-    if (opts?.worker) {
+    this._stallTimeoutMs = opts?.stallTimeoutMs ?? 600_000;
+    this._recycleHeapBytes = opts?.recycleHeapBytes ?? 2 * 1024 ** 3;
+    this._workerFactory = opts?.workerFactory;
+    if (opts?.workerFactory) {
+      this.worker = opts.workerFactory();
+    } else if (opts?.worker) {
       this.worker = opts.worker;
     } else {
       const url = opts?.workerUrl
         ? (typeof opts.workerUrl === "string" ? new URL(opts.workerUrl) : opts.workerUrl)
         : new URL("./worker.js", import.meta.url);
+      this._workerUrl = url;
 
       // Indirect constructor reference so bundlers (Vite) that statically
       // analyze `new Worker(...)` calls skip this dynamic instantiation.
@@ -271,6 +212,7 @@ export class RdfReasoner {
     this.worker.addEventListener(
       "message",
       (event: MessageEvent<WorkerInboundMessage>) => {
+        this._lastActivity = Date.now();
         const msg = event.data;
         // Skip init-lifecycle messages (handled by the one-shot listener above).
         if ("type" in msg) {
@@ -281,12 +223,13 @@ export class RdfReasoner {
         }
 
         const response = msg as WorkerResponse;
+        if (typeof response.heapBytes === "number") this._lastHeapBytes = response.heapBytes;
         const entry = this.pending.get(response.id);
         if (!entry) return;
         this.pending.delete(response.id);
 
         if (response.error !== undefined) {
-          entry.reject(new Error(response.error));
+          entry.reject(response.error === "KONCLUDE_STALLED" ? new ReasonerStalledError("kernel", 0) : new Error(response.error));
         } else {
           entry.resolve(response.result);
         }
@@ -310,13 +253,157 @@ export class RdfReasoner {
   }
 
   /**
+   * Terminate the hung Worker and spin up a fresh one.
+   * Called from inside a bisection loop when a single WASM call exceeds its
+   * per-call deadline.  Rejects all pending _callDirect promises so no orphaned
+   * async chains continue sending messages to the dead Worker, then waits for
+   * the new Worker's WASM module to finish initialising before returning.
+   */
+  private async _reinitForBisection(opts?: { keepState?: boolean }): Promise<void> {
+    // Reject all in-flight _callDirect promises — their callers handle the error.
+    const err = new Error("bisection-timeout-worker-reinit");
+    for (const { reject } of this.pending.values()) reject(err);
+    this.pending.clear();
+
+    this.worker.terminate();
+
+    if (this._workerFactory) {
+      this.worker = this._workerFactory();
+    } else {
+      const url = this._workerUrl ?? new URL("./worker.js", import.meta.url);
+      const W = globalThis.Worker;
+      this.worker = new W(url, { type: "module" });
+    }
+    workerRegistry.register(this, this.worker, this);
+
+    // Wire the response-dispatch handler on the new worker.
+    this.worker.addEventListener("message", (event: MessageEvent<WorkerInboundMessage>) => {
+      this._lastActivity = Date.now();
+      const msg = event.data;
+      if ("type" in msg) {
+        if (msg.type === "log" && this._onTrace) this._onTrace((msg as WorkerLogMessage).msg);
+        return;
+      }
+      const response = msg as WorkerResponse;
+      if (typeof response.heapBytes === "number") this._lastHeapBytes = response.heapBytes;
+      const entry = this.pending.get(response.id);
+      if (!entry) return;
+      this.pending.delete(response.id);
+      if (response.error !== undefined) entry.reject(response.error === "KONCLUDE_STALLED" ? new ReasonerStalledError("kernel", 0) : new Error(response.error));
+      else entry.resolve(response.result);
+    });
+
+    // Wait for WASM ready.
+    await new Promise<void>((resolve, reject) => {
+      const onInit = (ev: MessageEvent<WorkerInboundMessage>) => {
+        const msg = ev.data;
+        if (!("type" in msg)) return;
+        if (msg.type === "ready") {
+          this.worker.removeEventListener("message", onInit);
+          resolve();
+        } else if (msg.type === "error") {
+          this.worker.removeEventListener("message", onInit);
+          reject(new Error((msg as { error: string }).error));
+        }
+      };
+      this.worker.addEventListener("message", onInit);
+    });
+
+    this._lastActivity = Date.now();
+    if (opts?.keepState) {
+      // Stall recovery: the caller replays the WASM state. Content generations restart in the new
+      // Worker, so every generation-keyed result cache is dropped (the replayed state is re-synced).
+      this._classifyCache = null;
+      this._materializeCache = null;
+      this._classifyPropertiesCache = null;
+      this._consistencyCache = null;
+      this._lastExplBuffer = null;
+      this._lastPropertyExplBuffer = null;
+      return;
+    }
+    // Clear all caches — WASM state is blank.
+    this._lastLoad = null;
+    this._stateCalls = [];
+    this._classifyCache = null;
+    this._materializeCache = null;
+    this._classifyPropertiesCache = null;
+    this._consistencyCache = null;
+    this._lastExplBuffer = null;
+    this._lastPropertyExplBuffer = null;
+    this._queue = Promise.resolve();
+  }
+
+  /**
    * Send a method call to the Worker and return a Promise for the result.
    * Pass `transfer` to transfer ownership of ArrayBuffers (zero-copy).
    */
-  private _call(method: string, args: unknown[], transfer?: Transferable[]): Promise<unknown> {
+  private async _call(method: string, args: unknown[], transfer?: Transferable[]): Promise<unknown> {
+    const blocking = RdfReasoner._BLOCKING.has(method);
+    const isLoad = RdfReasoner._isLoad(method);
+    if (isLoad) {
+      // Keep copies: the originals are transferred, and a stall replays this load.
+      this._lastLoad = [(args[0] as ArrayBuffer).slice(0), (args[1] as ArrayBuffer).slice(0), ...args.slice(2)];
+      this._stateCalls = [];
+    }
+    try {
+      let result = await this._callOnce(method, args, transfer, blocking);
+      if (isLoad && this._lastLoad && (result as { changed?: boolean } | undefined)?.changed === true) {
+        // The previous content's ontology stays alive in the WASM heap until the lazy rebuild; with a
+        // large previous call the 4 GiB limit would be hit. A fresh Worker starts with an empty heap.
+        // Only changed content needs this (unchanged content triggers no rebuild).
+        if (this._recycleHeapBytes > 0 && this._lastHeapBytes > this._recycleHeapBytes && (this._workerFactory ?? this._workerUrl)) {
+          const load = this._lastLoad.map((a) => (a instanceof ArrayBuffer ? a.slice(0) : a));
+          await this._reinitForBisection();
+          this._lastHeapBytes = 0;
+          this._lastLoad = load.map((a) => (a instanceof ArrayBuffer ? a.slice(0) : a));
+          this._stateCalls = [];
+          result = await this._callOnce("sync", load, [load[0] as ArrayBuffer, load[1] as ArrayBuffer], true);
+        }
+      }
+      if (blocking && !isLoad && !this._stateCalls.includes(method)) this._stateCalls.push(method);
+      return result;
+    } catch (e) {
+      const canRestart = !!(this._workerFactory ?? this._workerUrl);
+      if (!(e instanceof ReasonerStalledError) || !canRestart) throw e;
+      // One recovery attempt: fresh Worker, replay the current store's state, retry the call.
+      await this._reinitForBisection({ keepState: true });
+      if (!isLoad && this._lastLoad) {
+        const load = this._lastLoad.map((a) => (a instanceof ArrayBuffer ? a.slice(0) : a));
+        await this._callOnce("sync", load, [load[0] as ArrayBuffer, load[1] as ArrayBuffer], true);
+        for (const m of this._stateCalls) await this._callOnce(m, [], undefined, true);
+      }
+      const retryArgs = isLoad && this._lastLoad ? this._lastLoad.map((a) => (a instanceof ArrayBuffer ? a.slice(0) : a)) : args;
+      const retryTransfer = isLoad ? [retryArgs[0] as ArrayBuffer, retryArgs[1] as ArrayBuffer] : transfer;
+      const result = await this._callOnce(method, retryArgs, retryTransfer, blocking);
+      if (blocking && !isLoad && !this._stateCalls.includes(method)) this._stateCalls.push(method);
+      return result;
+    }
+  }
+
+  private static readonly _BLOCKING = new Set(["sync", "classification", "realization", "consistency"]);
+  private static _isLoad(method: string): boolean { return method === "sync"; }
+
+  private _callOnce(method: string, args: unknown[], transfer: Transferable[] | undefined, watch: boolean): Promise<unknown> {
     return new Promise((resolve, reject) => {
       const id = this.nextId++;
-      this.pending.set(id, { resolve, reject });
+      let timer: ReturnType<typeof setInterval> | undefined;
+      const done = () => { if (timer !== undefined) clearInterval(timer); };
+      this.pending.set(id, {
+        resolve: (v) => { done(); resolve(v); },
+        reject: (r) => { done(); reject(r); },
+      });
+      if (watch && this._stallTimeoutMs > 0) {
+        this._lastActivity = Date.now();
+        const tick = Math.max(10, Math.min(5000, Math.floor(this._stallTimeoutMs / 4)));
+        timer = setInterval(() => {
+          const idle = Date.now() - this._lastActivity;
+          if (idle > this._stallTimeoutMs) {
+            this.pending.delete(id);
+            done();
+            reject(new ReasonerStalledError(method, idle));
+          }
+        }, tick);
+      }
       const request: WorkerRequest = { id, method, args };
       if (transfer && transfer.length > 0) {
         this.worker.postMessage(request, transfer);
@@ -326,16 +413,49 @@ export class RdfReasoner {
     });
   }
 
+  /** Content generation of the last `sync` (C++ owns validity; see KoncludeReasoner::syncTripleBuffer). */
+  private _lastGen = -1;
+  private _noGen = 0;
+
+  /**
+   * Hand the store's current quads to the reasoner. C++ compares the content with what it holds and
+   * invalidates its cached results when it changed; the returned generation keys the per-store
+   * result caches. `ignoreGraph` (a custom inferredGraph) never counts as content.
+   */
+  private async _sync(store: Store, ignoreGraph?: string, direct = false): Promise<number> {
+    const { tripleBuffer, strTableBuffer } = encodeStoreToBuffers(store, ignoreGraph ? [ignoreGraph] : []);
+    const call = direct ? this._callDirect.bind(this) : this._call.bind(this);
+    const info = (await call("sync", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer])) as { generation?: number } | undefined;
+    // A worker that does not report generations (e.g. test doubles) never yields a cache hit.
+    this._lastGen = typeof info === "object" && info !== null && typeof info.generation === "number" ? info.generation : --this._noGen;
+    return this._lastGen;
+  }
+
+  /** `_sync` for ops that overwrite an inferred graph: if the sync fails the graph is left cleared, never stale. */
+  private async _syncForOp(store: Store, inferredGraph: string | undefined): Promise<number> {
+    try {
+      return await this._sync(store, inferredGraph);
+    } catch (e) {
+      clearGraph(getRawStore(store), inferredGraph ?? INFERRED_GRAPH_IRI);
+      throw e;
+    }
+  }
+
   private async _ensureExplanationGraphFromBuffer(store: Store, bufferMethod: string): Promise<void> {
     const rawStore = getRawStore(store);
     const explGraphNode = DataFactory.namedNode(EXPLANATION_GRAPH_IRI);
     if (store.getQuads(null, null, null, explGraphNode).length > 0) return;
     const isProperty = bufferMethod === "getPropertyTripleBuffer";
-    let resultBuf = isProperty ? this._lastPropertyExplBuffer : this._lastExplBuffer;
-    if (!resultBuf) {
+    const cached = isProperty ? this._lastPropertyExplBuffer : this._lastExplBuffer;
+    const gen = this._lastGen;
+    let resultBuf: ArrayBuffer;
+    if (cached && cached.store === store && cached.gen === gen) {
+      resultBuf = cached.buf;
+    } else {
       resultBuf = (await this._call(bufferMethod, [true])) as ArrayBuffer;
-      if (isProperty) this._lastPropertyExplBuffer = resultBuf;
-      else this._lastExplBuffer = resultBuf;
+      const entry = { gen, store, buf: resultBuf };
+      if (isProperty) this._lastPropertyExplBuffer = entry;
+      else this._lastExplBuffer = entry;
     }
     injectExplanationsFromBuffer(rawStore, resultBuf, EXPLANATION_GRAPH_IRI);
   }
@@ -347,42 +467,20 @@ export class RdfReasoner {
   /** Run OWL-DL reasoning over a Store. Inferred triples are written into
    *  `opts.inferredGraph` (default `INFERRED_GRAPH_IRI`). The graph is cleared
    *  before each call. Concurrent calls are serialized. */
-  reason(store: Store, opts?: StoreReasoningOptions): Promise<void>;
-  /**
-   * @deprecated Use `classify()`, `materialize()`, or `checkConsistency()` instead.
-   *
-   * Run OWL-DL reasoning over the provided quads.
-   *
-   * Named graphs in the input are dropped (NTriples wire format is
-   * triple-only). All returned quads are in the DefaultGraph.
-   *
-   * Concurrent calls are serialized: each call waits for the previous one to
-   * complete before sending its first Worker message.
-   */
-  reason(quads: Iterable<Quad>, opts?: ReasoningOptions): Promise<Quad[]>;
-  reason(
-    input: Store | Iterable<Quad>,
-    opts?: StoreReasoningOptions | ReasoningOptions,
-  ): Promise<void> | Promise<Quad[]> {
-    if (isStore(input)) {
-      return this._reasonOnStore(input, opts as StoreReasoningOptions | undefined);
-    }
-    return this._reasonOnQuads(input as Iterable<Quad>, opts as ReasoningOptions | undefined);
+  reason(store: Store, opts?: StoreReasoningOptions): Promise<void> {
+    return this._reasonOnStore(store, opts);
   }
 
   private _reasonOnStore(store: Store, opts?: StoreReasoningOptions): Promise<void> {
-    // Cache contract: a hit requires both the same Store INSTANCE and the same
-    // content fingerprint. Two distinct Store objects with identical quads never
-    // share a cache hit — each fresh Store must be populated from scratch, because
-    // inferred quads live inside the Store object itself and not in the reasoner.
-    // Known limitation: fingerprint covers all graphs including any custom
-    // inferredGraph, so callers using a non-default inferredGraph may see a stale
-    // hit if only the inferred graph changed. Acceptable for current use-cases.
-    const fingerprint = computeStoreFingerprintDirect(store);
+    // Cache contract: C++ owns content validity (digest compare in `sync`); the returned generation
+    // keys a per-Store fast path. A hit requires the same Store INSTANCE and the same generation, because
+    // inferred quads live inside the Store object itself. A fresh Store with identical content misses
+    // here but costs no Konclude work when C++ still holds the result (see KoncludeReasoner::classification).
     const wantExplanations = opts?.explanations === true;
     const result = this._queue.then(async () => {
+      const gen = await this._syncForOp(store, opts?.inferredGraph);
       // Cache hit: same store instance with same content as last classify call
-      if (this._classifyCache !== null && this._classifyCache.hash === fingerprint && this._classifyCache.store === store) {
+      if (this._classifyCache !== null && this._classifyCache.gen === gen && this._classifyCache.store === store) {
         if (wantExplanations) {
           await this._ensureExplanationGraphFromBuffer(store, "getInferredTripleBuffer");
         }
@@ -395,116 +493,32 @@ export class RdfReasoner {
       );
       clearGraph(rawStore, inferredGraphNode.value);
 
-      const { tripleBuffer, strTableBuffer } = encodeStoreToBuffers(store);
-
-      await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer, false], [tripleBuffer, strTableBuffer]);
       await this._call("classification", []);
 
       const resultBuf = (await this._call("getInferredTripleBuffer", [wantExplanations])) as ArrayBuffer;
 
       if (wantExplanations) {
         const decoded = decodeBuffers(resultBuf, { withJustifications: true });
-        const writtenKeys = new Set<string>();
         for (const q of decoded.quads) {
           if (existsInSourceGraphs(store, q.subject, q.predicate, q.object)) continue;
           rawStore.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode));
-          writtenKeys.add(`${q.subject.value}\0${q.predicate.value}\0${q.object.value}`);
-        }
-        // Restore X ⊑ owl:Thing for root classes that WASM Hasse dropped.
-        const namedNamedFilter = (q: Quad) =>
-          q.subject.termType === "NamedNode" && q.object.termType === "NamedNode";
-        const assertedEdges = store
-          .getQuads(null, DataFactory.namedNode(RDFS_SUB_CLASS_OF), null, null)
-          .filter(namedNamedFilter)
-          .map(q => [q.subject.value, q.object.value] as [string, string]);
-        const equivalentClassEdges = store
-          .getQuads(null, DataFactory.namedNode(OWL_EQUIVALENT_CLASS), null, null)
-          .filter(namedNamedFilter)
-          .map(q => [q.subject.value, q.object.value] as [string, string]);
-        const inferredEdges = decoded.quads
-          .filter(q => q.predicate.value === RDFS_SUB_CLASS_OF && namedNamedFilter(q))
-          .map(q => [q.subject.value, q.object.value] as [string, string]);
-        const declaredClasses = store
-          .getQuads(null, DataFactory.namedNode(RDF_TYPE), DataFactory.namedNode(OWL_CLASS), null)
-          .filter(q => q.subject.termType === "NamedNode")
-          .map(q => q.subject.value);
-        for (const q of missingRootThingEdges(assertedEdges, inferredEdges, equivalentClassEdges, writtenKeys, declaredClasses)) {
-          rawStore.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode));
         }
         injectExplanationsFromBuffer(rawStore, resultBuf, EXPLANATION_GRAPH_IRI);
-        this._lastExplBuffer = resultBuf;
+        this._lastExplBuffer = { gen, store, buf: resultBuf };
       } else {
         const inferredQuads = decodeBuffers(resultBuf);
-        const writtenKeys = new Set<string>();
         for (const q of inferredQuads) {
           if (existsInSourceGraphs(store, q.subject, q.predicate, q.object)) continue;
-          rawStore.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode));
-          writtenKeys.add(`${q.subject.value}\0${q.predicate.value}\0${q.object.value}`);
-        }
-        // Restore X ⊑ owl:Thing for root classes that WASM Hasse dropped.
-        const namedNamedFilter = (q: Quad) =>
-          q.subject.termType === "NamedNode" && q.object.termType === "NamedNode";
-        const assertedEdges = store
-          .getQuads(null, DataFactory.namedNode(RDFS_SUB_CLASS_OF), null, null)
-          .filter(namedNamedFilter)
-          .map(q => [q.subject.value, q.object.value] as [string, string]);
-        const equivalentClassEdges = store
-          .getQuads(null, DataFactory.namedNode(OWL_EQUIVALENT_CLASS), null, null)
-          .filter(namedNamedFilter)
-          .map(q => [q.subject.value, q.object.value] as [string, string]);
-        const inferredEdges = inferredQuads
-          .filter(q => q.predicate.value === RDFS_SUB_CLASS_OF && namedNamedFilter(q))
-          .map(q => [q.subject.value, q.object.value] as [string, string]);
-        const declaredClasses = store
-          .getQuads(null, DataFactory.namedNode(RDF_TYPE), DataFactory.namedNode(OWL_CLASS), null)
-          .filter(q => q.subject.termType === "NamedNode")
-          .map(q => q.subject.value);
-        for (const q of missingRootThingEdges(assertedEdges, inferredEdges, equivalentClassEdges, writtenKeys, declaredClasses)) {
           rawStore.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode));
         }
         this._lastExplBuffer = null;
       }
 
-      this._classifyCache = { hash: fingerprint, store, result: undefined as void };
+      this._classifyCache = { gen, store, result: undefined as void };
       this._materializeCache = null;
       this._classifyPropertiesCache = null;
       this._lastPropertyExplBuffer = null;
     });
-    this._queue = result.then(
-      () => {},
-      () => {},
-    );
-    return result;
-  }
-
-  private _reasonOnQuads(quads: Iterable<Quad>, opts?: ReasoningOptions): Promise<Quad[]> {
-    const result = this._queue.then(async () => {
-      const mode = opts?.mode ?? "classify";
-
-      // Materialize iterable so we can both encode it and post-process it.
-      const inputQuads = Array.isArray(quads) ? (quads as Quad[]) : [...quads];
-
-      const { tripleBuffer, strTableBuffer } = encodeToBuffers(inputQuads);
-
-      await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer, mode !== "classify"], [tripleBuffer, strTableBuffer]);
-
-      if (mode === "consistency") {
-        // Consistency mode: no inferred quads are returned via reason().
-        // Callers wanting a boolean should use checkConsistency().
-        await this._call("realization", []);
-        return [];
-      }
-
-      // "classify" (default) → TBox-only classification; "full" → full TBox+ABox realization.
-      await this._call(mode === "full" ? "realization" : "classification", []);
-
-      const resultBuf = (await this._call("getInferredTripleBuffer", [])) as ArrayBuffer;
-      const resultQuads = decodeBuffers(resultBuf);
-
-      return resultQuads;
-    });
-    // Swallow errors so a failed call doesn't stall the queue for subsequent
-    // callers; each caller still receives the rejection on their own promise.
     this._queue = result.then(
       () => {},
       () => {},
@@ -524,23 +538,8 @@ export class RdfReasoner {
    *  runs TBox-only reasoning (class hierarchy + property hierarchy). No ABox
    *  realization is performed. For individual rdf:type entailments use
    *  `materialize(store)` instead. */
-  classify(store: Store, opts?: StoreReasoningOptions): Promise<void>;
-  /**
-   * @deprecated Use `classify(store)` instead. For ABox/rdf:type results, use `materialize(store)`.
-   *
-   * Classify the given quads. Returns the inferred rdfs:subClassOf quads in the
-   * default graph. Internally sends a single `classification` command to the
-   * WASM worker (TBox-only; no ABox realization).
-   */
-  classify(quads: Iterable<Quad>): Promise<Quad[]>;
-  classify(
-    input: Store | Iterable<Quad>,
-    opts?: StoreReasoningOptions,
-  ): Promise<void> | Promise<Quad[]> {
-    if (isStore(input)) {
-      return this.reason(input, opts);
-    }
-    return this.reason(input as Iterable<Quad>, { mode: "classify" });
+  classify(store: Store, opts?: StoreReasoningOptions): Promise<void> {
+    return this.reason(store, opts);
   }
 
   // -------------------------------------------------------------------------
@@ -548,40 +547,27 @@ export class RdfReasoner {
   // -------------------------------------------------------------------------
 
   /** Check consistency of a Store. Does not write inferred triples. */
-  checkConsistency(store: Store): Promise<boolean>;
-  /**
-   * @deprecated Use `checkConsistency(store)` instead.
-   *
-   * Check whether the given quads form a consistent ontology.
-   *
-   * Internally: loadTripleBuffer → classification → consistency.
-   * Concurrent calls are serialized: each call waits for the previous one to
-   * complete before sending its first Worker message.
-   */
   // Unit 4 judgment (2026-05-28): full classification pipeline runs ≤300ms for
   // cases 5 and 6 after mConfExtractSimpleABoxAssertions fix. consistencyOnly()
   // removed as no longer needed; full pipeline preferred for correctness.
-  checkConsistency(quads: Iterable<Quad>): Promise<boolean>;
-  checkConsistency(input: Store | Iterable<Quad>): Promise<boolean> {
-    const inputIsStore = isStore(input);
-    const fingerprint = inputIsStore
-      ? computeStoreFingerprintDirect(input as Store)
-      : null;
+  checkConsistency(store: Store): Promise<boolean> {
     const result = this._queue.then(async () => {
-      if (fingerprint !== null && this._consistencyCache !== null && this._consistencyCache.hash === fingerprint) {
+      const gen = await this._sync(store);
+      if (this._consistencyCache !== null && this._consistencyCache.gen === gen) {
         return this._consistencyCache.result;
       }
 
-      const { tripleBuffer, strTableBuffer } = inputIsStore
-        ? encodeStoreToBuffers(input as Store)
-        : encodeToBuffers(Array.isArray(input) ? input as Quad[] : Array.from(input as Iterable<Quad>));
-      await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer, false], [tripleBuffer, strTableBuffer]);
       await this._call("classification", []);
       const consistent = (await this._call("consistency", [])) as boolean;
 
-      if (fingerprint !== null) {
-        this._consistencyCache = { hash: fingerprint, result: consistent };
-      }
+      // Caches of other content generations are stale; caches of THIS generation stay valid.
+      if (this._classifyCache?.gen !== gen) this._classifyCache = null;
+      if (this._materializeCache?.gen !== gen) this._materializeCache = null;
+      if (this._classifyPropertiesCache?.gen !== gen) this._classifyPropertiesCache = null;
+      if (this._lastExplBuffer?.gen !== gen) this._lastExplBuffer = null;
+      if (this._lastPropertyExplBuffer?.gen !== gen) this._lastPropertyExplBuffer = null;
+
+      this._consistencyCache = { gen, result: consistent };
 
       return consistent;
     });
@@ -618,48 +604,24 @@ export class RdfReasoner {
    *  quads added and removed compared to the previous inferred state. */
   materialize(store: Store, opts: MaterializeStoreOptions & { returnDelta: true }): Promise<{ delta: InferenceDelta }>;
   materialize(store: Store, opts?: MaterializeStoreOptions): Promise<void>;
-  /**
-   * Materialize ABox entailments (rdf:type assertions) for the given quads.
-   *
-   * Internally sends a single `realization` command to the WASM worker.
-   * Classification (TBox: class hierarchy + property hierarchy) is always a
-   * prerequisite inside the realization pipeline — it runs as part of the same
-   * `prepareOntology()` call, not as a separate step. By default only rdf:type
-   * entailments are returned. Pass `{ includeClassHierarchy: true }` to also
-   * receive rdfs:subClassOf and owl:equivalentClass triples.
-   *
-   * Named graphs in the input are dropped (NTriples wire format is
-   * triple-only). All returned quads are in the DefaultGraph.
-   *
-   * Concurrent calls are serialized: each call waits for the previous one to
-   * complete before sending its first Worker message.
-   */
-  materialize(quads: Iterable<Quad>, opts?: MaterializeOptions): Promise<Quad[]>;
   materialize(
-    input: Store | Iterable<Quad>,
-    opts?: MaterializeStoreOptions | MaterializeOptions,
-  ): Promise<void> | Promise<{ delta: InferenceDelta }> | Promise<Quad[]> {
-    if (isStore(input)) {
-      return this._materializeOnStore(input, opts as MaterializeStoreOptions | undefined);
-    }
-    return this._materializeOnQuads(input as Iterable<Quad>, opts as MaterializeOptions | undefined);
+    store: Store,
+    opts?: MaterializeStoreOptions,
+  ): Promise<void> | Promise<{ delta: InferenceDelta }> {
+    return this._materializeOnStore(store, opts);
   }
 
   private _materializeOnStore(store: Store, opts?: MaterializeStoreOptions): Promise<void> | Promise<{ delta: InferenceDelta }> {
-    // Known limitation: fingerprint always covers all graphs, including any
-    // custom inferredGraph. If the caller uses a non-default inferredGraph,
-    // the cache may incorrectly report a hit when the inferred graph has
-    // changed between calls. Acceptable for the current use-cases.
-    const fingerprint = computeStoreFingerprintDirect(store);
     const returnDelta = opts?.returnDelta === true;
     const wantExplanations = opts?.explanations === true;
     const result = this._queue.then(async () => {
       const inferredGraphNode = DataFactory.namedNode(
         opts?.inferredGraph ?? INFERRED_GRAPH_IRI,
       );
+      const gen = await this._syncForOp(store, opts?.inferredGraph);
 
       // Cache hit: same store instance with same content as last materialize call
-      if (this._materializeCache !== null && this._materializeCache.hash === fingerprint && this._materializeCache.store === store) {
+      if (this._materializeCache !== null && this._materializeCache.gen === gen && this._materializeCache.store === store) {
         if (wantExplanations) {
           await this._ensureExplanationGraphFromBuffer(store, "getInferredTripleBuffer");
         }
@@ -682,9 +644,6 @@ export class RdfReasoner {
       const rawStore = getRawStore(store);
       clearGraph(rawStore, inferredGraphNode.value);
 
-      const { tripleBuffer, strTableBuffer } = encodeStoreToBuffers(store);
-
-      await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer, true], [tripleBuffer, strTableBuffer]);
       await this._call("realization", []);
 
       const resultBuf = (await this._call("getInferredTripleBuffer", [wantExplanations])) as ArrayBuffer;
@@ -694,11 +653,16 @@ export class RdfReasoner {
         const decoded = decodeBuffers(resultBuf, { withJustifications: true });
         allQuads = decoded.quads;
         injectExplanationsFromBuffer(rawStore, resultBuf, EXPLANATION_GRAPH_IRI);
-        this._lastExplBuffer = resultBuf;
+        this._lastExplBuffer = { gen, store, buf: resultBuf };
       } else {
         allQuads = decodeBuffers(resultBuf);
         this._lastExplBuffer = null;
       }
+
+      if (process.env["DEBUG_MATERIALIZE"]) {
+        console.error("[DEBUG materialize] allQuads:", allQuads.length, allQuads.slice(0,5).map(q => `${q.subject.value} ${q.predicate.value} ${q.object.value}`));
+      }
+
 
       let inferredQuads = opts?.includeClassHierarchy === true
         ? allQuads
@@ -708,61 +672,6 @@ export class RdfReasoner {
               q.predicate.value !== "http://www.w3.org/2002/07/owl#equivalentClass",
           );
 
-      // Canonicalise the inferred named-class subClassOf hierarchy.
-      // Konclude's Hasse reduction is nondeterministic in parallel mode: different
-      // callback arrival orders leave different redundant transitive edges in the
-      // output. The transitive closure is stable; re-deriving a canonical minimal
-      // Hasse from it makes the output deterministic across runs.
-      if (opts?.includeClassHierarchy === true) {
-        const RDFS_SUB = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
-        const assertedEdges: Edge[] = [];
-        for (const q of store.getQuads(null, DataFactory.namedNode(RDFS_SUB), null, null)) {
-          if (q.subject.termType === "NamedNode" && q.object.termType === "NamedNode") {
-            assertedEdges.push([q.subject.value, q.object.value]);
-          }
-        }
-        const inferredSubClassOf = inferredQuads
-          .filter(q => q.predicate.value === RDFS_SUB &&
-                       q.subject.termType === "NamedNode" &&
-                       q.object.termType === "NamedNode")
-          .map(q => [q.subject.value, q.object.value] as Edge);
-        const canonical = canonicalInferredHierarchy(assertedEdges, inferredSubClassOf);
-        const canonicalSet = new Set(canonical.map(([s, o]) => `${s}\0${o}`));
-        inferredQuads = inferredQuads.filter(q =>
-          q.predicate.value !== RDFS_SUB ||
-          q.subject.termType !== "NamedNode" ||
-          q.object.termType !== "NamedNode" ||
-          q.object.value === OWL_THING ||
-          q.subject.value === OWL_NOTHING ||
-          canonicalSet.has(`${q.subject.value}\0${q.object.value}`),
-        );
-        // Add back canonical edges that Konclude may have omitted (pruned too aggressively)
-        const existingKeys = new Set(inferredQuads.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`));
-        for (const [s, o] of canonical) {
-          const k = `${s}\0${RDFS_SUB}\0${o}`;
-          if (!existingKeys.has(k)) {
-            inferredQuads.push(DataFactory.quad(
-              DataFactory.namedNode(s), DataFactory.namedNode(RDFS_SUB), DataFactory.namedNode(o),
-            ) as unknown as Quad);
-            existingKeys.add(k);
-          }
-        }
-        // Restore X ⊑ owl:Thing for root classes that WASM Hasse dropped.
-        // equivalentClass pairs propagate named-parent status so equivalent
-        // classes are not incorrectly treated as root classes.
-        const equivalentClassEdges: Edge[] = store
-          .getQuads(null, DataFactory.namedNode(OWL_EQUIVALENT_CLASS), null, null)
-          .filter(q => q.subject.termType === "NamedNode" && q.object.termType === "NamedNode")
-          .map(q => [q.subject.value, q.object.value] as Edge);
-        const declaredClasses = store
-          .getQuads(null, DataFactory.namedNode(RDF_TYPE), DataFactory.namedNode(OWL_CLASS), null)
-          .filter(q => q.subject.termType === "NamedNode")
-          .map(q => q.subject.value);
-        for (const q of missingRootThingEdges(assertedEdges, inferredSubClassOf, equivalentClassEdges, existingKeys, declaredClasses)) {
-          inferredQuads.push(q);
-        }
-      }
-
       for (const q of inferredQuads) {
         if (existsInSourceGraphs(store, q.subject, q.predicate, q.object)) continue;
         rawStore.addQuad(
@@ -770,7 +679,7 @@ export class RdfReasoner {
         );
       }
 
-      this._materializeCache = { hash: fingerprint, store, result: undefined as void };
+      this._materializeCache = { gen, store, result: undefined as void };
       this._classifyCache = null;
       this._classifyPropertiesCache = null;
       this._lastPropertyExplBuffer = null;
@@ -801,35 +710,6 @@ export class RdfReasoner {
     return result as Promise<void> | Promise<{ delta: InferenceDelta }>;
   }
 
-  private _materializeOnQuads(quads: Iterable<Quad>, opts?: MaterializeOptions): Promise<Quad[]> {
-    const result = this._queue.then(async () => {
-      // Materialize iterable so we can both encode it and post-process it.
-      const inputQuads = Array.isArray(quads) ? (quads as Quad[]) : [...quads];
-
-      const { tripleBuffer, strTableBuffer } = encodeToBuffers(inputQuads);
-
-      await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer, true], [tripleBuffer, strTableBuffer]);
-      await this._call("realization", []);
-
-      const resultBuf = (await this._call("getInferredTripleBuffer", [])) as ArrayBuffer;
-      const allQuads = decodeBuffers(resultBuf);
-
-      if (opts?.includeClassHierarchy === true) {
-        return allQuads;
-      }
-      return allQuads.filter(
-        (q) =>
-          q.predicate.value !== "http://www.w3.org/2000/01/rdf-schema#subClassOf" &&
-          q.predicate.value !== "http://www.w3.org/2002/07/owl#equivalentClass",
-      );
-    });
-    this._queue = result.then(
-      () => {},
-      () => {},
-    );
-    return result;
-  }
-
   // -------------------------------------------------------------------------
   // classifyProperties()
   // -------------------------------------------------------------------------
@@ -837,39 +717,16 @@ export class RdfReasoner {
   /** Classify property hierarchy of a Store. Inferred rdfs:subPropertyOf triples
    *  are written into `opts.inferredGraph` (default `INFERRED_GRAPH_IRI`). The
    *  graph is cleared before each call. Concurrent calls are serialized. */
-  classifyProperties(store: Store, opts?: ClassifyPropertiesStoreOptions): Promise<void>;
-  /**
-   * Classify the property hierarchy for the given quads.
-   *
-   * Returns the inferred rdfs:subPropertyOf quads in the default graph.
-   *
-   * Named graphs in the input are dropped (NTriples wire format is
-   * triple-only). All returned quads are in the DefaultGraph.
-   *
-   * Concurrent calls are serialized: each call waits for the previous one to
-   * complete before sending its first Worker message.
-   */
-  classifyProperties(quads: Iterable<Quad>): Promise<Quad[]>;
-  classifyProperties(
-    input: Store | Iterable<Quad>,
-    opts?: ClassifyPropertiesStoreOptions,
-  ): Promise<void> | Promise<Quad[]> {
-    if (isStore(input)) {
-      return this._classifyPropertiesOnStore(input, opts);
-    }
-    return this._classifyPropertiesOnQuads(input as Iterable<Quad>);
+  classifyProperties(store: Store, opts?: ClassifyPropertiesStoreOptions): Promise<void> {
+    return this._classifyPropertiesOnStore(store, opts);
   }
 
   private _classifyPropertiesOnStore(store: Store, opts?: ClassifyPropertiesStoreOptions): Promise<void> {
-    // Known limitation: fingerprint always covers all graphs, including any
-    // custom inferredGraph. If the caller uses a non-default inferredGraph,
-    // the cache may incorrectly report a hit when the inferred graph has
-    // changed between calls. Acceptable for the current use-cases.
-    const fingerprint = computeStoreFingerprintDirect(store);
     const wantExplanations = opts?.explanations === true;
     const result = this._queue.then(async () => {
+      const gen = await this._syncForOp(store, opts?.inferredGraph);
       // Cache hit: same store instance with same content as last classifyProperties call
-      if (this._classifyPropertiesCache !== null && this._classifyPropertiesCache.hash === fingerprint && this._classifyPropertiesCache.store === store) {
+      if (this._classifyPropertiesCache !== null && this._classifyPropertiesCache.gen === gen && this._classifyPropertiesCache.store === store) {
         if (wantExplanations) {
           await this._ensureExplanationGraphFromBuffer(store, "getPropertyTripleBuffer");
         }
@@ -882,9 +739,6 @@ export class RdfReasoner {
       );
       clearGraph(rawStore, inferredGraphNode.value);
 
-      const { tripleBuffer, strTableBuffer } = encodeStoreToBuffers(store);
-
-      await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer, false], [tripleBuffer, strTableBuffer]);
       await this._call("classification", []);
 
       const resultBuf = (await this._call("getPropertyTripleBuffer", [wantExplanations])) as ArrayBuffer;
@@ -896,7 +750,7 @@ export class RdfReasoner {
           rawStore.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode));
         }
         injectExplanationsFromBuffer(rawStore, resultBuf, EXPLANATION_GRAPH_IRI);
-        this._lastPropertyExplBuffer = resultBuf;
+        this._lastPropertyExplBuffer = { gen, store, buf: resultBuf };
       } else {
         const inferredQuads = decodeBuffers(resultBuf);
         for (const q of inferredQuads) {
@@ -906,30 +760,10 @@ export class RdfReasoner {
         this._lastPropertyExplBuffer = null;
       }
 
-      this._classifyPropertiesCache = { hash: fingerprint, store, result: undefined as void };
+      this._classifyPropertiesCache = { gen, store, result: undefined as void };
       this._classifyCache = null;
       this._materializeCache = null;
       this._lastExplBuffer = null;
-    });
-    this._queue = result.then(
-      () => {},
-      () => {},
-    );
-    return result;
-  }
-
-  private _classifyPropertiesOnQuads(quads: Iterable<Quad>): Promise<Quad[]> {
-    const result = this._queue.then(async () => {
-      // Materialize iterable so we can both encode it and post-process it.
-      const inputQuads = Array.isArray(quads) ? (quads as Quad[]) : [...quads];
-
-      const { tripleBuffer, strTableBuffer } = encodeToBuffers(inputQuads);
-
-      await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer, false], [tripleBuffer, strTableBuffer]);
-      await this._call("classification", []);
-
-      const resultBuf = (await this._call("getPropertyTripleBuffer", [])) as ArrayBuffer;
-      return decodeBuffers(resultBuf);
     });
     this._queue = result.then(
       () => {},
@@ -956,67 +790,53 @@ export class RdfReasoner {
     }
   }
 
-  private async _classifyInline(store: Store, fingerprint: string, inferredGraph?: string): Promise<void> {
-    if (this._classifyCache?.hash === fingerprint && this._classifyCache.store === store) return;
+  private async _classifyInline(store: Store, gen: number, inferredGraph?: string): Promise<void> {
+    if (this._classifyCache?.gen === gen && this._classifyCache.store === store) return;
     const rawStore = getRawStore(store);
     const ig = DataFactory.namedNode(inferredGraph ?? INFERRED_GRAPH_IRI);
     clearGraph(rawStore, ig.value);
-    const { tripleBuffer, strTableBuffer } = encodeStoreToBuffers(store);
-    await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer, false], [tripleBuffer, strTableBuffer]);
     await this._call("classification", []);
     const buf = (await this._call("getInferredTripleBuffer", [])) as ArrayBuffer;
-    // Capture base quads BEFORE writing inferred quads so the disjointUnionOf scan
-    // only sees the original store contents, not the newly added inferred triples.
-    const allQuads = store.getQuads(null, null, null, null);
     for (const q of decodeBuffers(buf)) {
-      if (existsInSourceGraphs(store, q.subject, q.predicate, q.object)) continue;
       rawStore.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, ig));
     }
-    this._classifyCache = { hash: fingerprint, store, result: undefined as void };
+    this._classifyCache = { gen, store, result: undefined as void };
     this._materializeCache = null;           // cross-invalidate
     this._classifyPropertiesCache = null;    // cross-invalidate
     this._lastExplBuffer = null;
     this._lastPropertyExplBuffer = null;
   }
 
-  private async _materializeInline(store: Store, fingerprint: string, inferredGraph?: string): Promise<void> {
-    if (this._materializeCache?.hash === fingerprint && this._materializeCache.store === store) return;
+  private async _materializeInline(store: Store, gen: number, inferredGraph?: string): Promise<void> {
+    if (this._materializeCache?.gen === gen && this._materializeCache.store === store) return;
     const rawStore = getRawStore(store);
     const ig = DataFactory.namedNode(inferredGraph ?? INFERRED_GRAPH_IRI);
     clearGraph(rawStore, ig.value);
-    // Capture base quads BEFORE writing inferred quads so someValuesFrom scan
-    // only sees the original store contents.
-    const { tripleBuffer, strTableBuffer } = encodeStoreToBuffers(store);
-    await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer, true], [tripleBuffer, strTableBuffer]);
     await this._call("realization", []);
     const buf = (await this._call("getInferredTripleBuffer", [])) as ArrayBuffer;
     const allQuads = decodeBuffers(buf);
     // Write ALL results (including subClassOf) so rdf:type AND subClassOf checks work
     for (const q of allQuads) {
-      if (existsInSourceGraphs(store, q.subject, q.predicate, q.object)) continue;
       rawStore.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, ig));
     }
-    this._materializeCache = { hash: fingerprint, store, result: undefined as void };
+    this._materializeCache = { gen, store, result: undefined as void };
     this._classifyCache = null;              // cross-invalidate
     this._classifyPropertiesCache = null;    // cross-invalidate
     this._lastExplBuffer = null;
     this._lastPropertyExplBuffer = null;
   }
 
-  private async _classifyPropertiesInline(store: Store, fingerprint: string, inferredGraph?: string): Promise<void> {
-    if (this._classifyPropertiesCache?.hash === fingerprint && this._classifyPropertiesCache.store === store) return;
+  private async _classifyPropertiesInline(store: Store, gen: number, inferredGraph?: string): Promise<void> {
+    if (this._classifyPropertiesCache?.gen === gen && this._classifyPropertiesCache.store === store) return;
     const rawStore = getRawStore(store);
     const ig = DataFactory.namedNode(inferredGraph ?? INFERRED_GRAPH_IRI);
     clearGraph(rawStore, ig.value);
-    const { tripleBuffer, strTableBuffer } = encodeStoreToBuffers(store);
-    await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer, false], [tripleBuffer, strTableBuffer]);
     await this._call("classification", []);
     const buf = (await this._call("getPropertyTripleBuffer", [])) as ArrayBuffer;
     for (const q of decodeBuffers(buf)) {
-      if (existsInSourceGraphs(store, q.subject, q.predicate, q.object)) continue;
       rawStore.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, ig));
     }
-    this._classifyPropertiesCache = { hash: fingerprint, store, result: undefined as void };
+    this._classifyPropertiesCache = { gen, store, result: undefined as void };
     this._classifyCache = null;              // cross-invalidate
     this._materializeCache = null;           // cross-invalidate
     this._lastExplBuffer = null;
@@ -1034,18 +854,16 @@ export class RdfReasoner {
    * _classifyInline).  Must be called from inside a _queue slot only.
    */
   private async _getUnsatisfiableClassesInternal(store: Store, inferredGraph?: string): Promise<string[]> {
-    const fingerprint = computeStoreFingerprintDirect(store);
-    if (this._classifyCache?.hash !== fingerprint || this._classifyCache.store !== store) {
+    const gen = await this._sync(store, inferredGraph, true);
+    if (this._classifyCache?.gen !== gen || this._classifyCache.store !== store) {
       const rawStore = getRawStore(store);
       const ig = DataFactory.namedNode(inferredGraph ?? INFERRED_GRAPH_IRI);
       clearGraph(rawStore, ig.value);
-      const { tripleBuffer, strTableBuffer } = encodeStoreToBuffers(store);
-      await this._callDirect("loadTripleBuffer", [tripleBuffer, strTableBuffer, false], [tripleBuffer, strTableBuffer]);
       await this._callDirect("classification", []);
       const buf = (await this._callDirect("getInferredTripleBuffer", [])) as ArrayBuffer;
       for (const q of decodeBuffers(buf))
         rawStore.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, ig));
-      this._classifyCache = { hash: fingerprint, store, result: undefined as void };
+      this._classifyCache = { gen, store, result: undefined as void };
       this._materializeCache = null;
       this._classifyPropertiesCache = null;
     }
@@ -1112,7 +930,7 @@ export class RdfReasoner {
 
     const result = this._queue.then(async () => {
       const ig = DataFactory.namedNode(igIri);
-      const fingerprint = computeStoreFingerprintDirect(store);
+      const gen = await this._sync(store, igIri);
 
       // Determine which operations are needed
       const needsClassify = axioms.some(a => this._opForPredicate(a.predicate.value) === "classify");
@@ -1127,7 +945,7 @@ export class RdfReasoner {
 
       const classifyResults = new Map<Quad, boolean>();
       if (needsClassify) {
-        await this._classifyInline(store, fingerprint, igIri);
+        await this._classifyInline(store, gen, igIri);
         for (const a of axioms) {
           if (this._opForPredicate(a.predicate.value) === "classify") {
             classifyResults.set(a, inferred(a));
@@ -1137,7 +955,7 @@ export class RdfReasoner {
 
       const materializeResults = new Map<Quad, boolean>();
       if (needsMaterialize) {
-        await this._materializeInline(store, fingerprint, igIri);
+        await this._materializeInline(store, gen, igIri);
         for (const a of axioms) {
           if (this._opForPredicate(a.predicate.value) === "materialize") {
             materializeResults.set(a, inferred(a));
@@ -1147,7 +965,7 @@ export class RdfReasoner {
 
       const classifyPropsResults = new Map<Quad, boolean>();
       if (needsClassifyProps) {
-        await this._classifyPropertiesInline(store, fingerprint, igIri);
+        await this._classifyPropertiesInline(store, gen, igIri);
         for (const a of axioms) {
           if (this._opForPredicate(a.predicate.value) === "classifyProperties") {
             classifyPropsResults.set(a, inferred(a));
@@ -1236,7 +1054,7 @@ export class RdfReasoner {
 
       // Encode and run the full materialize pipeline
       const { tripleBuffer, strTableBuffer } = encodeToBuffers(hypothetical);
-      await this._call("loadTripleBuffer", [tripleBuffer, strTableBuffer, true], [tripleBuffer, strTableBuffer]);
+      await this._call("sync", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
       await this._call("realization", []);
       const buf = (await this._call("getInferredTripleBuffer", [])) as ArrayBuffer;
       const afterQuads = decodeBuffers(buf);
@@ -1343,7 +1161,7 @@ export class RdfReasoner {
     // justification candidate set. background triples do not appear in justifications.
     const tripleSet = background.length > 0 ? [...candidates, ...background] : candidates;
     const { tripleBuffer, strTableBuffer } = encodeToBuffers(tripleSet);
-    await this._callDirect("loadTripleBuffer", [tripleBuffer, strTableBuffer, opInfo.op === "realization"], [tripleBuffer, strTableBuffer]);
+    await this._callDirect("sync", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
     await this._callDirect(opInfo.op, []);
     const buf = (await this._callDirect(opInfo.bufferMethod, [])) as ArrayBuffer;
     const quads = decodeBuffers(buf);
@@ -1361,7 +1179,7 @@ export class RdfReasoner {
    */
   private async _checkInconsistencyDirect(candidates: Quad[]): Promise<boolean> {
     const { tripleBuffer, strTableBuffer } = encodeToBuffers(candidates);
-    await this._callDirect("loadTripleBuffer", [tripleBuffer, strTableBuffer, false], [tripleBuffer, strTableBuffer]);
+    await this._callDirect("sync", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
     await this._callDirect("classification", []);
     const consistent = (await this._callDirect("consistency", [])) as boolean;
     return !consistent;
@@ -1375,7 +1193,7 @@ export class RdfReasoner {
    */
   private async _checkUnsatisfiabilityDirect(candidates: Quad[], classIRI: string): Promise<boolean> {
     const { tripleBuffer, strTableBuffer } = encodeToBuffers(candidates);
-    await this._callDirect("loadTripleBuffer", [tripleBuffer, strTableBuffer, false], [tripleBuffer, strTableBuffer]);
+    await this._callDirect("sync", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
     await this._callDirect("classification", []);
     const raw = (await this._callDirect("getUnsatisfiableClassBuffer", [])) as string;
     return raw.split('\n').filter(Boolean).includes(classIRI);
@@ -1459,6 +1277,37 @@ export class RdfReasoner {
       }
     }
     return quads;
+  }
+
+  // Reconstruct FP/IFP justification from base quads: declaration + 2 role assertions
+  private static _buildFpIfpJustification(allBase: Quad[], aIri: string, bIri: string): Quad[] {
+    const RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+    // Collect FP properties
+    const fpDecls = allBase.filter(q =>
+      q.predicate.value === RDF_TYPE && q.object.value === OWL_FUNCTIONAL_PROPERTY,
+    );
+    // FP: X prop aIri AND X prop bIri → aIri sameAs bIri (aIri/bIri are the objects)
+    for (const decl of fpDecls) {
+      const prop = decl.subject.value;
+      const aAssertion = allBase.find(q => q.object.value === aIri && q.predicate.value === prop);
+      const bAssertion = allBase.find(q => q.object.value === bIri && q.predicate.value === prop);
+      if (aAssertion && bAssertion && aAssertion.subject.value === bAssertion.subject.value) {
+        return [decl as Quad, aAssertion as Quad, bAssertion as Quad];
+      }
+    }
+    // IFP: aIri prop X AND bIri prop X → aIri sameAs bIri (aIri/bIri are the subjects)
+    const ifpDecls = allBase.filter(q =>
+      q.predicate.value === RDF_TYPE && q.object.value === OWL_INVERSE_FUNCTIONAL_PROPERTY,
+    );
+    for (const decl of ifpDecls) {
+      const prop = decl.subject.value;
+      const aAssertion = allBase.find(q => q.subject.value === aIri && q.predicate.value === prop);
+      const bAssertion = allBase.find(q => q.subject.value === bIri && q.predicate.value === prop);
+      if (aAssertion && bAssertion && aAssertion.object.value === bAssertion.object.value) {
+        return [decl as Quad, aAssertion as Quad, bAssertion as Quad];
+      }
+    }
+    return [];
   }
 
   // ── TS synthesis helpers ──────────────────────────────────────────
@@ -1806,13 +1655,13 @@ export class RdfReasoner {
       });
 
       // Fast-path: check consistency using existing cache or direct Worker call
-      const fingerprint = computeStoreFingerprintDirect(store);
+      const gen = await this._sync(store, ig);
       let consistent: boolean;
-      if (this._consistencyCache?.hash === fingerprint) {
+      if (this._consistencyCache?.gen === gen) {
         consistent = this._consistencyCache.result;
       } else {
         consistent = !(await this._checkInconsistencyDirect(allBase));
-        this._consistencyCache = { hash: fingerprint, result: consistent };
+        this._consistencyCache = { gen, result: consistent };
       }
 
       // Invalidate other caches (sub-calls modify WASM state)
@@ -1838,6 +1687,10 @@ export class RdfReasoner {
         return true;
       });
 
+      const timeoutMs = opts?.timeout ?? 180_000;
+      const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : Infinity;
+      const isExpired = () => Date.now() >= deadline;
+
       // Invalidate caches before BlackBox sub-calls (we already ran one consistency check)
       this._classifyCache = null;
       this._materializeCache = null;
@@ -1846,36 +1699,64 @@ export class RdfReasoner {
       this._lastPropertyExplBuffer = null;
       this._consistencyCache = null;
 
-      // Verify full candidate set is indeed inconsistent (axiomFilter may have changed the set)
-      if (!(await this._checkInconsistencyDirect(allCandidates))) return [];
+      // Verify full candidate set is inconsistent after axiomFilter — skip when no filter
+      // (we already confirmed inconsistency above) to avoid a costly redundant WASM reload.
+      if (opts?.axiomFilter) {
+        if (isExpired()) return [];
+        if (!(await this._checkInconsistencyDirect(allCandidates))) return [];
+      }
 
       const justifications: Quad[][] = [];
+
+      // Race each WASM call against a per-call timer so a hung tableau
+      // (infinite expansion for certain partial TBox subsets) can be
+      // interrupted.  On timeout the Worker is terminated and recreated.
+      const checkOrAbort = async (quads: Quad[]): Promise<boolean | "aborted"> => {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) return "aborted";
+        const perCallMs = Math.min(remaining + 1_000, 30_000);
+        let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+        const timerPromise = new Promise<"aborted">(resolve => {
+          timeoutHandle = setTimeout(() => resolve("aborted"), perCallMs);
+        });
+        try {
+          const result = await Promise.race([
+            this._checkInconsistencyDirect(quads).then(r => r as boolean | "aborted"),
+            timerPromise,
+          ]);
+          if (result === "aborted") await this._reinitForBisection();
+          return result;
+        } finally {
+          clearTimeout(timeoutHandle);
+        }
+      };
 
       const findOneJustification = async (candidates: Quad[]): Promise<Quad[] | null> => {
         let working = [...candidates];
         let changed = true;
         while (changed && working.length > 1) {
+          if (isExpired()) return working;
           changed = false;
           const mid = Math.floor(working.length / 2);
           const firstHalf = working.slice(0, mid);
           const secondHalf = working.slice(mid);
-          if (await this._checkInconsistencyDirect(firstHalf)) {
-            working = firstHalf; changed = true; continue;
-          }
-          if (await this._checkInconsistencyDirect(secondHalf)) {
-            working = secondHalf; changed = true; continue;
-          }
+          const fhResult = await checkOrAbort(firstHalf);
+          if (fhResult === "aborted") return working;
+          if (fhResult) { working = firstHalf; changed = true; continue; }
+          if (isExpired()) return working;
+          const shResult = await checkOrAbort(secondHalf);
+          if (shResult === "aborted") return working;
+          if (shResult) { working = secondHalf; changed = true; continue; }
           break;
         }
         let i = 0;
         while (i < working.length) {
+          if (isExpired()) return working;
           if (working.length === 1) break;
           const without = [...working.slice(0, i), ...working.slice(i + 1)];
-          if (await this._checkInconsistencyDirect(without)) {
-            working = without;
-          } else {
-            i++;
-          }
+          const r = await checkOrAbort(without);
+          if (r === "aborted") return working;
+          if (r) { working = without; } else { i++; }
         }
         return working;
       };
@@ -1884,25 +1765,27 @@ export class RdfReasoner {
       if (!j1 || j1.length === 0) return [];
       justifications.push(j1);
 
-      if (maxJustifications > 1) {
+      if (!isExpired() && maxJustifications > 1) {
         // HSDAG queue: pairs of (excluded set, justification to expand from)
         const hsQueue: Array<{ excluded: Set<string>; justification: Quad[] }> = [
           { excluded: new Set(), justification: j1 },
         ];
         const exploredExclusions = new Set<string>();
-        while (hsQueue.length > 0 && justifications.length < maxJustifications) {
+        while (!isExpired() && hsQueue.length > 0 && justifications.length < maxJustifications) {
           const { excluded, justification: currentJ } = hsQueue.shift()!;
           const excludedKey = [...excluded].sort().join("|");
           if (exploredExclusions.has(excludedKey)) continue;
           exploredExclusions.add(excludedKey);
           for (const axiomInJ of currentJ) {
+            if (isExpired()) break;
             const newExcluded = new Set(excluded);
             const axKey = `${axiomInJ.subject.value}\0${axiomInJ.predicate.value}\0${axiomInJ.object.value}`;
             newExcluded.add(axKey);
             const newExcludedKey = [...newExcluded].sort().join("|");
             if (exploredExclusions.has(newExcludedKey)) continue;
             const reduced = allCandidates.filter(q => !newExcluded.has(`${q.subject.value}\0${q.predicate.value}\0${q.object.value}`));
-            if (!(await this._checkInconsistencyDirect(reduced))) continue;
+            const rCheck = await checkOrAbort(reduced);
+            if (rCheck === "aborted" || !rCheck) continue;
             const jNew = await findOneJustification(reduced);
             if (!jNew || jNew.length === 0) continue;
             const jKey = jNew.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`).sort().join("|");
@@ -1950,13 +1833,13 @@ export class RdfReasoner {
         return g !== ig && g !== HYPOTHETICAL_IRI;
       });
 
-      const fingerprint = computeStoreFingerprintDirect(store);
+      const gen = await this._sync(store, ig);
       let consistent: boolean;
-      if (this._consistencyCache?.hash === fingerprint) {
+      if (this._consistencyCache?.gen === gen) {
         consistent = this._consistencyCache.result;
       } else {
         consistent = !(await this._checkInconsistencyDirect(allBase));
-        this._consistencyCache = { hash: fingerprint, result: consistent };
+        this._consistencyCache = { gen, result: consistent };
       }
 
       this._classifyCache = null;
@@ -1977,6 +1860,10 @@ export class RdfReasoner {
         return true;
       });
 
+      const timeoutMs = opts?.timeout ?? 180_000;
+      const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : Infinity;
+      const isExpired = () => Date.now() >= deadline;
+
       this._classifyCache = null;
       this._materializeCache = null;
       this._classifyPropertiesCache = null;
@@ -1984,25 +1871,58 @@ export class RdfReasoner {
       this._lastPropertyExplBuffer = null;
       this._consistencyCache = null;
 
-      if (!(await this._checkInconsistencyDirect(allCandidates))) return [];
+      if (opts?.axiomFilter) {
+        if (isExpired()) return [];
+        if (!(await this._checkInconsistencyDirect(allCandidates))) return [];
+      }
+
+      // Race each WASM call against a per-call timer (same pattern as explainInconsistency).
+      const checkOrAbortL = async (quads: Quad[]): Promise<boolean | "aborted"> => {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) return "aborted";
+        const perCallMs = Math.min(remaining + 1_000, 30_000);
+        let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+        const timerPromise = new Promise<"aborted">(resolve => {
+          timeoutHandle = setTimeout(() => resolve("aborted"), perCallMs);
+        });
+        try {
+          const result = await Promise.race([
+            this._checkInconsistencyDirect(quads).then(r => r as boolean | "aborted"),
+            timerPromise,
+          ]);
+          if (result === "aborted") await this._reinitForBisection();
+          return result;
+        } finally {
+          clearTimeout(timeoutHandle);
+        }
+      };
 
       // Find MIPS (same inline BlackBox as explainInconsistency)
       const findOne = async (cands: Quad[]): Promise<Quad[] | null> => {
         let w = [...cands];
         let changed = true;
         while (changed && w.length > 1) {
+          if (isExpired()) return w;
           changed = false;
           const mid = Math.floor(w.length / 2);
           const [fh, sh] = [w.slice(0, mid), w.slice(mid)];
-          if (await this._checkInconsistencyDirect(fh)) { w = fh; changed = true; continue; }
-          if (await this._checkInconsistencyDirect(sh)) { w = sh; changed = true; continue; }
+          const fhR = await checkOrAbortL(fh);
+          if (fhR === "aborted") return w;
+          if (fhR) { w = fh; changed = true; continue; }
+          if (isExpired()) return w;
+          const shR = await checkOrAbortL(sh);
+          if (shR === "aborted") return w;
+          if (shR) { w = sh; changed = true; continue; }
           break;
         }
         let i = 0;
         while (i < w.length) {
+          if (isExpired()) return w;
           if (w.length === 1) break;
           const without = [...w.slice(0, i), ...w.slice(i + 1)];
-          if (await this._checkInconsistencyDirect(without)) { w = without; } else { i++; }
+          const r = await checkOrAbortL(without);
+          if (r === "aborted") return w;
+          if (r) { w = without; } else { i++; }
         }
         return w;
       };
@@ -2012,24 +1932,26 @@ export class RdfReasoner {
       if (!j1 || j1.length === 0) return [];
       justifications.push(j1);
 
-      if (maxJustifications > 1) {
+      if (!isExpired() && maxJustifications > 1) {
         const hsQueue: Array<{ excluded: Set<string>; justification: Quad[] }> = [
           { excluded: new Set(), justification: j1 },
         ];
         const explored = new Set<string>();
         const keyOf = (q: Quad) => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`;
-        while (hsQueue.length > 0 && justifications.length < maxJustifications) {
+        while (!isExpired() && hsQueue.length > 0 && justifications.length < maxJustifications) {
           const { excluded, justification: curJ } = hsQueue.shift()!;
           const eKey = [...excluded].sort().join("|");
           if (explored.has(eKey)) continue;
           explored.add(eKey);
           for (const ax of curJ) {
+            if (isExpired()) break;
             const newExcl = new Set(excluded);
             newExcl.add(keyOf(ax));
             const nKey = [...newExcl].sort().join("|");
             if (explored.has(nKey)) continue;
             const reduced = allCandidates.filter(q => !newExcl.has(keyOf(q)));
-            if (!(await this._checkInconsistencyDirect(reduced))) continue;
+            const rCheck = await checkOrAbortL(reduced);
+            if (rCheck === "aborted" || !rCheck) continue;
             const jN = await findOne(reduced);
             if (!jN || jN.length === 0) continue;
             const jKey = jN.map(keyOf).sort().join("|");
@@ -2430,6 +2352,21 @@ export class RdfReasoner {
             return { isEntailed: true, justifications: [justQuads] };
           }
         }
+
+        // FP/IFP workaround: check inferred graph (populated by materialize)
+        const igIri2 = (opts as { inferredGraph?: string } | undefined)?.inferredGraph ?? INFERRED_GRAPH_IRI;
+        const inferredSameAs = store.getQuads(
+          DataFactory.namedNode(subjectIri),
+          DataFactory.namedNode(OWL_SAME_AS),
+          DataFactory.namedNode(objectIri),
+          DataFactory.namedNode(igIri2),
+        );
+        if (inferredSameAs.length > 0) {
+          // Reconstruct justification from base graph: FP property + both role assertions
+          const fpJust = RdfReasoner._buildFpIfpJustification(allBase, subjectIri, objectIri);
+          return { isEntailed: true, justifications: fpJust.length > 0 ? [fpJust] : [[inferredSameAs[0] as Quad]] };
+        }
+
         return { isEntailed: false, justifications: [] as Quad[][] };
       }
 
@@ -2645,7 +2582,7 @@ export class RdfReasoner {
       // C2: vacuous-truth detection for subClassOf
       if (probe.kind === "subClassOf") {
         const { tripleBuffer, strTableBuffer } = encodeToBuffers(allBase);
-        await this._callDirect("loadTripleBuffer", [tripleBuffer, strTableBuffer, false], [tripleBuffer, strTableBuffer]);
+        await this._callDirect("sync", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
         await this._callDirect("classification", []);
         const sat = await this._isSatisfiableClassDirect(subjectIri);
         if (!sat) {
@@ -2799,13 +2736,13 @@ export class RdfReasoner {
       });
 
       // ── Step 1: consistency ───────────────────────────────────────────────
-      const fingerprint = computeStoreFingerprintDirect(store);
+      const gen = await this._sync(store, igIri);
       let consistent: boolean;
-      if (this._consistencyCache?.hash === fingerprint) {
+      if (this._consistencyCache?.gen === gen) {
         consistent = this._consistencyCache.result;
       } else {
         consistent = !(await this._checkInconsistencyDirect(allBase));
-        this._consistencyCache = { hash: fingerprint, result: consistent };
+        this._consistencyCache = { gen, result: consistent };
       }
 
       // ── Step 2: error justifications ─────────────────────────────────────

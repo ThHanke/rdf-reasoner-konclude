@@ -12,6 +12,7 @@
 #include "KoncludeReasoner.h"
 #include "QtCompat.h"
 #include "compat/WasmTrace.h"
+#include <inttypes.h>
 
 #include <unordered_map>
 #include <unordered_set>
@@ -19,6 +20,7 @@
 #include <cstdio>
 #include <mutex>
 #include <random>
+#include <sstream>
 
 // ─── Konclude kernel headers ────────────────────────────────────────────────
 
@@ -78,6 +80,10 @@
 #include "Reasoner/Realization/CRealization.h"
 #include "Reasoner/Realization/CConceptRealization.h"
 #include "Reasoner/Realization/CRoleRealization.h"
+#include "Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingItem.h"
+#include "Reasoner/Realizer/COptimizedKPSetRoleInstancesItem.h"
+#include "Reasoner/Realizer/COptimizedKPSetIndividualComplexRoleData.h"
+#include "Reasoner/Realizer/COptimizedKPSetIndividualComplexRoleExplicitIndirectLinksData.h"
 #include "Reasoner/Realization/CConceptRealizationInstantiatedVisitor.h"
 #include "Reasoner/Realization/CConceptRealizationConceptVisitor.h"
 #include "Reasoner/Realization/CRoleRealizationInstantiatedVisitor.h"
@@ -91,6 +97,8 @@
 
 // Justification index
 #include "JustificationCache.h"
+#include "KonStall.h"
+#include "KonPoolStats.h"
 
 // Axiom reverse mapping (IU-A1): expression→axiom hashes
 #include "Reasoner/Ontology/CExpressionDataBoxMapping.h"
@@ -159,6 +167,20 @@ public:
             mStoppedRealizers.push_back(rt);
         }
         mRealizerSet.clear();
+        // The ontology -> realizer map is keyed by raw CConcreteOntology*. Ontologies are freed and
+        // rebuilt on every reset(), and the allocator happily reuses an address: a stale entry would
+        // hand a NEW ontology the old, already stopped realizer, whose completion callback never
+        // fires (permanent hang in prepareOntology). Forget every mapping together with the realizers.
+        mOntoRealizerHash.clear();
+    }
+
+    // Free the finished realizing items of all stopped realizers (the realization data of earlier calls,
+    // ~100+ MB each). Only safe once the result of those calls has been read: called from reset() at
+    // the start of the next call. The thread objects stay (see stopAndClearRealizers).
+    void releaseStoppedRealizerItems() {
+        for (CRealizerThread* rt : mStoppedRealizers) {
+            rt->releaseOntologyItems();
+        }
     }
 
     ~WasmRealizationManager() override {
@@ -188,6 +210,25 @@ public:
         if (mRealizationManager) {
             static_cast<WasmRealizationManager*>(mRealizationManager)->stopAndClearRealizers();
         }
+    }
+
+    void releaseStoppedRealizerItems() {
+        if (mRealizationManager) {
+            static_cast<WasmRealizationManager*>(mRealizationManager)->releaseStoppedRealizerItems();
+        }
+    }
+
+    size_t stoppedRealizerCount() const {
+        if (!mRealizationManager) return 0;
+        return static_cast<const WasmRealizationManager*>(mRealizationManager)->mStoppedRealizers.size();
+    }
+
+    // Returns sizes of the two stale-entry sets that patch-009 clears.
+    // mProcessingEndMessageSet / mProcessingStartMessageSet are protected
+    // in CReasonerManagerThread so this subclass accesses them directly.
+    void debugProcessingSetSizes(size_t& endSet, size_t& startSet) const {
+        endSet   = static_cast<size_t>(mProcessingEndMessageSet.size());
+        startSet = static_cast<size_t>(mProcessingStartMessageSet.size());
     }
 
     // Replace stock CRealizationManager with WasmRealizationManager so that
@@ -262,6 +303,17 @@ public:
     }
 };
 
+// ─── Native-only config overrides (bisect variants without rebuilding) ───────
+// REPRO_<NAME> env vars override the WASM tuning defaults below. Inert in WASM builds.
+static int reproEnvInt(const char* name, int dflt) {
+#ifdef NATIVE_DEBUG_BUILD
+    if (const char* v = getenv(name)) return atoi(v);
+#else
+    (void)name;
+#endif
+    return dflt;
+}
+
 // ─── Minimal CConfigurationProvider stub ─────────────────────────────────────
 // CReasonerManagerThread::initializeManager needs a CConfigurationProvider.
 // We supply a minimal one backed by a CGlobalConfigurationBase with an empty group.
@@ -271,21 +323,26 @@ public:
     WasmConfigProvider() {
         mGroup = new CReasonerConfigurationGroup();
         mConfig = new CGlobalConfigurationBase(mGroup, 1);
-        // Disable saturation-only subsumer extraction to force the full KPSet tableau classifier.
-        // Without this, Roberts-family ontologies hit the saturation-only fast path which misses
-        // role-subproperty+hasValue subsumptions (e.g. ForefatherOfRobert ⊑ AncestorOfRobert).
-        CConfigData* d = mConfig->createAndSetConfig(
-            "Konclude.Calculation.Classification.SaturationSubsumerExtraction");
-        if (d) {
+        // Force KPSet classifier regardless of saturation completeness.
+        // OptimizedClassExtracted skips KPSet entirely → no satisfiability tests → unsat
+        // classes not detected and role-chain subsumptions missed.
+        CConfigData* aoc = mConfig->createAndSetConfig(
+            "Konclude.Calculation.Classification.AutomatedOptimizedClassifierSelection");
+        if (aoc) {
             CConvertBooleanConfigType* bt =
-                dynamic_cast<CConvertBooleanConfigType*>(d->getConfigType());
-            if (bt) bt->readFromBoolean(false);
+                dynamic_cast<CConvertBooleanConfigType*>(aoc->getConfigType());
+            if (bt) bt->readFromBoolean(reproEnvInt("REPRO_AUTO_CLASSIFIER_SELECT", 0) != 0);
         }
         // Use all available hardware threads (capped at PTHREAD_POOL_SIZE=8).
         CConfigData* pc = mConfig->createAndSetConfig("Konclude.Calculation.ProcessorCount");
         if (pc) {
             CStringConfigType* st = dynamic_cast<CStringConfigType*>(pc->getConfigType());
-            if (st) st->setValue("AUTO");
+            if (st) {
+#ifdef NATIVE_DEBUG_BUILD
+                if (const char* th = getenv("REPRO_THREADS")) { st->setValue(th); } else
+#endif
+                st->setValue("AUTO");
+            }
         }
         // Disable BackendAssCache slot-update deferral.
         // The deferral counter (mSlotUpdateWaitingIncreaseCount) grows with each call.
@@ -299,7 +356,7 @@ public:
             "Konclude.Cache.RepresentativeBackendCache.SlotUpdateWaitingIncreaseMaximumCount");
         if (swc) {
             CIntegerConfigType* it = dynamic_cast<CIntegerConfigType*>(swc->getConfigType());
-            if (it) it->setValue(0);
+            if (it) it->setValue(reproEnvInt("REPRO_SLOT_WAIT_MAX", 0));
         }
         // Allow unchanged labels to be treated as compatible when the association update ID
         // has advanced (mNextIndiUpdateId accumulates across calls). Without this, when
@@ -311,7 +368,7 @@ public:
             "Konclude.Cache.RepresentativeBackendCache.InterpretUnchangedLabelsAsCompatibleIndividualAssociationUpdates");
         if (ulc) {
             CConvertBooleanConfigType* bt = dynamic_cast<CConvertBooleanConfigType*>(ulc->getConfigType());
-            if (bt) bt->readFromBoolean(true);
+            if (bt) bt->readFromBoolean(reproEnvInt("REPRO_UNCHANGED_LABELS_COMPAT", 1) != 0);
         }
         // Serialize cache writes on the caller's thread instead of posting to the async
         // BackendAssCache CThread queue. With async mode, saturation and individual precomp
@@ -323,7 +380,7 @@ public:
             "Konclude.Cache.RepresentativeBackendCache.ThreadedUpdateSynchronization");
         if (tus) {
             CConvertBooleanConfigType* bt = dynamic_cast<CConvertBooleanConfigType*>(tus->getConfigType());
-            if (bt) bt->readFromBoolean(false);
+            if (bt) bt->readFromBoolean(reproEnvInt("REPRO_THREADED_UPDATE_SYNC", 0) != 0);
         }
     }
     ~WasmConfigProvider() {
@@ -344,6 +401,12 @@ namespace { struct InternTable; }
 
 // ─── Impl ─────────────────────────────────────────────────────────────────────
 
+struct ContentH128 {
+    uint64_t a, b;
+    bool operator==(const ContentH128& o) const { return a == o.a && b == o.b; }
+};
+struct ContentH128Hash { size_t operator()(const ContentH128& h) const { return static_cast<size_t>(h.a); } };
+
 struct KoncludeReasoner::Impl {
     // Configuration infrastructure
     WasmConfigProvider*           mConfigProvider   = nullptr;
@@ -354,12 +417,18 @@ struct KoncludeReasoner::Impl {
     // Kept alive one extra reset() cycle so KPSet pthreads can finish their
     // Emscripten exit-cleanup before the vtable is freed.
     CConcreteOntology*            mPreviousOntology = nullptr;
-    // Kept alive two reset() cycles to prevent the allocator from reusing freed
-    // ontology addresses for new ontology objects.  The singleton thread caches
-    // (mOntItemHash in precomputer/preprocessor/classifier) are keyed by pointer;
-    // if a new ontology reuses a freed address, the cache returns a stale entry.
-    // Holding the address for two cycles ensures a fresh allocation.
-    CConcreteOntology*            mPreviousPreviousOntology = nullptr;
+    // Native prototype: ontology revisions kept alive for incremental reuse (leaked on reset()).
+    std::vector<CConcreteOntology*> mRevisionChain;
+
+    // Monotonic counter: incremented before each runPipeline() call and
+    // stamped onto the CConcreteOntology via setCallGeneration().  Stage threads
+    // key their item caches on {ptr, generation} so a recycled pointer never
+    // matches a stale cache entry.
+    cint64 mCallGeneration = 0;
+
+    // Incremented on every reset() — used by dumpState() to correlate snapshots.
+    int mResetCount = 0;
+    bool mStalled = false;
 
     // Reasoning infrastructure
     WasmReasonerManagerThread*    mReasonerManager  = nullptr;
@@ -432,6 +501,27 @@ struct KoncludeReasoner::Impl {
     std::unordered_map<int64_t, std::string> mRoleTagToIri;
     std::unordered_map<std::string, CRole*> mRoleByIri;
 
+    // ── Self-invalidating content tracking ───────────────────────────────────────
+    // Digest = set of 128-bit per-triple hashes over (term type, term string); order, duplicates and
+    // call-local interned ids do not matter. mDigest is the last synced content, mBuiltDigest the
+    // content of the ontology currently loaded.
+    using H128 = ContentH128;
+    using Digest = std::unordered_set<ContentH128, ContentH128Hash>;
+    Digest mDigest, mBuiltDigest;
+    std::vector<uint8_t> mPendTri, mPendStr;   // retained wire buffers of the synced content (for lazy (re)builds)
+    int  mPendTripleCount = 0;
+    bool mHasContent = false;                  // a sync happened since construction / reset()
+    int  mGeneration = 0;                      // bumped on every changing sync
+    int  mBuiltGen = -1;                       // generation the loaded ontology reflects (-1 = none / failed)
+    bool mBuiltDirty = false;                  // mOntology received a load (needs reset() before the next one)
+    bool mBuiltReal = false;                   // load variant of the loaded ontology
+    int  mPipeLevel = 0;                       // 0 none, 1 classified, 2 realized (for the loaded ontology)
+    int  mConsistState = -1;                   // -1 unknown, else memoised consistency() result
+    bool mHidden = false;                      // results hidden because a sync changed content since the build
+    bool mHiddenClassified = false, mHiddenRealized = false;
+    int  mLastAdded = 0, mLastRemoved = 0, mRebuilds = 0;
+    bool mLegacyLoaded = false;                // native harness loadNTriplesStr(): verbs use the loaded ontology as is
+
     Impl() {
         mConfigProvider = new WasmConfigProvider();
 
@@ -463,7 +553,6 @@ struct KoncludeReasoner::Impl {
         // threadStopped() (overridden) joins the realizer and BackendAssCache threads.
         delete mReasonerManager; // joins CReasonerManagerThread; threadStopped() runs
         delete mClassManager;
-        delete mPreviousPreviousOntology;
         delete mPreviousOntology;
         delete mOntology;        // safe: all background threads have stopped
         delete mConfigProvider;
@@ -507,8 +596,10 @@ struct KoncludeReasoner::Impl {
     // Realizers from the previous call are already joined at the end of classify(),
     // so no stopAndClearRealizers() call is needed here.
     void reset() {
-        delete mPreviousPreviousOntology;
-        mPreviousPreviousOntology = mPreviousOntology;
+        ++mResetCount;
+        // The previous call's result has been read; free its realization data now (thread objects stay).
+        if (mReasonerManager) mReasonerManager->releaseStoppedRealizerItems();
+        delete mPreviousOntology;
         mPreviousOntology = mOntology;
         mOntology = nullptr;
         buildFreshOntology();
@@ -946,17 +1037,13 @@ KoncludeReasoner::~KoncludeReasoner() {
     delete mImpl;
 }
 
-// loadTripleBuffer ─────────────────────────────────────────────────────────────
+// buildOntology ────────────────────────────────────────────────────────────────
 //
-// See KoncludeReasoner.h for the wire format comment.
+// See KoncludeReasoner.h for the wire format comment. Always runs on a fresh, empty ontology
+// (ensureBuilt() resets first when needed).
 //
-void KoncludeReasoner::loadTripleBuffer(int triplePtr, int tripleCount, int strTablePtr, int strTableLen, bool forRealization) {
+void KoncludeReasoner::buildOntology(const void* triplePtr, int tripleCount, const void* strTablePtr, int strTableLen, bool forRealization) {
     auto t0 = std::chrono::steady_clock::now();
-
-    if (!strTablePtr || !triplePtr) {
-        fprintf(stderr, "{warn} KoncludeReasoner >> loadTripleBuffer called with null pointer\n");
-        return;
-    }
 
     // ── Decode the string table ──────────────────────────────────────────────
     // Layout: [count:u32][offset0:u32 … offsetN:u32][UTF-8 string data...]
@@ -1946,7 +2033,7 @@ void KoncludeReasoner::loadTripleBuffer(int triplePtr, int tripleCount, int strT
 
     mImpl->mClassified = false;
 
-    WASM_TRACE1("LOAD", "done", "triples=%d ms=%.0f", tripleCount,
+    WASM_TRACE1("BUILD", "done", "triples=%d ms=%.0f", tripleCount,
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
 }
 
@@ -2004,8 +2091,16 @@ bool KoncludeReasoner::runPipeline(KoncludeReasoner::Impl* impl, bool includeRea
         addReq(COntologyProcessingStep::OPSSAMEINDIVIDUALSREALIZE);
     }
 
+    impl->mOntology->setCallGeneration(++impl->mCallGeneration);
     WASM_TRACE1("PIPE", "prepare", "realization=%d", (int)includeRealization);
     impl->mReasonerManager->prepareOntology(impl->mOntology, reqList);
+    if (KonStall::gStalled.load()) {
+        // prepareOntology gave up: nothing was busy for the stall threshold. The kernel state is
+        // undefined; the caller (JS) must discard this instance and rebuild it.
+        impl->mStalled = true;
+        for (auto* r : reqList) delete r;
+        return false;
+    }
     WASM_TRACE1("PIPE", "prepared", "done");
     impl->mReasonerManager->waitSynchronization();
 
@@ -2037,16 +2132,183 @@ bool KoncludeReasoner::runPipeline(KoncludeReasoner::Impl* impl, bool includeRea
         impl->mReasonerManager->stopAndClearRealizers();
     }
 
+    // The task processor threads keep up to ~1k free ~44 KB pools each after a call; they free them
+    // on their next loop pass (patch 026) so an idle instance does not hold the reserve.
+    KonPoolStats::requestPoolFlush();
+
+    // The previous call's ontology only had to outlive the start of this call (threads free its stale
+    // per-ontology items lazily when they first see the new one). Keeping it until the next reset()
+    // doubled the retained heap between calls. REPRO_KEEP_PREV=1 restores the old lifetime (A/B tests).
+    if (impl->mPreviousOntology && !getenv("REPRO_KEEP_PREV")) {
+        delete impl->mPreviousOntology;
+        impl->mPreviousOntology = nullptr;
+    }
+
     return impl->mClassified;
+}
+
+// ── sync / lazy rebuild ───────────────────────────────────────────────────────
+
+namespace {
+inline uint64_t mix64(uint64_t x) {   // splitmix64 finaliser
+    x += 0x9e3779b97f4a7c15ULL;
+    x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
+    return x ^ (x >> 31);
+}
+// 128-bit string hash: two independently seeded FNV-1a streams with a final mix.
+inline ContentH128 hashBytes(uint32_t typeTag, const char* p, size_t n) {
+    uint64_t h1 = 14695981039346656037ULL ^ (typeTag + 1), h2 = 0x6a09e667f3bcc908ULL + typeTag * 0x100000001b3ULL;
+    for (size_t i = 0; i < n; ++i) {
+        unsigned char c = static_cast<unsigned char>(p[i]);
+        h1 = (h1 ^ c) * 1099511628211ULL;
+        h2 = (h2 + c + 1) * 0x9fb21c651e98df25ULL;
+        h2 ^= h2 >> 29;
+    }
+    return { mix64(h1 ^ n), mix64(h2 + n) };
+}
+} // namespace
+
+// Normalise a literal entry to "value\0datatype\0lang" exactly like the loader's decoder
+// (a missing trailing segment equals an empty one).
+static std::string normaliseLiteral(const char* data, size_t len) {
+    const char* end = data + len;
+    const char* v = static_cast<const char*>(memchr(data, '\0', len));
+    std::string out(data, v ? v : end);
+    std::string dt, lang;
+    if (v) {
+        const char* d = v + 1;
+        const char* de = static_cast<const char*>(memchr(d, '\0', end - d));
+        dt.assign(d, de ? de : end);
+        if (de && de + 1 < end) {
+            const char* l = de + 1;
+            const char* le = static_cast<const char*>(memchr(l, '\0', end - l));
+            lang.assign(l, le ? le : end);
+        }
+    }
+    out.push_back('\0'); out += dt; out.push_back('\0'); out += lang;
+    return out;
+}
+
+int KoncludeReasoner::syncTripleBuffer(int triplePtr, int tripleCount, int strTablePtr, int strTableLen) {
+    return syncBuffers(reinterpret_cast<const void*>(static_cast<uintptr_t>(static_cast<uint32_t>(triplePtr))), tripleCount,
+                       reinterpret_cast<const void*>(static_cast<uintptr_t>(static_cast<uint32_t>(strTablePtr))), strTableLen);
+}
+
+int KoncludeReasoner::syncBuffers(const void* triplePtr, int tripleCount, const void* strTablePtr, int strTableLen) {
+    Impl* im = mImpl;
+    if (!strTablePtr || strTableLen < 4 || tripleCount < 0 || (!triplePtr && tripleCount > 0)) {
+        fprintf(stderr, "{warn} KoncludeReasoner >> syncTripleBuffer: invalid buffers\n");
+        return -1;
+    }
+    auto t0 = std::chrono::steady_clock::now();
+    const uint32_t* hdr = reinterpret_cast<const uint32_t*>(strTablePtr);
+    const uint32_t count = hdr[0];
+    if (4u + 4u * static_cast<uint64_t>(count) > static_cast<uint64_t>(strTableLen)) return -1;
+    const char* strData = reinterpret_cast<const char*>(strTablePtr) + 4 + 4 * static_cast<size_t>(count);
+    const uint32_t strDataLen = static_cast<uint32_t>(strTableLen - 4 - 4 * static_cast<int>(count));
+    for (uint32_t i = 0; i < count; ++i) {
+        uint32_t off = hdr[1 + i], end = (i + 1 < count) ? hdr[2 + i] : strDataLen;
+        if (off > end || end > strDataLen) return -1;
+    }
+    const uint32_t* tri = reinterpret_cast<const uint32_t*>(triplePtr);
+    for (int i = 0; i < tripleCount * 3; ++i)
+        if ((tri[i] & 0x3FFFFFFFu) >= count || (tri[i] >> 30) > 2) return -1;
+
+    // Lazily computed term hashes per (type tag, string index).
+    std::vector<Impl::H128> memo[3];
+    std::vector<char> have[3];
+    auto termHash = [&](uint32_t id) -> const Impl::H128& {
+        uint32_t tag = id >> 30, idx = id & 0x3FFFFFFFu;
+        if (memo[tag].empty()) { memo[tag].resize(count); have[tag].assign(count, 0); }
+        if (!have[tag][idx]) {
+            uint32_t off = hdr[1 + idx], end = (idx + 1 < count) ? hdr[2 + idx] : strDataLen;
+            if (tag == 2) { std::string n = normaliseLiteral(strData + off, end - off); memo[tag][idx] = hashBytes(tag, n.data(), n.size()); }
+            else memo[tag][idx] = hashBytes(tag, strData + off, end - off);
+            have[tag][idx] = 1;
+        }
+        return memo[tag][idx];
+    };
+    Impl::Digest nd;
+    nd.reserve(static_cast<size_t>(tripleCount) * 2);
+    for (int i = 0; i < tripleCount; ++i) {
+        const auto& s = termHash(tri[i*3]); const auto& p = termHash(tri[i*3+1]); const auto& o = termHash(tri[i*3+2]);
+        uint64_t a = mix64(s.a ^ mix64(p.a ^ mix64(o.a + 1)));
+        uint64_t b = mix64(s.b + mix64(p.b + mix64(o.b ^ 0x5851f42d4c957f2dULL)));
+        nd.insert({a, b});
+    }
+    size_t added = 0;
+    for (const auto& h : nd) if (!im->mDigest.count(h)) ++added;
+    size_t removed = im->mDigest.size() - (nd.size() - added);
+    bool changed = !im->mHasContent || added || removed;
+    if (changed) {
+        im->mDigest = std::move(nd);
+        im->mPendTri.assign(reinterpret_cast<const uint8_t*>(triplePtr), reinterpret_cast<const uint8_t*>(triplePtr) + static_cast<size_t>(tripleCount) * 12);
+        im->mPendStr.assign(reinterpret_cast<const uint8_t*>(strTablePtr), reinterpret_cast<const uint8_t*>(strTablePtr) + strTableLen);
+        im->mPendTripleCount = tripleCount;
+        im->mHasContent = true;
+        ++im->mGeneration;
+        im->mLastAdded = static_cast<int>(added);
+        im->mLastRemoved = static_cast<int>(removed);
+        // Hide the results of the loaded ontology: reads see "not classified" until the next verb.
+        if (!im->mHidden && im->mBuiltGen >= 0) {
+            im->mHiddenClassified = im->mClassified; im->mHiddenRealized = im->mRealized;
+            im->mClassified = false; im->mRealized = false; im->mHidden = true;
+        }
+    }
+    WASM_TRACE1("SYNC", "done", "changed=%d added=%zu removed=%zu gen=%d ms=%.0f", (int)changed, added, removed,
+        im->mGeneration, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
+    return changed ? 1 : 0;
+}
+
+int KoncludeReasoner::generation() const { return mImpl->mGeneration; }
+int KoncludeReasoner::lastSyncAdded() const { return mImpl->mLastAdded; }
+int KoncludeReasoner::lastSyncRemoved() const { return mImpl->mLastRemoved; }
+int KoncludeReasoner::tripleCount() const { return static_cast<int>(mImpl->mDigest.size()); }
+int KoncludeReasoner::rebuildCount() const { return mImpl->mRebuilds; }
+
+// ensureBuilt: the loaded ontology reflects the synced content for the requested load variant.
+// The realization variant (forRealization) pre-scans functional/inverse-functional declarations and
+// drops them from the TBox; classification/consistency keep native IFP semantics, so the variants are
+// not interchangeable. Stale state is dropped here, at the START of the next call (item-lifecycle rule).
+bool KoncludeReasoner::ensureBuilt(bool forRealization) {
+    Impl* im = mImpl;
+    if (im->mLegacyLoaded) return !im->mLoadError;
+    // Content changed and changed back before any reasoning call: the loaded ontology is still valid.
+    if (im->mBuiltGen >= 0 && im->mBuiltGen != im->mGeneration && im->mDigest == im->mBuiltDigest)
+        im->mBuiltGen = im->mGeneration;
+    if (im->mBuiltGen == im->mGeneration && im->mBuiltReal == forRealization && !im->mLoadError) {
+        if (im->mHidden) { im->mClassified = im->mHiddenClassified; im->mRealized = im->mHiddenRealized; im->mHidden = false; }
+        return true;
+    }
+    if (im->mBuiltDirty) im->reset();
+    im->mBuiltDirty = true;
+    im->mBuiltGen = -1;
+    im->mPipeLevel = 0;
+    im->mConsistState = -1;
+    im->mHidden = false;
+    static const uint8_t emptyStr[4] = {0, 0, 0, 0};
+    if (im->mHasContent)
+        buildOntology(im->mPendTri.data(), im->mPendTripleCount, im->mPendStr.data(), static_cast<int>(im->mPendStr.size()), forRealization);
+    else
+        buildOntology(nullptr, 0, emptyStr, 4, forRealization);
+    if (im->mLoadError) return false;
+    im->mBuiltGen = im->mGeneration;
+    im->mBuiltReal = forRealization;
+    im->mBuiltDigest = im->mDigest;
+    ++im->mRebuilds;
+    return true;
 }
 
 // classification ───────────────────────────────────────────────────────────────
 // TBox only: class hierarchy + property hierarchy. No ABox realization.
-// Exposed to JS as the "classification" worker command (called by classify()).
+// Idempotent per generation: unchanged content returns the cached result without running Konclude.
 bool KoncludeReasoner::classification() {
-    if (mImpl->mLoadError) return false;
+    if (!ensureBuilt(false)) return false;
+    if (mImpl->mPipeLevel >= 1) return mImpl->mClassified;
     auto t0 = std::chrono::steady_clock::now();
     bool ok = runPipeline(mImpl, false);
+    if (ok) mImpl->mPipeLevel = 1; else mImpl->mBuiltGen = -1;   // failed: retry from retained content
     WASM_TRACE1("CLASSIFY", "done", "ok=%d ms=%.0f", (int)ok,
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
     return ok;
@@ -2058,25 +2320,29 @@ bool KoncludeReasoner::classification() {
 // OPSROLEREALIZE / OPSSAMEINDIVIDUALSREALIZE are appended and all submitted
 // together via a single prepareOntology() call.  There is no separate
 // classification round-trip.
-// Exposed to JS as the "realization" worker command (called by materialize()).
 bool KoncludeReasoner::realization() {
-    if (mImpl->mLoadError) return false;
+    if (!ensureBuilt(true)) return false;
+    if (mImpl->mPipeLevel >= 2) return mImpl->mClassified;
     auto t0 = std::chrono::steady_clock::now();
     bool ok = runPipeline(mImpl, true);
+    if (ok) mImpl->mPipeLevel = 2; else mImpl->mBuiltGen = -1;
     WASM_TRACE1("REALIZE", "done", "ok=%d ms=%.0f", (int)ok,
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
     return ok;
 }
 
 // consistency ──────────────────────────────────────────────────────────────────
+// Memoised per generation; needs the classification-variant ontology (native IFP semantics).
 
 bool KoncludeReasoner::consistency() {
-    if (mImpl->mTriviallyInconsistent) return false;
+    if (!ensureBuilt(false)) return false;
+    if (mImpl->mConsistState >= 0) return mImpl->mConsistState != 0;
+    if (mImpl->mTriviallyInconsistent) { mImpl->mConsistState = 0; return false; }
+    if (mImpl->mPipeLevel == 0 && !classification()) return false;
     CConsistence* cons = mImpl->mOntology->getConsistence();
-    if (!cons) {
-        return true;
-    }
-    return cons->isOntologyConsistent();
+    bool ok = cons ? cons->isOntologyConsistent() : true;
+    mImpl->mConsistState = ok ? 1 : 0;
+    return ok;
 }
 
 // processorCount ───────────────────────────────────────────────────────────────
@@ -2085,10 +2351,20 @@ int KoncludeReasoner::processorCount() {
     return mImpl ? mImpl->mProcessorCount : 0;
 }
 
-// reset ────────────────────────────────────────────────────────────────────────
+bool KoncludeReasoner::stalled() const { return mImpl->mStalled; }
+void KoncludeReasoner::setStallThresholdMs(int ms) { KonStall::gThresholdMs.store(ms); }
 
+// Explicit teardown: forget the synced content and drop the loaded ontology.
 void KoncludeReasoner::reset() {
-    mImpl->reset();
+    Impl* im = mImpl;
+    im->reset();
+    im->mDigest.clear(); im->mBuiltDigest.clear();
+    im->mPendTri.clear(); im->mPendTri.shrink_to_fit();
+    im->mPendStr.clear(); im->mPendStr.shrink_to_fit();
+    im->mPendTripleCount = 0; im->mHasContent = false;
+    ++im->mGeneration;
+    im->mBuiltGen = -1; im->mBuiltDirty = false; im->mPipeLevel = 0; im->mConsistState = -1;
+    im->mHidden = false; im->mLastAdded = im->mLastRemoved = 0; im->mLegacyLoaded = false;
 }
 
 // ─── Binary output buffer helpers ────────────────────────────────────────────
@@ -3247,7 +3523,7 @@ int KoncludeReasoner::buildInferredTripleBuffer(bool withExplanations) {
         }
     }
 
-    mImpl->mResultBufferPtr = reinterpret_cast<int>(mImpl->mResultBuffer.data());
+    mImpl->mResultBufferPtr = static_cast<int>(reinterpret_cast<uintptr_t>(mImpl->mResultBuffer.data()));
 
     WASM_TRACE1("BUILD", "inferred", "triples=%zu axioms=%zu justs=%zu mappings=%zu bytes=%zu",
         tripleIds.size() / 3, axiomTriples.size(), justEntries.size(), tripleMappings.size(), totalLen);
@@ -3465,7 +3741,7 @@ int KoncludeReasoner::buildPropertyTripleBuffer(bool withExplanations) {
         }
     }
 
-    mImpl->mResultBufferPtr = reinterpret_cast<int>(mImpl->mResultBuffer.data());
+    mImpl->mResultBufferPtr = static_cast<int>(reinterpret_cast<uintptr_t>(mImpl->mResultBuffer.data()));
 
     WASM_TRACE1("BUILD", "properties", "triples=%zu bytes=%zu", tripleIds.size() / 3, totalLen);
 
@@ -3583,3 +3859,320 @@ std::string KoncludeReasoner::getJustificationByType(const std::string& subIri, 
 bool KoncludeReasoner::hasJustificationByType(const std::string& subIri, const std::string& superIri, int type) {
     return mImpl->hasJustificationByType(subIri, superIri, type);
 }
+
+// ── Native debug utilities ─────────────────────────────────────────────────────
+// These are excluded from the WASM build to keep binary size down.
+
+#ifdef NATIVE_DEBUG_BUILD
+
+#include <librdf.h>
+#include <algorithm>
+#include <set>
+
+bool KoncludeReasoner::loadNTriplesStr(const std::string& ntriples, bool forRealization) {
+    auto* impl = mImpl;
+    if (!impl->mOntology) return false;
+    impl->mLegacyLoaded = true;
+
+    CConcreteOntologyUpdateCollectorBuilder* builder =
+        new CConcreteOntologyUpdateCollectorBuilder(impl->mOntology);
+    builder->initializeBuilding();
+
+    // Chain to the previous revision's triples data (as upstream's RDF parser does), so a new
+    // ontology revision sees earlier statements; nullptr for the first load.
+    bool localTriplesDataFlag = false;
+    CRedlandStoredTriplesData* prevTripleData =
+        (CRedlandStoredTriplesData*)builder->getLatestTriplesData(false, &localTriplesDataFlag);
+    CRedlandStoredTriplesData* tripleData = new CRedlandStoredTriplesData();
+    tripleData->initTriplesData(CTRIPLES_DATA_UPDATE_TYPE::TRIPLES_DATA_ADDITION, prevTripleData);
+
+    librdf_world* world = librdf_new_world();
+    librdf_world_open(world);
+    tripleData->setRedlandWorldData(world);
+
+    librdf_storage* stor = librdf_new_storage(world, "hashes", NULL,
+        "hash-type='memory',index-predicates='yes'");
+    tripleData->setRedlandIndexedStorageData(stor);
+
+    librdf_model* model = librdf_new_model(world, stor, NULL);
+    tripleData->setRedlandIndexedModelData(model);
+
+    if (!model) {
+        delete tripleData;
+        builder->completeBuilding();
+        delete builder;
+        impl->mLoadError = true;
+        return false;
+    }
+
+    // Parse NTriples into the model using librdf's built-in parser.
+    librdf_parser* parser = librdf_new_parser(world, "ntriples", nullptr, nullptr);
+    if (parser) {
+        librdf_uri* base = librdf_new_uri(world,
+            reinterpret_cast<const unsigned char*>("http://debug.local/"));
+        librdf_stream* stream = librdf_parser_parse_string_as_stream(
+            parser,
+            reinterpret_cast<const unsigned char*>(ntriples.c_str()),
+            base);
+        if (stream) {
+            // Mirror the production loader: keep statement copies in a CXLinker list (the
+            // triple indexer stores statement pointers; stream-owned statements would dangle).
+            CXLinker<librdf_statement*>* statementLinker = nullptr;
+            CXLinker<librdf_statement*>* lastStatementLinker = nullptr;
+            while (!librdf_stream_end(stream)) {
+                librdf_statement* stmt = librdf_stream_get_object(stream);
+                if (stmt && !librdf_model_contains_statement(model, stmt)) {
+                    librdf_statement* linkerStmt = librdf_new_statement_from_statement(stmt);
+                    CXLinker<librdf_statement*>* newLinker = new CXLinker<librdf_statement*>();
+                    newLinker->initLinker(linkerStmt, nullptr);
+                    if (lastStatementLinker) lastStatementLinker->setNext(newLinker);
+                    else statementLinker = newLinker;
+                    lastStatementLinker = newLinker;
+                    librdf_model_add_statement(model, stmt);
+                }
+                librdf_stream_next(stream);
+            }
+            tripleData->setRedlandStatementLinker(statementLinker);
+            librdf_free_stream(stream);
+        }
+        if (base) librdf_free_uri(base);
+        librdf_free_parser(parser);
+    }
+
+    builder->addTriplesData(tripleData);
+
+    CConcreteOntologyRedlandTriplesDataExpressionMapper* mapper =
+        new CConcreteOntologyRedlandTriplesDataExpressionMapper(builder);
+    mapper->setConfExtractSimpleABoxAssertions(true);
+    mapper->mapTriples(impl->mOntology, impl->mOntology->getOntologyTriplesData());
+    delete mapper;
+
+    builder->completeBuilding();
+    delete builder;
+
+    impl->mClassified = false;
+    return true;
+}
+
+std::string KoncludeReasoner::dumpRoleState(const std::string& roleSubstr) const {
+    std::string out;
+    auto* ont = mImpl->mOntology;
+    CRealization* real = ont ? ont->getRealization() : nullptr;
+    CRoleRealization* roleReal = real ? real->getRoleRealization() : nullptr;
+    auto* item = dynamic_cast<COptimizedRepresentativeKPSetOntologyRealizingItem*>(roleReal);
+    if (!item) return "dumpRoleState: no realizing item\n";
+    char buf[512];
+    for (COptimizedKPSetRoleInstancesItem* ri : *item->getRoleInstancesItemList()) {
+        if (!ri || !ri->getRole()) continue;
+        std::string iri = std::string(CIRIName::getRecentIRIName(ri->getRole()->getPropertyNameLinker()));
+        if (!roleSubstr.empty() && iri.find(roleSubstr) == std::string::npos) continue;
+        auto* h = ri->getIndividualIdComplexRoleDataHash();
+        size_t n = 0, initS = 0, initP = 0, ingS = 0, ingP = 0, withLinks = 0;
+        size_t sumSucc = 0, sumPred = 0, knownSucc = 0, possibleSucc = 0, possTested = 0, possTesting = 0;
+        for (auto it = h->constBegin(), e = h->constEnd(); it != e; ++it) {
+            auto* d = it.value();
+            if (!d) continue;
+            ++n;
+            initS += d->isInitialized(false); initP += d->isInitialized(true);
+            ingS += d->isInitializing(false); ingP += d->isInitializing(true);
+            if (auto* l = static_cast<COptimizedKPSetIndividualComplexRoleExplicitIndirectLinksData*>(d)) {
+                ++withLinks;
+                auto* hs = l->getRoleNeighbourInstancesHash(false, false);
+                auto* hp = l->getRoleNeighbourInstancesHash(true, false);
+                if (hs && hs->size() < 396) {
+                    CIndividual* ind = ont->getABox()->getIndividualVector(false)->getData(it.key());
+                    std::string nm = ind ? std::string(CIRIName::getRecentIRIName(ind->getIndividualNameLinker())) : "?";
+                    snprintf(buf, sizeof(buf), "  SHORT id=%lld %s succLinks=%zu\n", (long long)it.key(), nm.c_str(), (size_t)hs->size());
+                    out += buf;
+                }
+                if (hs) {
+                    for (auto hit = hs->constBegin(), hend = hs->constEnd(); hit != hend; ++hit) {
+                        auto* idata = hit.value().mInstanceItemData;
+                        if (idata && idata->mKnownInstance) ++knownSucc; else { ++possibleSucc; if (idata && idata->mTestedInstance) ++possTested; if (idata && idata->mTestingInstance) ++possTesting; }
+                    }
+                }
+                if (hs) sumSucc += hs->size();
+                if (hp) sumPred += hp->size();
+            }
+        }
+        snprintf(buf, sizeof(buf),
+            "%s tag=%lld: onlyTransitiveCand=%d detStarter=%d complexData=%zu initSucc=%zu initPred=%zu initializingSucc=%zu initializingPred=%zu withExplicitLinks=%zu sumSuccLinks=%zu sumPredLinks=%zu knownSucc=%zu possibleSucc=%zu possibleTested=%zu possibleTestingStillSet=%zu\n",
+            iri.c_str(), (long long)ri->getRole()->getRoleTag(), (int)ri->hasOnlyTransitiveComplexRoleCandidates(),
+            (int)ri->hasOnlyDeterministicComplexRoleStarterCandidatesUsage(),
+            n, initS, initP, ingS, ingP, withLinks, sumSucc, sumPred, knownSucc, possibleSucc, possTested, possTesting);
+        out += buf;
+        snprintf(buf, sizeof(buf),
+            "  FLAGS %s: hasComplexCandidates=%d complexQueuedFlag=%d testingComplex=%d hasPossibleInstances=%d candSuccInitCompleted=%d | item: remainingConfirm=%d propagating=%d testing=%d\n",
+            iri.substr(iri.rfind('#') + 1).c_str(), (int)ri->hasComplexInstanceCandidates(), (int)ri->hasComplexCandidateInstancesProcessingQueuedFlag(),
+            (int)ri->hasTestingComplexCandidateInstancesCount(), (int)ri->hasPossibleInstances(), (int)ri->isCandidateSuccessorInitializationCompleted(),
+            (int)item->hasRemainingCandidateConfirmationRoleInstanceItems(), (int)item->hasPropagatingRoleInstanceCandidates(), (int)item->hasTestingRoleInstanceCandidates());
+        out += buf;
+    }
+    // Role hierarchy as seen by the kernel (direct + indirect super roles) for matching roles.
+    if (CRBox* rbox = ont->getRBox()) {
+        if (CRoleVector* rv = rbox->getRoleVector(false)) {
+            for (qint64 i = 0; i < rv->getItemCount(); ++i) {
+                CRole* r = rv->getData(i);
+                if (!r) continue;
+                std::string nm = std::string(CIRIName::getRecentIRIName(r->getPropertyNameLinker()));
+                if (nm.empty() || nm.find(roleSubstr) == std::string::npos) continue;
+                auto list = [&](CSortedNegLinker<CRole*>* l) {
+                    std::vector<std::string> v;
+                    for (; l; l = l->getNext()) {
+                        CRole* sr = l->getData();
+                        if (sr) v.push_back(std::string(CIRIName::getRecentIRIName(sr->getPropertyNameLinker())));
+                    }
+                    std::sort(v.begin(), v.end());
+                    std::string o;
+                    for (auto& x : v) { size_t h = x.rfind('#'); o += (h == std::string::npos ? x : x.substr(h + 1)) + ","; }
+                    return o;
+                };
+                out += "ROLEHIER " + nm.substr(nm.rfind('#') + 1) + " direct=[" + list(r->getSuperRoleList()) + "] indirect=[" + list(r->getIndirectSuperRoleList()) + "]\n";
+            }
+        }
+    }
+    return out;
+}
+
+bool KoncludeReasoner::addRevisionNTriplesStr(const std::string& ntriples) {
+    auto* impl = mImpl;
+    if (!impl->mOntology) return false;
+    CConcreteOntology* prev = impl->mOntology;
+    CConcreteOntology* next = new CConcreteOntology(prev, prev->getConfiguration());
+    next->setOntologyName(prev->getOntologyName());
+    next->setOntologyID(static_cast<qint64>(prev->getOntologyID() + 1));
+    // Keep every revision alive: the incremental threads walk getPreviousOntologyVersion().
+    impl->mRevisionChain.push_back(prev);
+    impl->mOntology = next;
+    return loadNTriplesStr(ntriples, true);
+}
+
+// Snapshot of all singleton state relevant to the sequential-call hang.
+// Returns a static JSON buffer valid until the next call to dumpState().
+const char* KoncludeReasoner::dumpState(const char* label) const {
+    static char buf[4096];
+
+    size_t endSet = 0, startSet = 0;
+    if (mImpl->mReasonerManager)
+        mImpl->mReasonerManager->debugProcessingSetSizes(endSet, startSet);
+
+    size_t stoppedR = mImpl->mReasonerManager
+        ? mImpl->mReasonerManager->stoppedRealizerCount() : 0;
+
+    int64_t ontoId  = mImpl->mOntology ? mImpl->mOntology->getOntologyID() : -1;
+    int64_t prevId  = mImpl->mPreviousOntology ? mImpl->mPreviousOntology->getOntologyID() : -1;
+
+    snprintf(buf, sizeof(buf),
+        "{"
+        "\"label\":\"%s\","
+        "\"reset_count\":%d,"
+        "\"call_generation\":%" PRId64 ","
+        "\"ontology_id\":%" PRId64 ","
+        "\"prev_ontology_id\":%" PRId64 ","
+        "\"processing_end_set_size\":%zu,"
+        "\"processing_start_set_size\":%zu,"
+        "\"stopped_realizer_count\":%zu"
+        "}",
+        label ? label : "",
+        mImpl->mResetCount,
+        (int64_t)mImpl->mCallGeneration,
+        ontoId,
+        prevId,
+        endSet,
+        startSet,
+        stoppedR
+    );
+    return buf;
+}
+
+std::string KoncludeReasoner::resultAsSortedNTriples() const {
+    const auto& b = mImpl->mResultBuffer;
+    if (b.size() < 8) return "";
+    auto u32 = [&](size_t o) {
+        return (uint32_t)b[o] | ((uint32_t)b[o+1] << 8) | ((uint32_t)b[o+2] << 16) | ((uint32_t)b[o+3] << 24);
+    };
+    uint32_t tblLen = u32(0);
+    size_t tbl = 4;
+    uint32_t n = u32(tbl);
+    size_t offs = tbl + 4, data = offs + (size_t)n * 4, dataEnd = tbl + tblLen;
+    auto str = [&](uint32_t id) {
+        uint32_t idx = id & 0x3FFFFFFF;
+        size_t a = data + u32(offs + (size_t)idx * 4);
+        size_t e = (idx + 1 < n) ? data + u32(offs + (size_t)(idx + 1) * 4) : dataEnd;
+        return std::string(reinterpret_cast<const char*>(b.data()) + a, e - a);
+    };
+    auto term = [&](uint32_t id) {
+        std::string v = str(id);
+        switch (id >> 30) {
+            case 0: return "<" + v + ">";
+            case 1: return "_:" + v;
+            default: return "\"" + v.substr(0, v.find('\0')) + "\"";
+        }
+    };
+    std::set<std::string> lines;
+    size_t tp = dataEnd;
+    // Stop at explanation marker if present (not requested by harness, but be safe).
+    while (tp + 12 <= b.size() && u32(tp) != 0xDEADBEEFu) {
+        lines.insert(term(u32(tp)) + " " + term(u32(tp + 4)) + " " + term(u32(tp + 8)) + " .");
+        tp += 12;
+    }
+    std::string out;
+    for (auto& l : lines) { out += l; out += '\n'; }
+    return out;
+}
+
+#endif // NATIVE_DEBUG_BUILD
+
+#ifdef NATIVE_DEBUG_BUILD
+// Minimal N-Triples → wire-format encoder (fixtures only: IRIs, blank nodes, plain/typed/lang literals).
+int KoncludeReasoner::syncNTriplesStr(const std::string& nt) {
+    std::unordered_map<std::string, uint32_t> idx;
+    std::vector<std::string> strs;
+    std::vector<uint32_t> tri;
+    auto intern = [&](uint32_t tag, const std::string& v) {
+        std::string key = std::to_string(tag) + "\x01" + v;
+        auto it = idx.find(key);
+        if (it != idx.end()) return it->second;
+        uint32_t id = static_cast<uint32_t>(strs.size()) | (tag << 30);
+        idx[key] = id; strs.push_back(v); return id;
+    };
+    std::istringstream is(nt); std::string ln;
+    while (std::getline(is, ln)) {
+        size_t i = 0;
+        auto ws = [&]() { while (i < ln.size() && (ln[i] == ' ' || ln[i] == '\t' || ln[i] == '\r')) ++i; };
+        auto term = [&]() -> int64_t {
+            ws();
+            if (i >= ln.size()) return -1;
+            if (ln[i] == '<') { size_t e = ln.find('>', i); if (e == std::string::npos) return -1; auto id = intern(0, ln.substr(i + 1, e - i - 1)); i = e + 1; return id; }
+            if (ln.compare(i, 2, "_:") == 0) { size_t e = i + 2; while (e < ln.size() && ln[e] != ' ' && ln[e] != '\t' && ln[e] != '.') ++e; auto id = intern(1, ln.substr(i + 2, e - i - 2)); i = e; return id; }
+            if (ln[i] == '"') {
+                std::string v; ++i;
+                while (i < ln.size() && ln[i] != '"') {
+                    if (ln[i] == '\\' && i + 1 < ln.size()) {
+                        char c = ln[++i];
+                        if (c == 'n') v += '\n'; else if (c == 't') v += '\t'; else if (c == 'r') v += '\r'; else v += c;
+                    } else v += ln[i];
+                    ++i;
+                }
+                ++i;
+                std::string dt, lang;
+                if (ln.compare(i, 2, "^^") == 0) { size_t s2 = ln.find('<', i), e = ln.find('>', i); dt = ln.substr(s2 + 1, e - s2 - 1); i = e + 1; }
+                else if (i < ln.size() && ln[i] == '@') { size_t e = i + 1; while (e < ln.size() && ln[e] != ' ' && ln[e] != '.') ++e; lang = ln.substr(i + 1, e - i - 1); i = e; }
+                std::string enc = v;
+                if (!dt.empty() || !lang.empty()) { enc.push_back('\0'); enc += dt; if (!lang.empty()) { enc.push_back('\0'); enc += lang; } }
+                return intern(2, enc);
+            }
+            return -1;
+        };
+        ws(); if (i >= ln.size() || ln[i] == '#') continue;
+        int64_t s1 = term(), p1 = term(), o1 = term();
+        if (s1 < 0 || p1 < 0 || o1 < 0) continue;
+        tri.push_back(static_cast<uint32_t>(s1)); tri.push_back(static_cast<uint32_t>(p1)); tri.push_back(static_cast<uint32_t>(o1));
+    }
+    std::vector<uint32_t> hdr; hdr.push_back(static_cast<uint32_t>(strs.size()));
+    uint32_t off = 0; for (auto& x : strs) { hdr.push_back(off); off += static_cast<uint32_t>(x.size()); }
+    std::string table(reinterpret_cast<const char*>(hdr.data()), hdr.size() * 4);
+    for (auto& x : strs) table += x;
+    return syncBuffers(tri.data(), static_cast<int>(tri.size() / 3), table.data(), static_cast<int>(table.size()));
+}
+#endif

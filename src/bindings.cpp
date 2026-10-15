@@ -6,7 +6,12 @@ using namespace emscripten;
 EMSCRIPTEN_BINDINGS(konclude) {
     class_<KoncludeReasoner>("KoncludeReasoner")
         .constructor<>()
-        .function("loadTripleBuffer",    &KoncludeReasoner::loadTripleBuffer)
+        .function("syncTripleBuffer",    &KoncludeReasoner::syncTripleBuffer)
+        .function("generation",          &KoncludeReasoner::generation)
+        .function("lastSyncAdded",       &KoncludeReasoner::lastSyncAdded)
+        .function("lastSyncRemoved",     &KoncludeReasoner::lastSyncRemoved)
+        .function("tripleCount",         &KoncludeReasoner::tripleCount)
+        .function("rebuildCount",        &KoncludeReasoner::rebuildCount)
         .function("classification",      &KoncludeReasoner::classification)
         .function("realization",         &KoncludeReasoner::realization)
         .function("consistency",         &KoncludeReasoner::consistency)
@@ -24,5 +29,7 @@ EMSCRIPTEN_BINDINGS(konclude) {
         .function("getAxiomsForRoleTag",              &KoncludeReasoner::getAxiomsForRoleTag)
         .function("getJustificationByType",           &KoncludeReasoner::getJustificationByType)
         .function("hasJustificationByType",           &KoncludeReasoner::hasJustificationByType)
+        .function("stalled",                          &KoncludeReasoner::stalled)
+        .function("setStallThresholdMs",              &KoncludeReasoner::setStallThresholdMs)
         .function("reset",                            &KoncludeReasoner::reset);
 }

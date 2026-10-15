@@ -8,7 +8,8 @@
  *      `KoncludeReasoner` instance, posts `{id, result}` or `{id, error}`
  *
  * The `KoncludeReasoner` instance is stateful within a single Worker lifetime:
- *   loadTripleBuffer → classification | realization (→ getInferredTripleBuffer or consistency)
+ *   sync → classification | realization (→ getInferredTripleBuffer or consistency)
+ *   C++ detects content changes itself; no reset between calls.
  */
 
 // At runtime this file lives in `dist/` alongside `dist/konclude.mjs`.
@@ -34,6 +35,8 @@ export interface WorkerResponse {
   id: number;
   result?: unknown;
   error?: string;
+  /** WASM linear memory size after a classification/realization call (never shrinks). */
+  heapBytes?: number;
 }
 
 /** Posted once after the WASM module finishes loading. */
@@ -75,6 +78,34 @@ function getOrCreateReasoner(mod: KoncludeModule): KoncludeReasonerInstance {
   return _reasoner;
 }
 
+
+/** Header sanity of a combined result buffer: [strTableLen:u32][termCount:u32 …]. */
+function plausibleResult(buf: Uint8Array): boolean {
+  if (buf.byteLength < 8) return false;
+  const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  const strTableLen = dv.getUint32(0, true);
+  if (strTableLen < 4 || 4 + strTableLen > buf.byteLength) return false;
+  return 4 + 4 * dv.getUint32(4, true) <= strTableLen;
+}
+
+/**
+ * Build a result buffer and copy it out of the WASM heap. Under memory pressure the copy has been
+ * observed to read foreign heap data (implausible header) — rebuild and re-read in that case.
+ */
+function readResult(mod: KoncludeModule, reasoner: KoncludeReasonerInstance, build: () => number): Uint8Array | null {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const len = build();
+    if (len <= 0) return null;
+    const ptr = reasoner.getInferredTripleBufferPtr() >>> 0; // wasm32 pointers above 2 GiB come back negative from Embind int
+    // HEAPU8.buffer may be a SharedArrayBuffer — slice() copies to a plain AB
+    // so it can be transferred (postMessage transfer requires non-shared AB).
+    const plain = mod.HEAPU8.slice(ptr, ptr + len);
+    if (plausibleResult(plain)) return plain;
+    self.postMessage({ type: "log", msg: `{warn} result buffer header implausible (attempt ${attempt + 1}, len=${len}, ptr=${ptr}); rebuilding` });
+  }
+  throw new Error("result buffer corrupt after retries");
+}
+
 // ---------------------------------------------------------------------------
 // Message dispatch
 // ---------------------------------------------------------------------------
@@ -94,39 +125,53 @@ export async function handleMessage(
   let result: unknown;
   try {
     const mod = await initPromise;
+    if (method === "sync" || method === "loadTripleBuffer" || method === "classification" || method === "realization" || method === "consistency") {
+      // Let the event loop deliver pending pthread cleanup messages of the previous call
+      // before a blocking call starts; the main thread cannot process them while blocked.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
     const reasoner = getOrCreateReasoner(mod);
 
     switch (method) {
+      // "sync" (alias "loadTripleBuffer", legacy name): hand the store content to C++, which decides by itself
+      // whether it changed (digest compare) and rebuilds lazily at the next classification/realization.
+      case "sync":
       case "loadTripleBuffer": {
         const r = getOrCreateReasoner(mod);
-        r.reset();
         const tripleAB = args[0] as ArrayBuffer;
         const strTableAB = args[1] as ArrayBuffer;
-        const forRealization = (args[2] as boolean) ?? false;
-        const tripleCount = tripleAB.byteLength / 12; // 3 × u32 per triple
 
+        const tripleCount = tripleAB.byteLength / 12; // 3 × u32 per triple
         const tripleBytes = tripleAB.byteLength;
         const strBytes = strTableAB.byteLength;
-
         const triplePtr = mod._malloc(tripleBytes);
         const strTablePtr = mod._malloc(strBytes);
+        let rc: number;
         try {
           mod.HEAPU8.set(new Uint8Array(tripleAB), triplePtr);
           mod.HEAPU8.set(new Uint8Array(strTableAB), strTablePtr);
-          r.loadTripleBuffer(triplePtr, tripleCount, strTablePtr, strBytes, forRealization);
+          rc = r.syncTripleBuffer(triplePtr, tripleCount, strTablePtr, strBytes);
         } finally {
           mod._free(triplePtr);
           mod._free(strTablePtr);
         }
-        result = true;
+        if (rc < 0) throw new Error("sync: invalid triple/string-table buffers");
+        result = {
+          changed: rc === 1,
+          added: rc === 1 ? r.lastSyncAdded() : 0,
+          removed: rc === 1 ? r.lastSyncRemoved() : 0,
+          generation: r.generation(),
+        };
         break;
       }
       case "classification": {
         result = reasoner.classification();
+        if (reasoner.stalled?.()) throw new Error("KONCLUDE_STALLED");
         break;
       }
       case "realization": {
         result = reasoner.realization();
+        if (reasoner.stalled?.()) throw new Error("KONCLUDE_STALLED");
         break;
       }
       case "consistency": {
@@ -135,12 +180,8 @@ export async function handleMessage(
       }
       case "getInferredTripleBuffer": {
         const withExplanations = (args[0] as boolean) ?? false;
-        const len = reasoner.buildInferredTripleBuffer(withExplanations);
-        if (len > 0) {
-          const ptr = reasoner.getInferredTripleBufferPtr();
-          // HEAPU8.buffer may be a SharedArrayBuffer — slice() copies to a plain AB
-          // so it can be transferred (postMessage transfer requires non-shared AB).
-          const plain = mod.HEAPU8.slice(ptr, ptr + len);
+        const plain = readResult(mod, reasoner, () => reasoner.buildInferredTripleBuffer(withExplanations));
+        if (plain) {
           const response: WorkerResponse = { id, result: plain.buffer };
           self.postMessage(response, [plain.buffer]);
           return;
@@ -154,10 +195,8 @@ export async function handleMessage(
       }
       case "getPropertyTripleBuffer": {
         const withExplanations = (args[0] as boolean) ?? false;
-        const len = reasoner.buildPropertyTripleBuffer(withExplanations);
-        if (len > 0) {
-          const ptr = reasoner.getInferredTripleBufferPtr();
-          const plain = mod.HEAPU8.slice(ptr, ptr + len);
+        const plain = readResult(mod, reasoner, () => reasoner.buildPropertyTripleBuffer(withExplanations));
+        if (plain) {
           const response: WorkerResponse = { id, result: plain.buffer };
           self.postMessage(response, [plain.buffer]);
           return;
@@ -168,6 +207,10 @@ export async function handleMessage(
         const emptyResponse: WorkerResponse = { id, result: empty };
         self.postMessage(emptyResponse, [empty]);
         return;
+      }
+      case "syncStats": {
+        result = { generation: reasoner.generation(), rebuilds: reasoner.rebuildCount(), triples: reasoner.tripleCount() };
+        break;
       }
       case "getUnsatisfiableClassBuffer": {
         result = reasoner.buildUnsatisfiableClassBuffer();
@@ -220,6 +263,7 @@ export async function handleMessage(
     }
 
     const response: WorkerResponse = { id, result };
+    if (method === "classification" || method === "realization") response.heapBytes = mod.HEAPU8.byteLength;
     self.postMessage(response);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);

@@ -25,11 +25,14 @@ interface KoncludeModule {
 
 interface KoncludeReasonerInstance {
   reset(): void;
-  loadTripleBuffer(
-    triplePtr: number, tripleCount: number,
-    strPtr: number, strBytes: number,
-    forRealization: boolean,
-  ): void;
+  stalled?(): boolean;
+  stalled?(): boolean;
+  syncTripleBuffer(triplePtr: number, tripleCount: number, strPtr: number, strBytes: number): number;
+  generation(): number;
+  lastSyncAdded(): number;
+  lastSyncRemoved(): number;
+  rebuildCount(): number;
+  tripleCount(): number;
   classification(): void;
   realization(): void;
   consistency(): boolean;
@@ -93,38 +96,52 @@ export function createInlineWorker(koncludeModuleUrl: string | URL): Worker {
     console.debug("[inlineWorker] handleMessage:", method, "id:", id);
     try {
       const m = await initPromise;
+      if (method === "sync" || method === "loadTripleBuffer" || method === "classification" || method === "realization" || method === "consistency") {
+        // Let the event loop deliver pending pthread cleanup messages of the previous call.
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      }
       const r = getOrCreateReasoner(m);
       let result: unknown;
 
       switch (method) {
+        case "sync":
         case "loadTripleBuffer": {
-          r.reset();
           const tripleAB = args[0] as ArrayBuffer;
           const strTableAB = args[1] as ArrayBuffer;
-          const forRealization = (args[2] as boolean) ?? false;
           const tripleCount = tripleAB.byteLength / 12;
-          console.debug("[inlineWorker] loadTripleBuffer:", tripleCount, "triples, forRealization:", forRealization);
           const triplePtr = m._malloc(tripleAB.byteLength);
           const strTablePtr = m._malloc(strTableAB.byteLength);
+          let rc: number;
           try {
             m.HEAPU8.set(new Uint8Array(tripleAB), triplePtr);
             m.HEAPU8.set(new Uint8Array(strTableAB), strTablePtr);
-            r.loadTripleBuffer(triplePtr, tripleCount, strTablePtr, strTableAB.byteLength, forRealization);
+            rc = r.syncTripleBuffer(triplePtr, tripleCount, strTablePtr, strTableAB.byteLength);
           } finally {
             m._free(triplePtr);
             m._free(strTablePtr);
           }
-          result = true;
+          if (rc < 0) throw new Error("sync: invalid triple/string-table buffers");
+          result = {
+            changed: rc === 1,
+            added: rc === 1 ? r.lastSyncAdded() : 0,
+            removed: rc === 1 ? r.lastSyncRemoved() : 0,
+            generation: r.generation(),
+          };
           break;
         }
+        case "syncStats":
+          result = { generation: r.generation(), rebuilds: r.rebuildCount(), triples: r.tripleCount() };
+          break;
         case "classification":
           console.debug("[inlineWorker] classification start");
           result = r.classification();
+          if (r.stalled?.()) throw new Error("KONCLUDE_STALLED");
           console.debug("[inlineWorker] classification done");
           break;
         case "realization":
           console.debug("[inlineWorker] realization start");
           result = r.realization();
+          if (r.stalled?.()) throw new Error("KONCLUDE_STALLED");
           console.debug("[inlineWorker] realization done");
           break;
         case "consistency":
@@ -135,7 +152,7 @@ export function createInlineWorker(koncludeModuleUrl: string | URL): Worker {
           const len = r.buildInferredTripleBuffer(withExpl);
           console.debug("[inlineWorker] getInferredTripleBuffer len:", len);
           if (len > 0) {
-            const ptr = r.getInferredTripleBufferPtr();
+            const ptr = r.getInferredTripleBufferPtr() >>> 0; // pointers above 2 GiB are negative as Embind int
             const copy = m.HEAPU8.slice(ptr, ptr + len);
             emit("message", { data: { id, result: copy.buffer } });
             return;
@@ -149,7 +166,7 @@ export function createInlineWorker(koncludeModuleUrl: string | URL): Worker {
           const withExpl = (args[0] as boolean) ?? false;
           const len = r.buildPropertyTripleBuffer(withExpl);
           if (len > 0) {
-            const ptr = r.getInferredTripleBufferPtr();
+            const ptr = r.getInferredTripleBufferPtr() >>> 0; // pointers above 2 GiB are negative as Embind int
             const copy = m.HEAPU8.slice(ptr, ptr + len);
             emit("message", { data: { id, result: copy.buffer } });
             return;
@@ -194,7 +211,7 @@ export function createInlineWorker(koncludeModuleUrl: string | URL): Worker {
           return;
       }
       console.debug("[inlineWorker] response id:", id, "method:", method);
-      emit("message", { data: { id, result } });
+      emit("message", { data: { id, result, heapBytes: (method === "classification" || method === "realization") ? (m as { HEAPU8: Uint8Array }).HEAPU8.byteLength : undefined } });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       console.error("[inlineWorker] handleMessage error:", method, message);

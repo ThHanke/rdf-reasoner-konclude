@@ -8,7 +8,13 @@
  */
 
 export interface KoncludeReasonerInstance {
-  loadTripleBuffer(triplePtr: number, tripleCount: number, strTablePtr: number, strTableLen: number, forRealization: boolean): void;
+  /** 1 = content changed, 0 = unchanged, -1 = invalid buffers. */
+  syncTripleBuffer(triplePtr: number, tripleCount: number, strTablePtr: number, strTableLen: number): number;
+  generation(): number;
+  lastSyncAdded(): number;
+  lastSyncRemoved(): number;
+  tripleCount(): number;
+  rebuildCount(): number;
   classification(): boolean;
   realization(): boolean;
   consistency(): boolean;
@@ -27,6 +33,9 @@ export interface KoncludeReasonerInstance {
   getJustificationByType(subIri: string, superIri: string, type: number): string;
   hasJustificationByType(subIri: string, superIri: string, type: number): boolean;
   reset(): void;
+  /** True when the last classification()/realization() gave up (no activity); discard the instance. */
+  stalled?(): boolean;
+  setStallThresholdMs(ms: number): void;
   /** Release Embind-managed C++ memory. Must be called when done. */
   delete(): void;
 }

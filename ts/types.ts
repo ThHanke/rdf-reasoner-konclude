@@ -20,6 +20,16 @@ export interface ExplainOptions {
    * base-axiom filtering reads the right graph.
    */
   inferredGraph?: string;
+  /**
+   * Wall-clock timeout in milliseconds for the BlackBox bisection search.
+   *
+   * When the deadline is reached the call returns whatever justifications have
+   * been found so far (possibly zero).  The inconsistency detection itself is
+   * unaffected; only the minimisation search is cut short.
+   *
+   * Defaults to 180 000 ms (3 minutes).  Set to 0 to disable the timeout.
+   */
+  timeout?: number;
 }
 
 /**
@@ -245,6 +255,26 @@ export interface RdfReasonerOptions {
    *  Receives Emscripten main-thread stdout/stderr output. pthread output
    *  goes directly to terminal stderr and does not reach this callback. */
   onTrace?: (msg: string) => void;
+  /** Creates a fresh Worker. Used for the initial Worker and for restarts after a stall.
+   *  Takes precedence over `worker` / `workerUrl`. */
+  workerFactory?: () => Worker;
+  /** A blocking reasoning call (load, classification, realization, consistency) that shows
+   *  no sign of life (no response and no trace message) for this long is treated as stalled:
+   *  the Worker is restarted, the state of the current store is replayed, and the call is
+   *  retried once. Default 600000 (10 min); 0 disables the watchdog. */
+  stallTimeoutMs?: number;
+  /** WASM linear memory never shrinks and is capped at 4 GiB; two large ontologies in one heap
+   *  make an allocator thread trap (observed as a stall). When the heap has grown past this many
+   *  bytes after a call, the Worker is recycled before the next load. Default 2 GiB; 0 disables. */
+  recycleHeapBytes?: number;
+}
+
+/** Thrown (after one automatic recovery attempt) when a reasoning call stalls. */
+export class ReasonerStalledError extends Error {
+  constructor(method: string, idleMs: number) {
+    super(idleMs > 0 ? `Reasoner call "${method}" made no progress for ${Math.round(idleMs / 1000)} s` : `Reasoner "${method}" stalled (no task or event activity)`);
+    this.name = "ReasonerStalledError";
+  }
 }
 
 /**
