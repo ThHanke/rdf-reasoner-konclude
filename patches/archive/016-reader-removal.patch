@@ -1,0 +1,144 @@
+--- a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCacheReader.h
++++ b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCacheReader.h
+@@ -87,6 +87,7 @@
+ 						CBackendRepresentativeMemoryCacheReader* updateSlot(CBackendRepresentativeMemoryCacheSlotItem* updatedSlot);
+ 						CBackendRepresentativeMemoryCacheReader* fixOntologyData(CBackendRepresentativeMemoryCacheOntologyData* ontologyData);
+ 						CBackendRepresentativeMemoryCacheReader* checkRecomputationIdUsage(cint64 recomputationId);
++						void releaseAllSlots();
+ 
+ 
+ 						CBackendRepresentativeMemoryCacheReader* setWorkingOntology(cint64 ontologyIdentifier);
+--- a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCacheReader.cpp
++++ b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCacheReader.cpp
+@@ -103,6 +103,16 @@
+ 					return false;
+ 				}
+ 
++				void CBackendRepresentativeMemoryCacheReader::releaseAllSlots() {
++					CBackendRepresentativeMemoryCacheSlotItem* updSlot = mUpdatedSlot.fetchAndStoreOrdered(nullptr);
++					if (updSlot) updSlot->decReader();
++					if (mCurrentSlot) {
++						mCurrentSlot->decReader();
++						mCurrentSlot = nullptr;
++					}
++					mOntologyData = nullptr;
++				}
++
+ 
+ 
+ 				CBackendRepresentativeMemoryCacheReader* CBackendRepresentativeMemoryCacheReader::setWorkingOntology(cint64 ontologyIdentifier) {
+--- a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.h
++++ b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.h
+@@ -125,6 +125,9 @@
+ 
+ 						void writeStringifiedRepresentativeCacheToFile();
+ 						void triggerSlotGC();
++						void removeCacheReader(CBackendRepresentativeMemoryCacheReader* reader);
++						void clearAllLinkedReaders();
++						int getReaderLinkerCount();
+ 
+ 						CConcreteOntology* mDebugOntology;
+ 
+--- a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.cpp
++++ b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.cpp
+@@ -582,6 +582,49 @@
+ 				}
+ 
+ 
++				void CBackendRepresentativeMemoryCache::removeCacheReader(CBackendRepresentativeMemoryCacheReader* reader) {
++					if (!reader) return;
++					mReaderSyncMutex.lock();
++					if (mReaderLinker == reader) {
++						mReaderLinker = reader->getNext();
++					} else {
++						for (auto* it = mReaderLinker; it && it->getNext(); it = it->getNext()) {
++							if (it->getNext() == reader) {
++								it->setNext(reader->getNext());
++								break;
++							}
++						}
++					}
++					reader->setNext(nullptr);
++					int remaining = 0; for (auto* it = mReaderLinker; it; it = it->getNext()) ++remaining;
++					mReaderSyncMutex.unlock();
++					LOG(INFO,"::Konclude::WasmDebug",logTr("[READER-CLEANUP] removeCacheReader: remaining in mReaderLinker=%1").arg(remaining),this);
++				}
++
++				int CBackendRepresentativeMemoryCache::getReaderLinkerCount() {
++					mReaderSyncMutex.lock();
++					int count = 0; for (auto* it = mReaderLinker; it; it = it->getNext()) ++count;
++					mReaderSyncMutex.unlock();
++					return count;
++				}
++
++				void CBackendRepresentativeMemoryCache::clearAllLinkedReaders() {
++					mReaderSyncMutex.lock();
++					CBackendRepresentativeMemoryCacheReader* it = mReaderLinker;
++					mReaderLinker = nullptr;
++					mReaderSyncMutex.unlock();
++					int count = 0;
++					while (it) {
++						auto* next = it->getNext();
++						it->releaseAllSlots();
++						it->setNext(nullptr);
++						it = next;
++						++count;
++					}
++					LOG(INFO,"::Konclude::WasmDebug",logTr("[READER-CLEANUP] clearAllLinkedReaders: removed=%1 readers from mReaderLinker").arg(count),this);
++				}
++
++
+ 				CBackendRepresentativeMemoryCacheReader* CBackendRepresentativeMemoryCache::createOntologyFixedCacheReader(cint64 ontologyIdentifier) {
+ 					CBackendRepresentativeMemoryCacheReader* reader = new CBackendRepresentativeMemoryCacheReader();
+ 					mFixedOntologyIdentifierDataHashLock.lockForRead();
+--- a/Source/Reasoner/Realizer/CRealizerThread.h
++++ b/Source/Reasoner/Realizer/CRealizerThread.h
+@@ -65,6 +65,8 @@
+ 		using namespace Kernel::Manager;
+ 		using namespace Kernel::Calculation;
+ 
++		namespace Kernel { namespace Cache { class CBackendRepresentativeMemoryCache; } }
++
+ 		namespace Realizer {
+ 
+ 			using namespace Events;
+@@ -94,6 +96,7 @@
+ 					// Free all COntologyRealizingItem objects in mOntItemHash.  Safe to call
+ 					// after pthread_join (thread stopped) once triples have been extracted.
+ 					virtual void clearRealizingItems();
++					virtual void releaseRealizingItemReaders(Kernel::Cache::CBackendRepresentativeMemoryCache* cache);
+ 
+ 					virtual CRealizationMessageObserver* tellRealizationMessage(CConcreteOntology *ontology, CRealizationMessageData* messageData, CMemoryPool* memoryPool);
+ 
+--- a/Source/Reasoner/Realizer/CRealizerThread.cpp
++++ b/Source/Reasoner/Realizer/CRealizerThread.cpp
+@@ -19,6 +19,8 @@
+  */
+ 
+ #include "CRealizerThread.h"
++#include "COptimizedRepresentativeKPSetOntologyRealizingItem.h"
++#include "../Kernel/Cache/CBackendRepresentativeMemoryCache.h"
+ 
+ 
+ namespace Konclude {
+@@ -51,6 +53,20 @@
+ 				mOntItemHash.clear();
+ 			}
+ 
++			void CRealizerThread::releaseRealizingItemReaders(Kernel::Cache::CBackendRepresentativeMemoryCache* cache) {
++				if (!cache) return;
++				int found = 0, removed = 0;
++				for (auto it = mOntItemHash.begin(); it != mOntItemHash.end(); ++it) {
++					auto* kpsItem = dynamic_cast<COptimizedRepresentativeKPSetOntologyRealizingItem*>(it.value());
++					if (kpsItem) {
++						++found;
++						auto* reader = kpsItem->getBackendAssociationCacheReader();
++						if (reader) { cache->removeCacheReader(reader); ++removed; }
++					}
++				}
++				LOG(INFO,"::Konclude::WasmDebug",logTr("[READER-CLEANUP] releaseRealizingItemReaders: ontItemHash=%1 kpsFound=%2 readersRemoved=%3").arg((int)mOntItemHash.size()).arg(found).arg(removed),this);
++			}
++
+ 
+ 			bool CRealizerThread::realize(CConcreteOntology* ontology, CConfigurationBase* config, const QList<COntologyProcessingRequirement*>& requirementList, CCallbackData* callback) {
+ 				postEvent(new CRealizeOntologyEvent(ontology,config,requirementList,callback));

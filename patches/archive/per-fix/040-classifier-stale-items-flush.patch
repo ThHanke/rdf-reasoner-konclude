@@ -1,0 +1,67 @@
+--- a/Source/Reasoner/Classifier/COptimizedKPSetRoleSubsumptionClassifierThread.cpp
++++ b/Source/Reasoner/Classifier/COptimizedKPSetRoleSubsumptionClassifierThread.cpp
+@@ -347,6 +347,8 @@
+ 
+ 			
+ 			CSubsumptionClassifierThread *COptimizedKPSetRoleSubsumptionClassifierThread::scheduleOntologyClassification(CConcreteOntology *ontology, CClassificationCalculationSupport *classificationSupport, CConfigurationBase *config) {
++				for (auto* stale : mStaleClassItems) { delete stale; }
++				mStaleClassItems.clear();
+ 
+ 
+ 				CRolePropertiesHierarchy* hierarchy = createInitialHierarchyForOntology(ontology,config);
+--- a/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.cpp
++++ b/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.cpp
+@@ -150,6 +150,8 @@
+ 
+ 			
+ 			CSubsumptionClassifierThread *COptimizedKPSetClassSubsumptionClassifierThread::scheduleOntologyClassification(CConcreteOntology *ontology, CClassificationCalculationSupport *classificationSupport, CConfigurationBase *config) {
++				for (auto* stale : mStaleClassItems) { delete stale; }
++				mStaleClassItems.clear();
+ 
+ 
+ 				CTaxonomy *taxonomy = createEmptyTaxonomyForOntology(ontology,config);
+--- a/Source/Reasoner/Classifier/COptimizedSubClassSubsumptionClassifierThread.cpp
++++ b/Source/Reasoner/Classifier/COptimizedSubClassSubsumptionClassifierThread.cpp
+@@ -107,6 +107,8 @@
+ 
+ 			
+ 			CSubsumptionClassifierThread *COptimizedSubClassSubsumptionClassifierThread::scheduleOntologyClassification(CConcreteOntology *ontology, CClassificationCalculationSupport *classificationSupport, CConfigurationBase *config) {
++				for (auto* stale : mStaleClassItems) { delete stale; }
++				mStaleClassItems.clear();
+ 
+ 				CTaxonomy *taxonomy = createEmptyTaxonomyForOntology(ontology,config);
+ 				COptimizedSubClassOntologyClassificationItem *ontClassItem = new COptimizedSubClassOntologyClassificationItem(config,statistics);
+--- a/Source/Reasoner/Classifier/COptimizedClassExtractedSaturationSubsumptionClassifierThread.cpp
++++ b/Source/Reasoner/Classifier/COptimizedClassExtractedSaturationSubsumptionClassifierThread.cpp
+@@ -57,6 +57,8 @@
+ 
+ 			
+ 			CSubsumptionClassifierThread *COptimizedClassExtractedSaturationSubsumptionClassifierThread::scheduleOntologyClassification(CConcreteOntology *ontology, CClassificationCalculationSupport *classificationSupport, CConfigurationBase *config) {
++				for (auto* stale : mStaleClassItems) { delete stale; }
++				mStaleClassItems.clear();
+ 
+ 				CTaxonomy *taxonomy = createEmptyTaxonomyForOntology(ontology,config);
+ 				COptimizedClassExtractedSaturationOntologyClassificationItem *ontClassItem = new COptimizedClassExtractedSaturationOntologyClassificationItem(config,statistics);
+--- a/Source/Reasoner/Classifier/CIncrementalKPSetClassSubsumptionClassifierThread.cpp
++++ b/Source/Reasoner/Classifier/CIncrementalKPSetClassSubsumptionClassifierThread.cpp
+@@ -52,6 +52,8 @@
+ 
+ 
+ 			CSubsumptionClassifierThread *CIncrementalKPSetClassSubsumptionClassifierThread::scheduleOntologyClassification(CConcreteOntology *ontology, CClassificationCalculationSupport *classificationSupport, CConfigurationBase *config) {
++				for (auto* stale : mStaleClassItems) { delete stale; }
++				mStaleClassItems.clear();
+ 
+ 
+ 				CTaxonomy *taxonomy = createEmptyTaxonomyForOntology(ontology,config);
+--- a/Source/Reasoner/Classifier/COptimizedKPSetRoleOntologyClassificationItem.cpp
++++ b/Source/Reasoner/Classifier/COptimizedKPSetRoleOntologyClassificationItem.cpp
+@@ -62,6 +62,9 @@
+ 			}
+ 
+ 			COptimizedKPSetRoleOntologyClassificationItem::~COptimizedKPSetRoleOntologyClassificationItem() {
++				if (mTmpRoleClassificationOnt) {
++					mTmpRoleClassificationOnt->setConsistence(nullptr);
++				}
+ 				delete mTmpRoleClassificationOnt;
+ 				for (auto* item : mSatTestItemContainer) { delete item; }
+ 			}

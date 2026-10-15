@@ -164,3 +164,9 @@ vite.config.ts.timestamp-*
 .vite/
 tests/fixtures/lubm-combined.rdf.xml
 bench-results.md
+
+# Native debug build + scratch
+build-native/
+scripts/__pycache__/
+core
+build-mt/

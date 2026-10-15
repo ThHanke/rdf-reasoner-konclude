@@ -1,0 +1,39 @@
+--- a/Source/Reasoner/Consistiser/CTotallyPrecomputationThread.cpp
++++ b/Source/Reasoner/Consistiser/CTotallyPrecomputationThread.cpp
+@@ -909,6 +909,7 @@
+ 					consistencyDetected = true;
+ 					detectedConsistency = true;
+ 					LOG(INFO,getLogDomain(),logTr("Trivial consistency detected with merged individual."),getLogObject());
++					totallyPreCompItem->setAllIncompletelyHandledIndividualsRetrieved(true);
+ 				} else if (totallyPreCompItem->hasClashedSaturationIndividuals()) {
+ 					consistencyDetected = true;
+ 					detectedConsistency = false;
+@@ -917,6 +918,7 @@
+ 					consistencyDetected = true;
+ 					detectedConsistency = true;
+ 					LOG(INFO,getLogDomain(),logTr("Trivial consistency detected with individual saturation."),getLogObject());
++					totallyPreCompItem->setAllIncompletelyHandledIndividualsRetrieved(true);
+ 				} else if (!fullCompletionGraphConstruction && totallyPreCompItem->hasIndividualsSaturated() && totallyPreCompItem->hasAllIncompletelyHandledIndividualsRetrieved() && (indiCount > 0 || maxTriplesIndexedIndiId > 0)) {
+ 					consistencyDetected = true;
+ 					detectedConsistency = !totallyPreCompItem->hasIndividualPrecomputationClashed();
+@@ -948,6 +950,7 @@
+ 						} else {
+ 							consistencyDetected = true;
+ 							detectedConsistency = true;
++							totallyPreCompItem->setAllIncompletelyHandledIndividualsRetrieved(true);
+ 						}
+ 					} else {
+ 						satCalcJob = satCalcJobGen.getSatisfiableCalculationJob(indiList);
+--- a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.cpp
++++ b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.cpp
+@@ -581,7 +581,9 @@
+ 					}
+ 					reader->fixOntologyData(ontologyData);
+ 					mFixedOntologyIdentifierDataHashLock.unlock();
+-					ontologyData->waitIndividualLabelAssociationIndexed();
++					if (ontologyData) {
++						ontologyData->waitIndividualLabelAssociationIndexed();
++					}
+ 					return reader;
+ 				}
+ 

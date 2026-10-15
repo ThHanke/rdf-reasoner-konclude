@@ -1,0 +1,46 @@
+--- a/Source/Reasoner/Realizer/COntologyRealizingItem.h
++++ b/Source/Reasoner/Realizer/COntologyRealizingItem.h
+@@ -30,6 +30,8 @@
+ 
+ // Other includes
+ #include "Reasoner/Ontology/CConcreteOntology.h"
++#include "Reasoner/Query/CSatisfiableCalculationJob.h"
++#include <vector>
+ #include "Reasoner/Ontology/COntologyProcessingRequirement.h"
+ 
+ 
+@@ -70,7 +72,23 @@
+ 					COntologyRealizingItem();
+ 
+ 					//! Virtual: items are deleted through this base class
+-					virtual ~COntologyRealizingItem() {}
++					virtual ~COntologyRealizingItem() {
++						for (Konclude::Reasoner::Query::CSatisfiableCalculationJob* job : mCompletedCalculationJobs) {
++							delete job;
++						}
++					}
++
++					//! Takes over a finished calculation job; deleted together with this item
++					void addCompletedCalculationJob(Konclude::Reasoner::Query::CSatisfiableCalculationJob* job) {
++						if (job) {
++							mCompletedCalculationJobs.push_back(job);
++						}
++					}
++
++				protected:
++					std::vector<Konclude::Reasoner::Query::CSatisfiableCalculationJob*> mCompletedCalculationJobs;
++
++				public:
+ 
+ 					COntologyRealizingItem* initRealizingItem(CConcreteOntology* ontology, CConfigurationBase* config);
+ 
+--- a/Source/Reasoner/Realizer/CRealizerThread.cpp
++++ b/Source/Reasoner/Realizer/CRealizerThread.cpp
+@@ -253,6 +253,7 @@
+ 					COntologyRealizingItem* ontPreproItem = testingItem->getOntologyRealizingItem();
+ 
+ 					ontPreproItem->getRealizingTestingItemSet()->remove(testingItem);
++					ontPreproItem->addCompletedCalculationJob(pcce->getSatisfiableCalculationJob());
+ 					realizingTested(ontPreproItem,testingItem,pcce);
+ 					doNextPendingTests();
+ 

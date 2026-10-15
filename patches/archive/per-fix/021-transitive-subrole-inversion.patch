@@ -1,0 +1,11 @@
+--- a/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp
++++ b/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp
+@@ -2787,7 +2787,7 @@
+ 								COptimizedKPSetIndividualComplexRoleData* indiComplexSubRoleData = subRoleInstancesItem->getIndividualIdComplexRoleData(indiId, true);
+ 								COptimizedKPSetIndividualComplexRoleExplicitIndirectLinksData* indiExplicitIndirectLinkComplexRoleRepresentationData = (COptimizedKPSetIndividualComplexRoleExplicitIndirectLinksData*)indiComplexRoleData;
+ 								COptimizedKPSetIndividualComplexRoleExplicitIndirectLinksData* indiExplicitIndirectLinkComplexSubRoleRepresentationData = (COptimizedKPSetIndividualComplexRoleExplicitIndirectLinksData*)indiComplexSubRoleData;
+-								COptimizedKPSetRoleInstancesHash* subRoleComplexInstancesHash = indiExplicitIndirectLinkComplexSubRoleRepresentationData->getRoleNeighbourInstancesHash(inversed, true);
++								COptimizedKPSetRoleInstancesHash* subRoleComplexInstancesHash = indiExplicitIndirectLinkComplexSubRoleRepresentationData->getRoleNeighbourInstancesHash(subRoleItemInversed, true);
+ 								for (QHash<cint64, COptimizedKPSetRoleInstancesHashData>::const_iterator it = subRoleComplexInstancesHash->constBegin(), itEnd = subRoleComplexInstancesHash->constEnd(); it != itEnd; ++it) {
+ 									cint64 succIndiId = it.key();
+ 									CRealizationIndividualInstanceItemReference succIndiItemRef = reqConfPreCompItem->getInstanceItemReference(succIndiId, true);

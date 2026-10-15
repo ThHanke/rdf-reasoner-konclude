@@ -1,0 +1,37 @@
+--- a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.h
++++ b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.h
+@@ -125,6 +125,7 @@
+ 						bool reportMaximumHandledRecomputationId(cint64 ontologyIdentifier, cint64 maximumRecomputationId);
+ 
+ 						void writeStringifiedRepresentativeCacheToFile();
++						void triggerSlotGC();
+ 
+ 						CConcreteOntology* mDebugOntology;
+ 
+--- a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.cpp
++++ b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.cpp
+@@ -462,6 +462,16 @@
+ 
+ 
+ 
++				void CBackendRepresentativeMemoryCache::triggerSlotGC() {
++					if (!mSlotLinker || !mSlotLinker->getNext()) return;
++					CBackendRepresentativeMemoryCacheSlotItem* head = mSlotLinker;
++					mSlotLinker = head->getNext();
++					head->setNext(nullptr);
++					cleanUnusedSlots(&mContext);
++					head->setNext(mSlotLinker);
++					mSlotLinker = head;
++				}
++
+ 				void CBackendRepresentativeMemoryCache::cleanUnusedSlots(CBackendRepresentativeMemoryCacheBaseContext* context) {
+ 					CMemoryPoolAllocationManager* memMan = context->getMemoryPoolAllocationManager();
+ 					CBackendRepresentativeMemoryCacheSlotItem* slotLinkerIt = mSlotLinker;
+@@ -3438,6 +3448,7 @@
+ 
+ 					for (CBackendRepresentativeMemoryCacheSlotItem* slotLinkerIt = mSlotLinker; slotLinkerIt; slotLinkerIt = slotLinkerIt->getNext()) {
+ 						CBackendRepresentativeMemoryCacheOntologyData* referredOntologyData = slotLinkerIt->getOntologyData(ontologyIdentifier);
++						if (!referredOntologyData) continue;
+ 						cint64 minValidRecId = referredOntologyData->getMinimumValidRecomputationId();
+ 						minInstalledValidRecId = qMin(minInstalledValidRecId, minValidRecId);
+ 					}

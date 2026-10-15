@@ -1,0 +1,10 @@
+--- a/Source/Reasoner/Realizer/COptimizedKPSetRoleInstancesItem.cpp
++++ b/Source/Reasoner/Realizer/COptimizedKPSetRoleInstancesItem.cpp
+@@ -47,6 +47,7 @@
+ 				mAllSuccProcessedFlag = false;
+ 				mToProcessFlag = false;
+ 				mPossibleProcessingQueuedFlag = false;
++				mComplexCandidateProcessingQueuedFlag = false;
+ 				mSelfSuccsCompletedFlag = false;
+ 				mRequiresCandidateInitializationFlag = true;
+ 				mUninitializedSuccItemCount = 0;

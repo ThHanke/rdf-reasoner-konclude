@@ -1,0 +1,60 @@
+--- a/Source/Reasoner/Ontology/COntologyProcessingRequirement.h
++++ b/Source/Reasoner/Ontology/COntologyProcessingRequirement.h
+@@ -55,6 +55,9 @@
+ 					//! Constructor
+ 					COntologyProcessingRequirement();
+ 
++					//! Virtual: deleted through this base class
++					virtual ~COntologyProcessingRequirement() {}
++
+ 					virtual bool isRequirementSatisfied(COntology* ontology) = 0;
+ 
+ 					virtual COntologyProcessingRequirement* submitRequirementUpdate(cint64 processingFlags, cint64 errorFlags) = 0;
+--- a/Source/Reasoner/Consistiser/COntologyPrecomputationItem.h
++++ b/Source/Reasoner/Consistiser/COntologyPrecomputationItem.h
+@@ -76,6 +76,9 @@
+ 					//! Constructor
+ 					COntologyPrecomputationItem();
+ 
++					//! Virtual: deleted through this base class
++					virtual ~COntologyPrecomputationItem() {}
++
+ 					COntologyPrecomputationItem* initPrecomputationItem(CConcreteOntology* ontology, CConfigurationBase* config);
+ 
+ 					virtual COntologyPrecomputationItem* addPrecomputationRequirement(COntologyProcessingRequirement* ontoRequirement);
+--- a/Source/Reasoner/Consistiser/CPrecomputationTestingItem.h
++++ b/Source/Reasoner/Consistiser/CPrecomputationTestingItem.h
+@@ -58,6 +58,9 @@
+ 					//! Constructor
+ 					CPrecomputationTestingItem(COntologyPrecomputationItem* preCompItem, CConsistenceCalculationStatisticsCollection* statisticCollection = nullptr);
+ 
++					//! Virtual: deleted through this base class
++					virtual ~CPrecomputationTestingItem() {}
++
+ 					enum PRECOMPUTATIONTYPE {
+ 						CONSISTENCEPRECOMPUTATIONTYPE, CONCEPTSATURATIONPRECOMPUTATIONTYPE, INDIVIDUALSATURATIONPRECOMPUTATIONTYPE, CONCEPTCYCLEPRECOMPUTATIONTYPE, INDIVIDUALPRECOMPUTATIONTYPE, OCCURRENCESTATISTICSSATURATIONPRECOMPUTATIONTYPE
+ 					};
+--- a/Source/Reasoner/Preprocess/COntologyPreprocessingItem.h
++++ b/Source/Reasoner/Preprocess/COntologyPreprocessingItem.h
+@@ -68,6 +68,9 @@
+ 					//! Constructor
+ 					COntologyPreprocessingItem();
+ 
++					//! Virtual: deleted through this base class
++					virtual ~COntologyPreprocessingItem() {}
++
+ 					COntologyPreprocessingItem* initPreprocessingItem(CConcreteOntology* ontology, CConfigurationBase* config);
+ 
+ 					virtual COntologyPreprocessingItem* addProcessingRequirement(COntologyProcessingRequirement* ontoRequirement);
+--- a/Source/Reasoner/Ontology/CIndividualNameResolver.h
++++ b/Source/Reasoner/Ontology/CIndividualNameResolver.h
+@@ -54,6 +54,9 @@
+ 					//! Constructor
+ 					CIndividualNameResolver();
+ 
++					//! Virtual: deleted through this base class
++					virtual ~CIndividualNameResolver() {}
++
+ 					virtual QString getIndividualName(const CIndividualReference& indiRef, bool abbreviated = false) const = 0;
+ 					virtual bool isAnonymous(const CIndividualReference& indiRef) const = 0;
+ 

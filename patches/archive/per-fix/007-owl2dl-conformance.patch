@@ -1,0 +1,214 @@
+--- a/Source/Reasoner/Generator/CConcreteOntologyRedlandTriplesDataExpressionMapper.cpp
++++ b/Source/Reasoner/Generator/CConcreteOntologyRedlandTriplesDataExpressionMapper.cpp
+@@ -447,7 +447,7 @@
+ 								QList<CRedlandNodeProcessingData*>* targetValueLiteralProcessingDataList = getNodeProcessingDataListFromNodeStreamWithNewHandling(createRedlandNodeStreamWrapper()->init(getPartialStatementFilteredTripleStream(getAdaptedPartialFilteringStatement(node, nullptr, nullptr, mPartialFilteringStatementForOWLTargetValueSuccessors)), 2), mDataLiteralNodeIdentifierDataHash, [&](librdf_node* node)->CRedlandNodeProcessingData* { return createLiteralValueProcessingData(node); });
+ 								if (targetValueLiteralProcessingDataList) {
+ 
+-									QList<CRedlandNodeProcessingData*>* propertyProcessingDataList = getNodeProcessingDataListFromNodeStream(createRedlandNodeStreamWrapper()->init(getPartialStatementFilteredTripleStream(getAdaptedPartialFilteringStatement(node, nullptr, nullptr, mPartialFilteringStatementForOWLAssertionPropertySuccessors)), 2), mObjectPropertyNodeIdentifierDataHash);
++									QList<CRedlandNodeProcessingData*>* propertyProcessingDataList = getNodeProcessingDataListFromNodeStream(createRedlandNodeStreamWrapper()->init(getPartialStatementFilteredTripleStream(getAdaptedPartialFilteringStatement(node, nullptr, nullptr, mPartialFilteringStatementForOWLAssertionPropertySuccessors)), 2), mDataPropertyNodeIdentifierDataHash);
+ 									if (propertyProcessingDataList) {
+ 										QList<CBuildExpression*> expressionList;
+ 										collectBuildExpressionsFromProcessingDataList(*sourcendividualProcessingDataList, expressionList);
+@@ -469,13 +469,13 @@
+ 							if (!processed) {
+ 								QList<CRedlandNodeProcessingData*>* targetIndividualProcessingDataList = getNodeProcessingDataListFromNodeStreamWithNewHandling(createRedlandNodeStreamWrapper()->init(getPartialStatementFilteredTripleStream(getAdaptedPartialFilteringStatement(node, nullptr, nullptr, mPartialFilteringStatementForOWLTargetIndividualSuccessors)), 2), mNamedIndividualNodeIdentifierDataHash, [&](librdf_node* node)->CRedlandNodeProcessingData* { return createNamedIndividualProcessingData(node); });
+ 								if (targetIndividualProcessingDataList) {
+-									QList<CRedlandNodeProcessingData*>* propertyProcessingDataList = getNodeProcessingDataListFromNodeStream(createRedlandNodeStreamWrapper()->init(getPartialStatementFilteredTripleStream(getAdaptedPartialFilteringStatement(node, nullptr, nullptr, mPartialFilteringStatementForOWLAssertionPropertySuccessors)), 2), mDataPropertyNodeIdentifierDataHash);
++									QList<CRedlandNodeProcessingData*>* propertyProcessingDataList = getNodeProcessingDataListFromNodeStream(createRedlandNodeStreamWrapper()->init(getPartialStatementFilteredTripleStream(getAdaptedPartialFilteringStatement(node, nullptr, nullptr, mPartialFilteringStatementForOWLAssertionPropertySuccessors)), 2), mObjectPropertyNodeIdentifierDataHash);
+ 									if (propertyProcessingDataList) {
+ 										QList<CBuildExpression*> expressionList;
+ 										collectBuildExpressionsFromProcessingDataList(*sourcendividualProcessingDataList, expressionList);
+ 										collectBuildExpressionsFromProcessingDataList(*targetIndividualProcessingDataList, expressionList);
+ 										collectBuildExpressionsFromProcessingDataList(*propertyProcessingDataList, expressionList);
+-										CAxiomExpression* axiomExpression = mOntologyBuilder->getNegativeDataPropertyAssertion(expressionList);
++										CAxiomExpression* axiomExpression = mOntologyBuilder->getNegativeObjectPropertyAssertion(expressionList);
+ 										if (axiomExpression) {
+ 											processed = true;
+ 											axiomExpressionList.append(axiomExpression);
+@@ -2439,9 +2439,9 @@
+ 				initPartialFilteringStatement(nullptr, PREFIX_OWL_DISTINCT_MEMBERS, nullptr, mPartialFilteringStatementForOWLDistinctMembers);
+ 
+ 				initPartialFilteringStatement(nullptr, PREFIX_OWL_SOURCE_INDIVIDUAL, nullptr, mPartialFilteringStatementForOWLSourceIndividualSuccessors);
+-				initPartialFilteringStatement(nullptr, PREFIX_OWL_ASSERTION_PROPERTY, nullptr, mPartialFilteringStatementForOWLTargetIndividualSuccessors);
+-				initPartialFilteringStatement(nullptr, PREFIX_OWL_TARGET_INDIVIDUAL, nullptr, mPartialFilteringStatementForOWLTargetValueSuccessors);
+-				initPartialFilteringStatement(nullptr, PREFIX_OWL_TARGET_VALUE, nullptr, mPartialFilteringStatementForOWLAssertionPropertySuccessors);
++				initPartialFilteringStatement(nullptr, PREFIX_OWL_TARGET_INDIVIDUAL, nullptr, mPartialFilteringStatementForOWLTargetIndividualSuccessors);
++				initPartialFilteringStatement(nullptr, PREFIX_OWL_TARGET_VALUE, nullptr, mPartialFilteringStatementForOWLTargetValueSuccessors);
++				initPartialFilteringStatement(nullptr, PREFIX_OWL_ASSERTION_PROPERTY, nullptr, mPartialFilteringStatementForOWLAssertionPropertySuccessors);
+ 
+ 
+ 				initPartialFilteringStatement(nullptr, PREFIX_RDF_TYPE, nullptr, mPartialFilteringStatementForOWLAllRDFTypePredecessors);
+--- a/Source/Reasoner/Generator/CConcreteOntologyUpdateBuilder.cpp
++++ b/Source/Reasoner/Generator/CConcreteOntologyUpdateBuilder.cpp
+@@ -1785,6 +1785,22 @@
+ 								roleLinker->init(role,false);
+ 								invRole->addDisjointRoleLinker(roleLinker);
+ 							}
++							if (!role->hasInverseRole(invRole)) {
++								CSortedNegLinker<CRole*>* invRoleLinker = CObjectAllocator< CSortedNegLinker<CRole*> >::allocateAndConstruct(mMemManager);
++								invRoleLinker->init(invRole,true);
++								role->addInverseRoleLinker(invRoleLinker);
++								if (!role->getInverseRole()) {
++									role->setInverseRole(invRole);
++								}
++							}
++							if (!invRole->hasInverseRole(role)) {
++								CSortedNegLinker<CRole*>* invRoleLinker2 = CObjectAllocator< CSortedNegLinker<CRole*> >::allocateAndConstruct(mMemManager);
++								invRoleLinker2->init(role,true);
++								invRole->addInverseRoleLinker(invRoleLinker2);
++								if (!invRole->getInverseRole()) {
++									invRole->setInverseRole(role);
++								}
++							}
+ 							role->setAsymmetric(true);
+ 						} else if (expType == CBuildExpression::BETTRANSITIVEOBJECTPROPERTY) {
+ 							// TODO: build RR [= R ??
+--- a/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp
++++ b/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp
+@@ -5093,11 +5093,86 @@
+ 
+ 
+ 							CIndividualSaturationProcessNode* othIndiNode = getIndividualNodeForIndividual(indiProcSatNode,othIndi,saturationID,calcAlgContext);
++							// EquivalentProperty + DisjointProperty clash (archive/012):
++							// p(a,b) with p equivalentProperty q and q propertyDisjointWith p -> clash.
++							// Checked before othIndiNode branch -- depends only on role axioms.
++							{
++								CSortedNegLinker<CRole*>* eqRoleIt = role->getEquivalentRoleList();
++								while (eqRoleIt) {
++									if (!eqRoleIt->isNegated()) {
++										CRole* eqRole = eqRoleIt->getData();
++										if (eqRole->hasDisjointRole(role)) {
++											updateDirectAddingIndividualStatusFlags(
++												indiProcSatNode,
++												CIndividualSaturationProcessNodeStatusFlags::INDSATFLAGCLASHED,
++												calcAlgContext);
++											return;
++										}
++									}
++									eqRoleIt = eqRoleIt->getNext();
++								}
++							}
++							// AllDisjointProperties ABox clash (archive/012):
++							// p(a,b) AND q(a,b) where DisjointObjectProperties(p,q) -> clash.
++							// nominalIndi->getAssertionRoleLinker() is safe -- CIndividual ABox
++							// assertions are fully populated before saturation begins.
++							{
++								CSortedNegLinker<CRole*>* disjRoleIt = role->getDisjointRoleList();
++								while (disjRoleIt) {
++									if (!disjRoleIt->isNegated()) {
++										CRole* disjRole = disjRoleIt->getData();
++										for (CRoleAssertionLinker* otherAssIt = nominalIndi->getAssertionRoleLinker();
++											otherAssIt; otherAssIt = otherAssIt->getNext()) {
++											if (otherAssIt->getRole() == disjRole &&
++												otherAssIt->getIndividual() == othIndi) {
++												updateDirectAddingIndividualStatusFlags(
++													indiProcSatNode,
++													CIndividualSaturationProcessNodeStatusFlags::INDSATFLAGCLASHED,
++													calcAlgContext);
++												return;
++											}
++										}
++									}
++									disjRoleIt = disjRoleIt->getNext();
++								}
++							}
+ 							if (othIndiNode && (othIndiNode->isInitialized() || othIndiNode == indiProcSatNode)) {
+ 								createRoleAssertionLink(indiProcSatNode,othIndiNode,role,false,calcAlgContext);
+ 								indiProcSatNode->addRoleAssertion(othIndiNode,role,false);
+ 								createRoleAssertionLink(othIndiNode,indiProcSatNode,role,true,calcAlgContext);
+ 								othIndiNode->addRoleAssertion(indiProcSatNode,role,true);
++								if (othIndiNode != indiProcSatNode && role->isAsymmetric()) {
++									// AsymmetricProperty non-self-loop clash (archive/012):
++									// r(a,b) and r(b,a) both present -> clash.
++									// CIndividual ABox assertions are safe to read during saturation.
++									for (CRoleAssertionLinker* revAssIt = othIndi->getAssertionRoleLinker(); revAssIt; revAssIt = revAssIt->getNext()) {
++										if (revAssIt->getRole() == role &&
++											revAssIt->getIndividual() == nominalIndi) {
++											updateDirectAddingIndividualStatusFlags(
++												indiProcSatNode,
++												CIndividualSaturationProcessNodeStatusFlags::INDSATFLAGCLASHED,
++												calcAlgContext);
++											return;
++										}
++									}
++								}
++								if (othIndiNode == indiProcSatNode) {
++									// Self-loop clash: r(a,a) with IrreflexiveProperty(r) or AsymmetricProperty(r).
++									// Both flags are precomputed during preprocessing -- safe to read in saturation.
++									CSortedNegLinker<CRole*>* superRoleIt = role->getIndirectSuperRoleList();
++									while (superRoleIt) {
++										if (!superRoleIt->isNegated() &&
++											(superRoleIt->getData()->isIrreflexive() ||
++											 superRoleIt->getData()->isAsymmetric())) {
++											updateDirectAddingIndividualStatusFlags(
++												indiProcSatNode,
++												CIndividualSaturationProcessNodeStatusFlags::INDSATFLAGCLASHED,
++												calcAlgContext);
++											return;
++										}
++										superRoleIt = superRoleIt->getNext();
++									}
++								}
+ 							} else if (!othIndiNode) {
+ 								othIndiNode = getResolvedIndividualNodeRepresentativeRangeAssertion(resolveNode,othIndi,role,false,calcAlgContext);
+ 								createRoleAssertionLink(indiProcSatNode, othIndiNode,role,false,calcAlgContext);
+@@ -6848,6 +6923,47 @@
+ 					CRole* role = concept->getRole();
+ 					CSortedNegLinker<CConcept*>* conceptOpLinkerIt = concept->getOperandList();
+ 
++					// hasSelf + propertyDisjointWith clash detection (archive/022).
++					// Check 1: any super-role of role is disjoint with itself.
++					{
++						CSortedNegLinker<CRole*>* srIt = role->getIndirectSuperRoleList();
++						while (srIt) {
++							CRole* sr = srIt->getData();
++							if (!srIt->isNegated() && sr->hasDisjointRole(sr)) {
++								updateDirectAddingIndividualStatusFlags(
++									processIndi,
++									CIndividualSaturationProcessNodeStatusFlags::INDSATFLAGCLASHED,
++									mCalcAlgContext);
++								return;
++							}
++							srIt = srIt->getNext();
++						}
++					}
++					// Check 2: existing CCSELF concept in the label uses a role disjoint with role.
++					{
++						CReapplyConceptSaturationLabelSet* existingConSet =
++							processIndi->getReapplyConceptSaturationLabelSet(false);
++						if (existingConSet) {
++							CReapplyConceptSaturationLabelSetIterator it =
++								existingConSet->getIterator(true, false);
++							while (it.hasNext()) {
++								CConceptSaturationDescriptor* cd =
++									it.getConceptSaturationDescriptor();
++								if (cd && !cd->getNegation() &&
++										cd->getConcept()->getOperatorCode() == CCSELF) {
++									CRole* existingSelfRole = cd->getConcept()->getRole();
++									if (role->hasDisjointRole(existingSelfRole)) {
++										updateDirectAddingIndividualStatusFlags(
++											processIndi,
++											CIndividualSaturationProcessNodeStatusFlags::INDSATFLAGCLASHED,
++											mCalcAlgContext);
++										return;
++									}
++								}
++								it.moveNext();
++							}
++						}
++					}
+ 
+ 					CMemoryAllocationManager* taskMemMan = nullptr;
+ 					CRoleBackwardSaturationPropagationHash* backPropHash = nullptr;
+--- a/Source/Reasoner/Generator/CConcreteOntologyUpdateBuilder.cpp
++++ b/Source/Reasoner/Generator/CConcreteOntologyUpdateBuilder.cpp
+@@ -1382,6 +1382,9 @@
+ 										buildDisjointUnionConceptClass(classTermExp,*axiomExp->getClassTermExpressionList());
+ 									} else {
+ 										buildPermutableConceptDisjointClass(classTermExp,*axiomExp->getClassTermExpressionList());
++										// disjointUnionOf: add explicit member ⊑ union GCI so saturation derives it
++										// without needing to expand OR left-side in approximation step
++										buildConceptSubClassInclusion(classTermExp,axiomExp->getClassExpression());
+ 									}
+ 								}
+ 							} else {

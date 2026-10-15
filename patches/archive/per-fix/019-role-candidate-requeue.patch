@@ -1,0 +1,32 @@
+--- a/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp
++++ b/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp
+@@ -3547,6 +3547,7 @@
+ 											workTestCreated = createNextRoleComplexCandidateConfirmationTest(reqConfPreCompItem, nextCandidateConfirmationRoleItem, candidatePair);
+ 										}
+ 										if (!nextCandidateConfirmationRoleItem->hasComplexInstanceCandidates()) {
++											nextCandidateConfirmationRoleItem->setComplexCandidateProcessingQueuedFlag(false);
+ 											candidateConfirmationRoleInstancesItemList->removeFirst();
+ 										}
+ 										checkFinishRoleInstancesProcessing(reqConfPreCompItem, nextCandidateConfirmationRoleItem);
+@@ -4638,6 +4639,10 @@
+ 						// add to testing queue
+ 						roleInstItem->addComplexCandidateInstance(COptimizedKPSetIndividualItemReferencePair(indiRealItemRef, CRealizationIndividualInstanceItemReference(neighbourIndi, realItem->getIndividualInstantiatedItem(neighbourIndi.getIndividual(), false))), inversed);
+ 					}
++					if (!instanceData->mKnownInstance && roleInstItem->hasToProcessPossibleInstancesFlag()) {
++						// late candidate: make sure the (already marked) role item is queued for confirmation
++						realItem->addRoleInstanceItemToProcessComplexCandidateInstances(roleInstItem);
++					}
+ 					if (wasAlreadyPossibleMarked && instanceData->mKnownInstance) {
+ 						// remove from testing queue
+ 						roleInstItem->removeComplexCandidateInstance(COptimizedKPSetIndividualItemReferencePair(indiRealItemRef, CRealizationIndividualInstanceItemReference(neighbourIndi, realItem->getIndividualInstantiatedItem(neighbourIndi.getIndividual(), false))), inversed);
+--- a/Source/Reasoner/Realizer/COptimizedKPSetRoleInstancesItem.cpp
++++ b/Source/Reasoner/Realizer/COptimizedKPSetRoleInstancesItem.cpp
+@@ -788,7 +788,7 @@
+ 
+ 			COptimizedKPSetIndividualItemReferencePair COptimizedKPSetRoleInstancesItem::takeNextTestingComplexInstanceCandidate() {
+ 				COptimizedKPSetIndividualItemReferencePair nextItem = COptimizedKPSetIndividualItemReferencePair(CRealizationIndividualInstanceItemReference(), CRealizationIndividualInstanceItemReference());
+-				if (hasPossibleInstances()) {
++				if (hasComplexInstanceCandidates()) {
+ 					QSet<COptimizedKPSetIndividualItemReferencePair>::iterator it = mComplexRoleCandidateInstancesSet.begin();
+ 					nextItem = *it;
+ 					mComplexRoleCandidateInstancesSet.erase(it);

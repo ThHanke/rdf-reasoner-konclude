@@ -1,0 +1,11 @@
+--- a/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.cpp
++++ b/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.cpp
+@@ -2075,7 +2075,7 @@
+ 											}
+ 										}
+ 										while (itPoss != itPossEnd) {
+-											COptimizedKPSetClassPossibleSubsumptionData* possData = itDownPoss.value();
++											COptimizedKPSetClassPossibleSubsumptionData* possData = itPoss.value();
+ 											if (!downPropItem->hasSubsumerConceptItem(possData->getClassItem()) &&
+ 													downPropItem != possData->getClassItem()) {
+ 												if (!possData->isSubsumptionInvalided()) {

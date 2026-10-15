@@ -1,0 +1,12 @@
+--- a/Source/Reasoner/Realizer/COptimizedKPSetIndividualComplexRoleData.h
++++ b/Source/Reasoner/Realizer/COptimizedKPSetIndividualComplexRoleData.h
+@@ -56,6 +56,9 @@
+ 					//! Constructor
+ 					COptimizedKPSetIndividualComplexRoleData();
+ 
++					//! Virtual: values are deleted through this base class
++					virtual ~COptimizedKPSetIndividualComplexRoleData() {}
++
+ 					bool isInitialized(bool inversed);
+ 					COptimizedKPSetIndividualComplexRoleData* setInitialized(bool inversed, bool initialized);
+ 

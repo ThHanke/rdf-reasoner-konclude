@@ -1,0 +1,32 @@
+--- a/Source/Reasoner/Classifier/CSubsumptionClassifierThread.cpp
++++ b/Source/Reasoner/Classifier/CSubsumptionClassifierThread.cpp
+@@ -230,7 +230,8 @@
+ 					interpreteTestResults(tcue);
+ 					currRunningTestParallelCount--;
+ #ifdef WASM_BUILD
+-					if (currRunningTestParallelCount == 0) {
++					if (currRunningTestParallelCount <= 0) {
++						currRunningTestParallelCount = 0;
+ 						doNextPendingTests();
+ 					}
+ #else
+--- a/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.cpp
++++ b/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.cpp
+@@ -151,6 +151,7 @@
+ 			
+ 			CSubsumptionClassifierThread *COptimizedKPSetClassSubsumptionClassifierThread::scheduleOntologyClassification(CConcreteOntology *ontology, CClassificationCalculationSupport *classificationSupport, CConfigurationBase *config) {
+ 
++				currRunningTestParallelCount = 0;
+ 
+ 				CTaxonomy *taxonomy = createEmptyTaxonomyForOntology(ontology,config);
+ 				COptimizedKPSetClassOntologyClassificationItem *ontClassItem = createOntologyClassificationItem(ontology,config);
+--- a/Source/Reasoner/Classifier/COptimizedKPSetRoleSubsumptionClassifierThread.cpp
++++ b/Source/Reasoner/Classifier/COptimizedKPSetRoleSubsumptionClassifierThread.cpp
+@@ -348,6 +348,7 @@
+ 			
+ 			CSubsumptionClassifierThread *COptimizedKPSetRoleSubsumptionClassifierThread::scheduleOntologyClassification(CConcreteOntology *ontology, CClassificationCalculationSupport *classificationSupport, CConfigurationBase *config) {
+ 
++				currRunningTestParallelCount = 0;
+ 
+ 				CRolePropertiesHierarchy* hierarchy = createInitialHierarchyForOntology(ontology,config);
+ 

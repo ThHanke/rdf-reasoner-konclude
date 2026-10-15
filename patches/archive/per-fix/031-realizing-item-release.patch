@@ -1,0 +1,47 @@
+--- a/Source/Reasoner/Realizer/COntologyRealizingItem.h
++++ b/Source/Reasoner/Realizer/COntologyRealizingItem.h
+@@ -69,6 +69,9 @@
+ 					//! Constructor
+ 					COntologyRealizingItem();
+ 
++					//! Virtual: items are deleted through this base class
++					virtual ~COntologyRealizingItem() {}
++
+ 					COntologyRealizingItem* initRealizingItem(CConcreteOntology* ontology, CConfigurationBase* config);
+ 
+ 					virtual COntologyRealizingItem* addProcessingRequirement(COntologyProcessingRequirement* ontoRequirement, COntologyRealizingDynamicRequirmentProcessingData* procData);
+--- a/Source/Reasoner/Realizer/CRealizerThread.h
++++ b/Source/Reasoner/Realizer/CRealizerThread.h
+@@ -89,6 +89,9 @@
+ 
+ 					virtual bool realize(CConcreteOntology* ontology, CConfigurationBase* config, const QList<COntologyProcessingRequirement*>& requirementList, CCallbackData* callback);
+ 					virtual bool realize(CConcreteOntology* ontology, CConfigurationBase* config, const QList<COntologyProcessingRequirement*>& requirementList);
++					//! Delete all realizing items of this (stopped) thread; the thread object stays valid
++					virtual CRealizerThread* releaseOntologyItems();
++
+ 					virtual bool callbackRealized(CConcreteOntology* ontology, CCallbackData* callback);
+ 
+ 					virtual CRealizationMessageObserver* tellRealizationMessage(CConcreteOntology *ontology, CRealizationMessageData* messageData, CMemoryPool* memoryPool);
+--- a/Source/Reasoner/Realizer/CRealizerThread.cpp
++++ b/Source/Reasoner/Realizer/CRealizerThread.cpp
+@@ -44,6 +44,20 @@
+ 			}
+ 
+ 
++			CRealizerThread* CRealizerThread::releaseOntologyItems() {
++				QSet<COntologyRealizingItem*> items = mActiveOntItemSet;
++				items.unite(mInactiveOntItemSet);
++				mActiveOntItemSet.clear();
++				mInactiveOntItemSet.clear();
++				mProcessingOntItemList.clear();
++				mOntItemHash.clear();
++				for (COntologyRealizingItem* item : items) {
++					delete item;
++				}
++				return this;
++			}
++
++
+ 			bool CRealizerThread::realize(CConcreteOntology* ontology, CConfigurationBase* config, const QList<COntologyProcessingRequirement*>& requirementList, CCallbackData* callback) {
+ 				postEvent(new CRealizeOntologyEvent(ontology,config,requirementList,callback));
+ 				return true;

@@ -1,0 +1,45 @@
+--- a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.cpp
++++ b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.cpp
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include "CBackendRepresentativeMemoryCache.h"
++#include "KonPoolStats.h"
+ #include "CBackendRepresentativeMemoryCacheWriter.h"
+ 
+ 
+@@ -365,6 +366,7 @@
+ 						CBackendRepresentativeMemoryCacheOntologyData* prevOntologyData = ontologyData;
+ 
+ 						ontologyData = new CBackendRepresentativeMemoryCacheOntologyData(&mContext);
++						KonPoolStats::gOntDataCreated.fetch_add(1, std::memory_order_relaxed);
+ 						ontologyData->initOntologyData(ontologyIdentifier, !mConfLateIndividualLabelAssociationIndexing);
+ 
+ 
+@@ -434,7 +436,10 @@
+ 											if (staleTmpPools) {
+ 												evictMemMan->releaseTemporaryMemoryPools(staleTmpPools);
+ 											}
++											KonPoolStats::gOntDataFreed.fetch_add(1, std::memory_order_relaxed);
+ 											delete staleData;
++										} else {
++											KonPoolStats::gOntDataStaleKept.fetch_add(1, std::memory_order_relaxed);
+ 										}
+ 									}
+ 								}
+@@ -503,6 +508,7 @@
+ 								CMemoryPoolAllocationManager* memMan = mContext.getMemoryPoolAllocationManager();
+ 								CMemoryPool* memoryPools = prevOntologyData->getTemporaryContext()->getMemoryPoolContainer()->getMemoryPools();
+ 								memMan->releaseTemporaryMemoryPools(memoryPools);
++								KonPoolStats::gOntDataFreed.fetch_add(1, std::memory_order_relaxed);
+ 								delete prevOntologyData;
+ 							}
+ 
+@@ -546,6 +552,7 @@
+ 
+ 									CMemoryPool* memoryPools = ontologyData->getTemporaryContext()->getMemoryPoolContainer()->getMemoryPools();
+ 									memMan->releaseTemporaryMemoryPools(memoryPools);
++									KonPoolStats::gOntDataFreed.fetch_add(1, std::memory_order_relaxed);
+ 									delete ontologyData;
+ 								}
+ 							}

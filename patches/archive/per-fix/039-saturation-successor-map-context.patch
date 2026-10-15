@@ -1,0 +1,34 @@
+--- a/Source/Utilities/Container/CQtManagedRestrictedModificationMap.h
++++ b/Source/Utilities/Container/CQtManagedRestrictedModificationMap.h
+@@ -216,6 +216,12 @@
+ 					CQtManagedRestrictedModificationMap<Key, T> &operator=(const CQtManagedRestrictedModificationMap<Key, T> &other);
+ 
+ 					CQtManagedRestrictedModificationMap<Key, T>* init(CContext* context = nullptr);
++					//! Allocate all further nodes/buckets from the given context's memory manager (existing ones keep their allocator)
++					inline void rebindContext(CContext* context) {
++						mContext = context;
++						mMemMan = CContext::getMemoryAllocationManager(mContext);
++					}
++
+ 					CQtManagedRestrictedModificationMap<Key, T>* init(const CQtManagedRestrictedModificationMap<Key, T> &other, CContext* context = nullptr);
+ 					CQtManagedRestrictedModificationMap<Key, T>* init(const CQtManagedRestrictedModificationMap<Key, T>* other, CContext* context = nullptr);
+ 
+--- a/Source/Reasoner/Kernel/Process/CLinkedRoleSaturationSuccessorHash.cpp
++++ b/Source/Reasoner/Kernel/Process/CLinkedRoleSaturationSuccessorHash.cpp
+@@ -90,6 +90,7 @@
+ 
+ 
+ 				CSaturationSuccessorData*& CLinkedRoleSaturationSuccessorHash::getLinkedRoleSuccessorData(CLinkedRoleSaturationSuccessorData*& roleSuccData, cint64 linkedIndiID, bool forceNewCreation) {
++					roleSuccData->mSuccNodeDataMap.rebindContext(mContext);
+ 					CSaturationSuccessorData*& succData = roleSuccData->mSuccNodeDataMap[linkedIndiID];
+ 					if (!succData || forceNewCreation) {
+ 						CSaturationSuccessorData* prevSuccData = succData;
+@@ -292,7 +293,7 @@
+ 				CLinkedRoleSaturationSuccessorData*& CLinkedRoleSaturationSuccessorHash::getLinkedRoleSuccessorData(CRole* role, bool create) {
+ 					CLinkedRoleSaturationSuccessorData*& roleSuccData = mRoleSuccDataHash[role];
+ 					if (!roleSuccData) {
+-						roleSuccData = CObjectAllocator<CLinkedRoleSaturationSuccessorData>::allocateAndConstruct(mContext->getUsedMemoryAllocationManager());
++						roleSuccData = CObjectParameterizingAllocator<CLinkedRoleSaturationSuccessorData, CProcessContext*>::allocateAndConstructAndParameterize(mContext->getUsedMemoryAllocationManager(), mContext);
+ 					}
+ 					return roleSuccData;
+ 				}

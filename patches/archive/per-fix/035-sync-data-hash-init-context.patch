@@ -1,0 +1,35 @@
+--- a/Source/Reasoner/Kernel/Process/CIndividualNodeRepresentativeMemoryBackendCacheSynchronisationData.cpp
++++ b/Source/Reasoner/Kernel/Process/CIndividualNodeRepresentativeMemoryBackendCacheSynchronisationData.cpp
+@@ -80,26 +80,26 @@
+ 						mBackendConceptSetInitializationRequired = synchData->mBackendConceptSetInitializationRequired;
+ 						mBackendConceptSetInitializationDelayingRegistered = synchData->mBackendConceptSetInitializationDelayingRegistered;
+ 						if (synchData->mRoleNeighbourExpansionDataHash) {
+-							getRoleNeighbourExpansionDataHash()->init(synchData->mRoleNeighbourExpansionDataHash);
++							getRoleNeighbourExpansionDataHash()->init(synchData->mRoleNeighbourExpansionDataHash, mContext);
+ 						}
+ 						if (synchData->mNeighbourExpansionDataHash) {
+-							getNeighbourExpansionDataHash()->init(synchData->mNeighbourExpansionDataHash);
++							getNeighbourExpansionDataHash()->init(synchData->mNeighbourExpansionDataHash, mContext);
+ 						}
+ 						if (synchData->mNeighbourLabelExpansionDataHashArray) {
+ 							cint64 arraySize = mAssociationData->getRoleSetNeighbourArray()->getIndexData()->getArraySize();
+ 							for (cint64 i = 0; i < arraySize; ++i) {
+ 								CPROCESSHASH< CBackendRepresentativeMemoryLabelCacheItem*, CIndividualNodeRepresentativeMemoryBackendCacheSynchronisationLabelNeighbourExpansionData >* hash = synchData->mNeighbourLabelExpansionDataHashArray[i];
+-								getNeighbourLabelExpansionDataHash(i, true)->init(hash);
++								getNeighbourLabelExpansionDataHash(i, true)->init(hash, mContext);
+ 							}
+ 						}
+ 						if (synchData->mIntegratedMergedIndividualIdSet) {
+-							getIntegratedMergedIndividualIdSet()->init(synchData->mIntegratedMergedIndividualIdSet);
++							getIntegratedMergedIndividualIdSet()->init(synchData->mIntegratedMergedIndividualIdSet, mContext);
+ 						}
+ 						if (synchData->mRemainingIndirectCompatibilityMergedIndividualCheckingSet) {
+-							getRemainingIndirectCompatibilityMergedIndividualCheckingSet()->init(synchData->mRemainingIndirectCompatibilityMergedIndividualCheckingSet);
++							getRemainingIndirectCompatibilityMergedIndividualCheckingSet()->init(synchData->mRemainingIndirectCompatibilityMergedIndividualCheckingSet, mContext);
+ 						}
+ 						if (synchData->mRoleRepNeighbourCountHash) {
+-							getRoleRepresentativeNeighbourCountHash(true)->init(synchData->mRoleRepNeighbourCountHash);
++							getRoleRepresentativeNeighbourCountHash(true)->init(synchData->mRoleRepNeighbourCountHash, mContext);
+ 						}
+ 						mMergedIndividualsAllNeighbourExpanded = synchData->mMergedIndividualsAllNeighbourExpanded;
+ 						mAllNeighbourExpansion = synchData->mAllNeighbourExpansion;

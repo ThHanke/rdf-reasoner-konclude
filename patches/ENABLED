@@ -1,0 +1,7 @@
+# Vendor patches applied to vendor/konclude (order = filename order; each is written against the post-previous state).
+# Aggregated 2026-10-15 from the per-fix patches 000-041 (originals: patches/archive/per-fix/, mapping: patches/README.md).
+000  # Qt type substitutions
+001  # WASM port base (compile prereqs, pthread core, cache sync, perf, conformance, KPSet classifier, drain-loop/processing-set fixes)
+002  # Realizer/kernel correctness fixes
+003  # Stall detection hooks
+004  # Per-call memory lifecycle (pool/item/cache release, virtual dtors) + diagnostic counters

@@ -1,0 +1,55 @@
+--- a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.cpp
++++ b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.cpp
+@@ -602,6 +602,7 @@
+ 				void CBackendRepresentativeMemoryCache::queueFixedReaderRelease(CBackendRepresentativeMemoryCacheOntologyData* ontologyData) {
+ 					mPendingFixedReleasesMutex.lock();
+ 					mPendingFixedReleases.append(ontologyData);
++					KonPoolStats::gReaderReleasesQueued.fetch_add(1, std::memory_order_relaxed);
+ 					mPendingFixedReleasesMutex.unlock();
+ 				}
+ 
+@@ -617,6 +618,8 @@
+ 					CMemoryPoolAllocationManager* memMan = mContext.getMemoryPoolAllocationManager();
+ 					for (CBackendRepresentativeMemoryCacheOntologyData* data : pending) {
+ 						data->decUsageCount();
++						KonPoolStats::gReaderReleasesDrained.fetch_add(1, std::memory_order_relaxed);
++						KonPoolStats::gReaderDrainLastUsage.store(data->getUsageCount(), std::memory_order_relaxed);
+ 						if (data->getUsageCount() <= 0) {
+ 							++mOntologyDataReleasedCount;
+ 							if (data->getRecomputationReferenceLinker()) {
+--- a/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingItem.cpp
++++ b/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingItem.cpp
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include "COptimizedRepresentativeKPSetOntologyRealizingItem.h"
++#include "KonPoolStats.h"
+ 
+ 
+ namespace Konclude {
+@@ -58,6 +59,7 @@
+ 				for (auto* v : mRepresentativeCacheCombinedExistentialRoleSetLabelItemDataHash) { delete v; }
+ 				for (auto* v : mDataRoleDetCacheLabelItemSetHash) { delete v; }
+ 				for (auto* v : mDataRoleNonDetCacheLabelItemSetHash) { delete v; }
++				KonPoolStats::gRealItemsDestroyed.fetch_add(1, std::memory_order_relaxed);
+ 				if (mBackendAssocCacheReader) {
+ 					mBackendAssocCacheReader->releaseFixedOntologyData();
+ 					delete mBackendAssocCacheReader;
+--- a/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp
++++ b/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include "COptimizedRepresentativeKPSetOntologyRealizingThread.h"
++#include "KonPoolStats.h"
+ 
+ 
+ namespace Konclude {
+@@ -52,6 +53,7 @@
+ 				}
+ 
+ 				COptimizedRepresentativeKPSetOntologyRealizingItem* item = new COptimizedRepresentativeKPSetOntologyRealizingItem();
++				KonPoolStats::gRealItemsCreated.fetch_add(1, std::memory_order_relaxed);
+ 				item->initRequirementConfigRealizingItem(ontology,config, backendAssocCacheReader);
+ 
+ 				if (mTestedPossibleInstancesCount == mOpenPossibleInstancesCount) {

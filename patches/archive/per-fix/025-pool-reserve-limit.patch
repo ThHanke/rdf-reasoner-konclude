@@ -1,0 +1,44 @@
+--- a/Source/Scheduler/CTaskProcessorThread.cpp
++++ b/Source/Scheduler/CTaskProcessorThread.cpp
+@@ -35,7 +35,7 @@
+ 				//mMemoryPoolProvider = distributorCompletor->createDistributionMemoryPoolProvider(mMemoryPoolReleaser);
+ 				mMemoryPoolProvider = new CNewAllocationMemoryPoolProvider();
+ 			}
+-			mMemoryAllocator = new CTaskHandleLimitedReserveMemoryPoolAllocationManager(mMemoryPoolProvider,80000,30);
++			mMemoryAllocator = new CTaskHandleLimitedReserveMemoryPoolAllocationManager(mMemoryPoolProvider,1024,30);
+ 			mTaskProcessorContext = new CTaskProcessorContextBase(this,mMemoryAllocator);
+ 
+ 			mDispenseNotificationTag = 0;
+--- a/Source/Scheduler/CTaskProcessorSchedulerThread.cpp
++++ b/Source/Scheduler/CTaskProcessorSchedulerThread.cpp
+@@ -35,7 +35,7 @@
+ 				//mMemoryPoolProvider = distributorCompletor->createDistributionMemoryPoolProvider(mMemoryPoolReleaser);
+ 				mMemoryPoolProvider = new CNewAllocationMemoryPoolProvider();
+ 			}
+-			mMemoryAllocator = new CTaskHandleLimitedReserveMemoryPoolAllocationManager(mMemoryPoolProvider,80000,30);
++			mMemoryAllocator = new CTaskHandleLimitedReserveMemoryPoolAllocationManager(mMemoryPoolProvider,1024,30);
+ 			mTaskProcessorContext = new CTaskProcessorContextBase(this,mMemoryAllocator);
+ 
+ 
+--- a/Source/Scheduler/CTaskProcessorCompletorThread.cpp
++++ b/Source/Scheduler/CTaskProcessorCompletorThread.cpp
+@@ -34,7 +34,7 @@
+ 				//mMemoryPoolProvider = CConcreteMemoryPoolDistributor::createDistributionMemoryPoolProvider(mMemoryPoolReleaser);
+ 				mMemoryPoolProvider = new CNewAllocationMemoryPoolProvider();
+ 			}
+-			mMemoryAllocator = new CTaskHandleLimitedReserveMemoryPoolAllocationManager(mMemoryPoolProvider,80000,30);
++			mMemoryAllocator = new CTaskHandleLimitedReserveMemoryPoolAllocationManager(mMemoryPoolProvider,1024,30);
+ 			mTaskProcessorContext = new CTaskProcessorContextBase(this,mMemoryAllocator);
+ 
+ 			mSchedulerCommunicator = nullptr;
+--- a/Source/Scheduler/CSingleThreadTaskProcessorUnit.cpp
++++ b/Source/Scheduler/CSingleThreadTaskProcessorUnit.cpp
+@@ -36,7 +36,7 @@
+ 			if (!mMemoryPoolProvider) {
+ 				mMemoryPoolProvider = new CNewAllocationMemoryPoolProvider();
+ 			}
+-			mMemoryAllocator = new CTaskHandleLimitedReserveMemoryPoolAllocationManager(mMemoryPoolProvider,30000,30);
++			mMemoryAllocator = new CTaskHandleLimitedReserveMemoryPoolAllocationManager(mMemoryPoolProvider,1024,30);
+ 			mTaskProcessorContext = new CTaskProcessorContextBase(this,mMemoryAllocator);
+ 			mTaskHandleAlgo = taskHandleAlgo;
+ 			mProcessingBlocked = true;

@@ -1,0 +1,12 @@
+--- a/Source/Reasoner/Kernel/Process/Dependency/CDependencyNode.cpp
++++ b/Source/Reasoner/Kernel/Process/Dependency/CDependencyNode.cpp
+@@ -35,6 +35,9 @@
+ 					CDependencyNode::CDependencyNode(CProcessContext* processContext) : CProcessingTag(processContext->getUsedProcessTagger()->getCurrentProcessingTagAndInc()) {
+ 						mProcessContext = processContext;
+ 						mDepNodeType = DNTUNDEFINED;
++						mDepTrackPoint = nullptr;
++						mConceptDescriptor = nullptr;
++						mIndividualNode = nullptr;
+ 						//mAdditionalAheadDepLinker = nullptr;
+ 						mAdditionalAfterDepLinker = nullptr;
+ 					}

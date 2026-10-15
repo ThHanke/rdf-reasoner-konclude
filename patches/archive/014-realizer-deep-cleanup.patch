@@ -1,0 +1,18 @@
+--- a/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingItem.cpp
++++ b/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingItem.cpp
+@@ -29,6 +29,7 @@
+ 
+ 
+ 			COptimizedRepresentativeKPSetOntologyRealizingItem::COptimizedRepresentativeKPSetOntologyRealizingItem() {
++				mBackendAssocCacheReader = nullptr;
+ 			}
+ 
+ 			COptimizedRepresentativeKPSetOntologyRealizingItem::~COptimizedRepresentativeKPSetOntologyRealizingItem() {
+@@ -58,6 +59,7 @@
+ 				for (auto* v : mRepresentativeCacheCombinedExistentialRoleSetLabelItemDataHash) { delete v; }
+ 				for (auto* v : mDataRoleDetCacheLabelItemSetHash) { delete v; }
+ 				for (auto* v : mDataRoleNonDetCacheLabelItemSetHash) { delete v; }
++				delete mBackendAssocCacheReader;
+ 
+ 			}
+ 

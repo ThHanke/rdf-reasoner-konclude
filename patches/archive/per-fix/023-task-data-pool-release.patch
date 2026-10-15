@@ -1,0 +1,151 @@
+--- a/Source/Reasoner/Kernel/Task/CSaturationTaskData.h
++++ b/Source/Reasoner/Kernel/Task/CSaturationTaskData.h
+@@ -73,6 +73,7 @@
+ 					// protected variables
+ 					protected:
+ 						CSatisfiableCalculationTask* mSaturationTask;
++						bool mOvertaken = false;
+ 
+ 
+ 					// private methods
+--- a/Source/Reasoner/Kernel/Task/CSaturationTaskData.cpp
++++ b/Source/Reasoner/Kernel/Task/CSaturationTaskData.cpp
+@@ -21,6 +21,10 @@
+ #include "CSaturationTaskData.h"
+ 
+ 
++#include <algorithm>
++#include <vector>
++#include "Utilities/Memory/CNewAllocationMemoryPoolProvider.h"
++
+ namespace Konclude {
+ 
+ 	namespace Reasoner {
+@@ -29,12 +33,36 @@
+ 
+ 			namespace Task {
+ 
++				// Release the pools of an overtaken task chain. Tasks live inside their own pools,
++				// so first collect all pool chains, then free them.
++				static void releaseTaskChainPools(const std::vector<CSatisfiableCalculationTask*>& tasks) {
++					std::vector<CMemoryPool*> pools;
++					for (CSatisfiableCalculationTask* task : tasks) {
++						CMemoryPool* pool = task->getMemoryPools();
++						if (pool && std::find(pools.begin(), pools.end(), pool) == pools.end()) {
++							pools.push_back(pool);
++						}
++					}
++					CNewAllocationMemoryPoolProvider tmpProv;
++					for (CMemoryPool* pool : pools) {
++						tmpProv.releaseMemoryPool(pool);
++					}
++				}
++
+ 				CSaturationTaskData::CSaturationTaskData(CSatisfiableCalculationTask* saturationTask) {
+ 					mSaturationTask = saturationTask;
+ 				}
+ 
+ 
+ 				CSaturationTaskData::~CSaturationTaskData() {
++					if (mOvertaken) {
++						std::vector<CSatisfiableCalculationTask*> tasks;
++						for (CSatisfiableCalculationTask* taskIt = mSaturationTask; taskIt; taskIt = (CSatisfiableCalculationTask*)taskIt->getParentTask()) {
++							tasks.push_back(taskIt);
++						}
++						mSaturationTask = nullptr;
++						releaseTaskChainPools(tasks);
++					}
+ 				}
+ 
+ 				CSatisfiableCalculationTask* CSaturationTaskData::getSaturationTask() {
+@@ -43,6 +71,7 @@
+ 
+ 
+ 				bool CSaturationTaskData::overtakeData() {
++					mOvertaken = true;
+ 					if (mSaturationTask) {
+ 						mSaturationTask->getTaskStatus()->setMemoryReleaseable(false);
+ 					}
+--- a/Source/Reasoner/Kernel/Task/CConsistenceTaskData.h
++++ b/Source/Reasoner/Kernel/Task/CConsistenceTaskData.h
+@@ -77,6 +77,7 @@
+ 					protected:
+ 						CSatisfiableCalculationTask* mDetSatTask;
+ 						CSatisfiableCalculationTask* mGraphCachedSatTask;
++						bool mOvertaken = false;
+ 
+ 
+ 					// private methods
+--- a/Source/Reasoner/Kernel/Task/CConsistenceTaskData.cpp
++++ b/Source/Reasoner/Kernel/Task/CConsistenceTaskData.cpp
+@@ -21,6 +21,10 @@
+ #include "CConsistenceTaskData.h"
+ 
+ 
++#include <algorithm>
++#include <vector>
++#include "Utilities/Memory/CNewAllocationMemoryPoolProvider.h"
++
+ namespace Konclude {
+ 
+ 	namespace Reasoner {
+@@ -29,6 +33,22 @@
+ 
+ 			namespace Task {
+ 
++				// Release the pools of an overtaken task chain. Tasks live inside their own pools,
++				// so first collect all pool chains, then free them.
++				static void releaseTaskChainPools(const std::vector<CSatisfiableCalculationTask*>& tasks) {
++					std::vector<CMemoryPool*> pools;
++					for (CSatisfiableCalculationTask* task : tasks) {
++						CMemoryPool* pool = task->getMemoryPools();
++						if (pool && std::find(pools.begin(), pools.end(), pool) == pools.end()) {
++							pools.push_back(pool);
++						}
++					}
++					CNewAllocationMemoryPoolProvider tmpProv;
++					for (CMemoryPool* pool : pools) {
++						tmpProv.releaseMemoryPool(pool);
++					}
++				}
++
+ 				CConsistenceTaskData::CConsistenceTaskData(CSatisfiableCalculationTask* detSatTask, CSatisfiableCalculationTask* graphCachedSatTask) {
+ 					mDetSatTask = detSatTask;
+ 					mGraphCachedSatTask = graphCachedSatTask;
+@@ -36,6 +56,18 @@
+ 
+ 
+ 				CConsistenceTaskData::~CConsistenceTaskData() {
++					if (mOvertaken) {
++						std::vector<CSatisfiableCalculationTask*> tasks;
++						if (mDetSatTask) {
++							tasks.push_back(mDetSatTask);
++						}
++						for (CSatisfiableCalculationTask* taskIt = mGraphCachedSatTask; taskIt; taskIt = (CSatisfiableCalculationTask*)taskIt->getParentTask()) {
++							tasks.push_back(taskIt);
++						}
++						mDetSatTask = nullptr;
++						mGraphCachedSatTask = nullptr;
++						releaseTaskChainPools(tasks);
++					}
+ 				}
+ 
+ 				CSatisfiableCalculationTask* CConsistenceTaskData::getDeterministicSatisfiableTask() {
+@@ -47,6 +79,7 @@
+ 				}
+ 
+ 				bool CConsistenceTaskData::overtakeData() {
++					mOvertaken = true;
+ 					if (mDetSatTask) {
+ 						mDetSatTask->getTaskStatus()->setMemoryReleaseable(false);
+ 					}
+--- a/Source/Reasoner/Consistiser/CTotallyOntologyPrecomputationItem.cpp
++++ b/Source/Reasoner/Consistiser/CTotallyOntologyPrecomputationItem.cpp
+@@ -197,6 +197,7 @@
+ 					}
+ 					delete mAllAssertionIndividual;
+ 				}
++				for (CSaturationData* satData : mSaturDataList) { if (satData != mLastSaturData) delete satData; }
+ 				for (auto* item : mSatItemContainer) { delete item; }
+ 				for (auto it = mSatIDIndividualItemsHash.begin(); it != mSatIDIndividualItemsHash.end(); ++it) {
+ 					CSaturationIndividualDataItem* chainItem = it.value();

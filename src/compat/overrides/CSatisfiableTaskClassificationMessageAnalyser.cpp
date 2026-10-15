@@ -20,6 +20,17 @@
 
 #include "Reasoner/Kernel/Algorithm/CSatisfiableTaskClassificationMessageAnalyser.h"
 #include "JustificationCache.h"
+#include <cstdlib>
+// Native bisect switch (inert unless NATIVE_DEBUG_BUILD): REPRO_NO_JUST_WALK=1 skips the
+// justification dependency-chain walker, which follows possibly uninitialized pointers.
+static inline bool reproNoJustWalk() {
+#ifdef NATIVE_DEBUG_BUILD
+    static const bool v = getenv("REPRO_NO_JUST_WALK") != nullptr;
+    return v;
+#else
+    return false;
+#endif
+}
 #include "Reasoner/Kernel/Process/Dependency/CDependencyNode.h"
 #include "Reasoner/Kernel/Process/Dependency/CDependencyIterator.h"
 #include "Reasoner/Kernel/Process/Dependency/CDependency.h"
@@ -1625,7 +1636,7 @@ namespace Konclude {
 
 													// WASM justification: tree-walk dep chain via stack,
 													// visiting both primary chain and mAdditionalAfterDepLinker branches.
-													if (depTrackPoint) {
+													if (depTrackPoint && !reproNoJustWalk()) {
 														std::vector<int64_t> depTags;
 														std::vector<CDependencyTrackPoint*> depStack;
 														depStack.push_back(depTrackPoint);

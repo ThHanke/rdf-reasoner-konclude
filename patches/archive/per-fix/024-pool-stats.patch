@@ -1,0 +1,105 @@
+--- a/Source/Scheduler/CTaskStatus.cpp
++++ b/Source/Scheduler/CTaskStatus.cpp
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include "CTaskStatus.h"
++#include "KonPoolStats.h"
+ 
+ 
+ namespace Konclude {
+@@ -32,6 +33,7 @@
+ 			mCanceledFlag = false;
+ 			mFinishedFlag = false;
+ 			mReleaseable = true;
++			KonPoolStats::gTasksCreated.fetch_add(1, std::memory_order_relaxed);
+ 			mErrorFlag = false;
+ 			mErrorCode = 0;
+ 		}
+@@ -119,6 +121,8 @@
+ 
+ 		CTaskStatus* CTaskStatus::setTaskCOMPLETEDState() {
+ 			mTaskState = TSCOMPLETED;
++			KonPoolStats::gTasksCompleted.fetch_add(1, std::memory_order_relaxed);
++			if (!mReleaseable) KonPoolStats::gTasksKept.fetch_add(1, std::memory_order_relaxed);
+ 			return this;
+ 		}
+ 
+--- a/Source/Utilities/Memory/CMemoryPoolAllocationManager.cpp
++++ b/Source/Utilities/Memory/CMemoryPoolAllocationManager.cpp
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include "CMemoryPoolAllocationManager.h"
++#include "KonPoolStats.h"
+ 
+ 
+ namespace Konclude {
+@@ -236,6 +237,7 @@
+ 
+ 			CMemoryTemporaryAllocationManager* CMemoryPoolAllocationManager::releaseMemoryPoolContainer(CMemoryPoolContainer* memoryPoolContainer) {
+ 				CMemoryPool* memoryPoolLinker = memoryPoolContainer->takeMemoryPools();
++				KonPoolStats::gContainersReleased.fetch_add(1, std::memory_order_relaxed);
+ 				return releaseTemporaryMemoryPools(memoryPoolLinker);
+ 			}
+ 
+--- a/Source/Utilities/Memory/CNewAllocationMemoryPoolProvider.cpp
++++ b/Source/Utilities/Memory/CNewAllocationMemoryPoolProvider.cpp
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include "CNewAllocationMemoryPoolProvider.h"
++#include "KonPoolStats.h"
+ 
+ 
+ namespace Konclude {
+@@ -59,6 +60,7 @@
+ 					LOG(CATASTROPHIC,"::Konclude::Utilities::NewAllocationMemoryPoolProvider",logTr("Memory allocation failed."),this);
+ 				}
+ 				mStatAllocatedPoolSize += memoryBlockSize;
++				KonPoolStats::poolAlloc(memoryBlockSize);
+ 				mStatDiffPoolSize += memoryBlockSize;
+ 				++mStatAllocatedPoolCount;
+ 				++mStatDiffPoolCount;
+@@ -72,6 +74,7 @@
+ 					CMemoryPool* tmpMemoryPool = memoryPool;
+ 					memoryPool = memoryPool->getNext();
+ 					mStatReleasedPoolSize += tmpMemoryPool->getMemoryBlockSize();
++					KonPoolStats::poolFree(tmpMemoryPool->getMemoryBlockSize());
+ 					mStatDiffPoolSize -= tmpMemoryPool->getMemoryBlockSize();
+ 					++mStatReleasedPoolCount;
+ 					char* memoryBlock = tmpMemoryPool->getMemoryBlockData();
+--- a/Source/Utilities/Memory/CNewCentralizedLimitedAllocationMemoryPoolProvider.cpp
++++ b/Source/Utilities/Memory/CNewCentralizedLimitedAllocationMemoryPoolProvider.cpp
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include "CNewCentralizedLimitedAllocationMemoryPoolProvider.h"
++#include "KonPoolStats.h"
+ 
+ 
+ namespace Konclude {
+@@ -49,6 +50,7 @@
+ 				CMemoryPool* memoryPool = new CMemoryPool();
+ 				char* memoryBlock = new char[memoryBlockSize];
+ 				mStatAllocatedPoolSize += memoryBlockSize;
++				KonPoolStats::poolAlloc(memoryBlockSize);
+ 				mStatDiffPoolSize += memoryBlockSize;
+ 				++mStatAllocatedPoolCount;
+ 				++mStatDiffPoolCount;
+@@ -63,6 +65,7 @@
+ 					CMemoryPool* memoryPool = new CMemoryPool();
+ 					char* memoryBlock = new char[memoryBlockSize];
+ 					mStatAllocatedPoolSize += memoryBlockSize;
++				KonPoolStats::poolAlloc(memoryBlockSize);
+ 					mStatDiffPoolSize += memoryBlockSize;
+ 					++mStatAllocatedPoolCount;
+ 					++mStatDiffPoolCount;
+@@ -81,6 +84,7 @@
+ 					CMemoryPool* tmpMemoryPool = memoryPool;
+ 					memoryPool = memoryPool->getNext();
+ 					mStatReleasedPoolSize += tmpMemoryPool->getMemoryBlockSize();
++					KonPoolStats::poolFree(tmpMemoryPool->getMemoryBlockSize());
+ 					mStatDiffPoolSize -= tmpMemoryPool->getMemoryBlockSize();
+ 					mAllocLimitator->addReleasedMemorySize(tmpMemoryPool->getMemoryBlockSize()+sizeof(CMemoryPool));
+ 					++mStatReleasedPoolCount;

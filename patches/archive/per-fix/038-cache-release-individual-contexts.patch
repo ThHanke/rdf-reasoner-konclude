@@ -1,0 +1,96 @@
+--- a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.cpp
++++ b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.cpp
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include "CBackendRepresentativeMemoryCache.h"
++#include <unordered_set>
+ #include "KonPoolStats.h"
+ #include "CBackendRepresentativeMemoryCacheWriter.h"
+ 
+@@ -152,6 +153,48 @@
+ 
+ 
+ 
++
++				// Versions evicted for good (no newer version of their ontology identifier) that were still referenced by a reader slot
++				// and are released later by cleanUnusedSlots. Cache thread only.
++				static std::unordered_set<CBackendRepresentativeMemoryCacheOntologyData*> sFinalOntologyDataVersions;
++
++				static void releaseAllIndividualAssociationContexts(CBackendRepresentativeMemoryCacheOntologyData* ontologyData, CMemoryPoolAllocationManager* memMan) {
++					std::unordered_set<CBackendRepresentativeMemoryCacheIndividualAssociationContext*> contexts;
++					CBackendRepresentativeMemoryCacheIndividualAssociationData** vec = ontologyData->getIndividualIdAssoiationDataVector();
++					cint64 vecSize = ontologyData->getIndividualIdAssoiationDataVectorSize();
++					if (vec) {
++						for (cint64 i = 0; i < vecSize; ++i) {
++							if (vec[i]) {
++								CBackendRepresentativeMemoryCacheIndividualAssociationContext* ctx = vec[i]->getIndividualAssociationMemoryContext();
++								if (ctx) {
++									contexts.insert(ctx);
++								}
++							}
++						}
++					}
++					for (CBackendRepresentativeMemoryCacheIndividualAssociationContext* it = ontologyData->getReleaseQueuedIndividualAssociationContextLinker(); it; it = it->getNext()) {
++						contexts.insert(it);
++					}
++					CCACHINGMAP<cint64, CBackendRepresentativeMemoryCacheIndividualAssociationContext*>* releasingMap = ontologyData->getRecomputationIdReleasingIndividualAssociationContextMap();
++					if (releasingMap) {
++						for (CCACHINGMAP<cint64, CBackendRepresentativeMemoryCacheIndividualAssociationContext*>::const_iterator it = releasingMap->constBegin(), itEnd = releasingMap->constEnd(); it != itEnd; ++it) {
++							for (CBackendRepresentativeMemoryCacheIndividualAssociationContext* l = it.value(); l; l = l->getNext()) {
++								contexts.insert(l);
++							}
++						}
++					}
++					std::unordered_set<CMemoryPool*> poolLists;
++					for (CBackendRepresentativeMemoryCacheIndividualAssociationContext* ctx : contexts) {
++						CMemoryPool* pools = ctx->getMemoryPoolContainer()->getMemoryPools();
++						if (pools) {
++							poolLists.insert(pools);
++						}
++					}
++					for (CMemoryPool* pools : poolLists) {
++						memMan->releaseTemporaryMemoryPools(pools);
++					}
++				}
++
+ 				void CBackendRepresentativeMemoryCache::deleteExpiredIndividualAssociationMemoryContexts(CBackendRepresentativeMemoryCacheOntologyData* ontologyData, CBackendRepresentativeMemoryCacheBaseContext* context) {
+ 					CBackendRepresentativeMemoryCacheContext* ontologyContext = ontologyData->getOntologyContext();
+ 					if (ontologyData->isBasicPrecomputationMode()) {
+@@ -425,6 +468,7 @@
+ 											if (staleData->getRecomputationReferenceLinker()) {
+ 												staleData->getRecomputationReferenceLinker()->setOntologyDataInactive();
+ 											}
++											releaseAllIndividualAssociationContexts(staleData, evictMemMan);
+ 											CBackendRepresentativeMemoryCacheOntologyContext* staleOntCtx = staleData->getOntologyContext();
+ 											if (staleOntCtx) {
+ 												CMemoryPool* staleOntCtxPools = staleOntCtx->getMemoryPoolContainer()->getMemoryPools();
+@@ -439,8 +483,10 @@
+ 											}
+ 											KonPoolStats::gOntDataFreed.fetch_add(1, std::memory_order_relaxed);
+ 											delete staleData;
++											evictMemMan->flushFreePools();
+ 										} else {
+ 											KonPoolStats::gOntDataStaleKept.fetch_add(1, std::memory_order_relaxed);
++											sFinalOntologyDataVersions.insert(staleData);
+ 										}
+ 									}
+ 								}
+@@ -551,6 +597,17 @@
+ 
+ 									ontologyData->getRecomputationReferenceLinker()->setOntologyDataInactive();
+ 
++									if (sFinalOntologyDataVersions.erase(ontologyData) > 0) {
++										releaseAllIndividualAssociationContexts(ontologyData, memMan);
++										CBackendRepresentativeMemoryCacheOntologyContext* finalOntCtx = ontologyData->getOntologyContext();
++										if (finalOntCtx) {
++											CMemoryPool* finalOntCtxPools = finalOntCtx->getMemoryPoolContainer()->getMemoryPools();
++											if (finalOntCtxPools) {
++												memMan->releaseTemporaryMemoryPools(finalOntCtxPools);
++											}
++											delete finalOntCtx;
++										}
++									}
+ 									CMemoryPool* memoryPools = ontologyData->getTemporaryContext()->getMemoryPoolContainer()->getMemoryPools();
+ 									memMan->releaseTemporaryMemoryPools(memoryPools);
+ 									KonPoolStats::gOntDataFreed.fetch_add(1, std::memory_order_relaxed);

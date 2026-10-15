@@ -1,0 +1,17 @@
+--- a/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp
++++ b/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp
+@@ -4689,6 +4689,14 @@
+ 							addComplexRoleExplicitIndirectNeighbourLink(roleInstItem, inversed, indiRealItemRef, indiExplicitIndirectLinkComplexRepresentationData, indiRoleNeighbourHashData, combinedNeighbourCacheLabelItemData, assNeighbourRoleSetHash, candIndi, nullptr, deterministic, realItem);
+ 						};
+ 
++#ifdef NATIVE_DEBUG_BUILD
++						{
++							cint64 dN = 0, nN = 0;
++							for (CXLinker<CIndividualReference>* l = rmcmd->getDeterministicIndividualReferenceLinker(); l; l = l->getNext()) { ++dN; }
++							for (CXLinker<CIndividualReference>* l = rmcmd->getNondeterministicIndividualReferenceLinker(); l; l = l->getNext()) { ++nN; }
++							fprintf(stderr, "RMSG indi=%lld role=%lld inv=%d det=%lld ndet=%lld\n", (long long)individualReference.getIndividualID(), (long long)roleInstItem->getRole()->getRoleTag(), (int)inversed, (long long)dN, (long long)nN);
++						}
++#endif // NATIVE_DEBUG_BUILD
+ 						CXLinker<CIndividualReference>* detIndiLinker = rmcmd->getDeterministicIndividualReferenceLinker();
+ 						for (CXLinker<CIndividualReference>* detIndiLinkerIt = detIndiLinker; detIndiLinkerIt; detIndiLinkerIt = detIndiLinkerIt->getNext()) {
+ 							CIndividualReference candIndi = detIndiLinkerIt->getData();

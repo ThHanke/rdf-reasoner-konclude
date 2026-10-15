@@ -1,0 +1,17 @@
+--- a/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp
++++ b/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp
+@@ -3518,6 +3518,14 @@
+ 							if (reqConfPreCompItem->areRealizeRoleStepProcessingRequirementSatisfied()) {
+ 
+ 								if (!reqConfPreCompItem->hasRealizationRolesInitialized()) {
++									LOG(INFO,getDomain(),logTr("ROLE-INIT-RESIDUALS init=%1 proc=%2 indiv=%3 conf=%4 prop=%5 testing=%6 possible=%7")
++										.arg(reqConfPreCompItem->getInitializingRoleInstancesItemList()->size())
++										.arg((int)reqConfPreCompItem->hasRemainingProcessingRoleInstanceItems())
++										.arg((int)reqConfPreCompItem->hasRemainingInitializingRoleInstanceIndividualItemReferences())
++										.arg((int)reqConfPreCompItem->hasRemainingCandidateConfirmationRoleInstanceItems())
++										.arg((int)reqConfPreCompItem->hasPropagatingRoleInstanceCandidates())
++										.arg((int)reqConfPreCompItem->hasTestingRoleInstanceCandidates())
++										.arg((int)reqConfPreCompItem->hasTestingPossibleRoleInstances()),this);
+ 									LOG(INFO,getDomain(),logTr("Create temporary ontology extension for role realization."),this);
+ 									createTemporaryRoleRealizationOntology(reqConfPreCompItem);
+ 									//reqConfPreCompItem->initRoleCandidateInitializingIndividualItems();

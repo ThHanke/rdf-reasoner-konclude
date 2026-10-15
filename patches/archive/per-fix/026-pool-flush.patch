@@ -1,0 +1,67 @@
+--- a/Source/Utilities/Memory/CMemoryPoolAllocationManager.h
++++ b/Source/Utilities/Memory/CMemoryPoolAllocationManager.h
+@@ -67,6 +67,9 @@
+ 
+ 					virtual CMemoryTemporaryAllocationManager* releaseAllMemory();
+ 
++					//! Return all pools of the free list to the provider (owner thread only)
++					CMemoryTemporaryAllocationManager* flushFreePools();
++
+ 					virtual CMemoryPool* acqireTemporaryMemoryPool(size_t size);
+ 					virtual CMemoryTemporaryAllocationManager* releaseTemporaryMemoryPool(CMemoryPool* memoryPool);
+ 
+--- a/Source/Utilities/Memory/CMemoryPoolAllocationManager.cpp
++++ b/Source/Utilities/Memory/CMemoryPoolAllocationManager.cpp
+@@ -184,6 +184,18 @@
+ 
+ 
+ 
++			CMemoryTemporaryAllocationManager* CMemoryPoolAllocationManager::flushFreePools() {
++				while (mFreeMemoryPoolList) {
++					CMemoryPool* tmpMemPool = mFreeMemoryPoolList;
++					mFreeMemoryPoolList = mFreeMemoryPoolList->getNextMemoryPool();
++					tmpMemPool->clearNext();
++					mMemoryPoolProvider->releaseMemoryPool(tmpMemPool);
++				}
++				mFreeMemoryPoolCount = 0;
++				return this;
++			}
++
++
+ 			CMemoryPool* CMemoryPoolAllocationManager::acqireTemporaryMemoryPool(size_t size) {
+ 				CMemoryPool* tmpMemoryPool = nullptr;
+ 				if (mFreeMemoryPoolList) {
+--- a/Source/Scheduler/CTaskProcessorThreadBase.h
++++ b/Source/Scheduler/CTaskProcessorThreadBase.h
+@@ -157,6 +157,7 @@
+ 				CTask* mTaskCompletionQueue;
+ 				CTaskProcessorContext *mTaskProcessorContext;
+ 				CTaskHandleMemoryAllocationManager *mMemoryAllocator;
++				long long mSeenPoolFlushGen = 0;
+ 				CTaskHandleAlgorithm* mTaskHandleAlgo;
+ 				CTaskStatusPropagator* mTaskStatusPropagator;
+ 				CTaskCallbackExecuter* mCallbackExecuter;
+--- a/Source/Scheduler/CTaskProcessorThreadBase.cpp
++++ b/Source/Scheduler/CTaskProcessorThreadBase.cpp
+@@ -20,6 +20,8 @@
+ 
+ #include "KonStall.h"
+ #include "CTaskProcessorThreadBase.h"
++#include "KonPoolStats.h"
++#include "Utilities/Memory/CMemoryPoolAllocationManager.h"
+ 
+ 
+ namespace Konclude {
+@@ -226,6 +228,12 @@
+ 					mLastProcessingStartedTag = mLastProcessingStartRequestTag;
+ 				}
+ 				mProcessingBlocked = false;
++				if (mSeenPoolFlushGen != KonPoolStats::gFlushGen.load(std::memory_order_acquire)) {
++					mSeenPoolFlushGen = KonPoolStats::gFlushGen.load(std::memory_order_acquire);
++					if (CMemoryPoolAllocationManager* poolMan = dynamic_cast<CMemoryPoolAllocationManager*>(mMemoryAllocator)) {
++						poolMan->flushFreePools();
++					}
++				}
+ 				eventSafeguardProcessed = false;
+ 				while (mEventSignalized) {
+ 					bool eventsProcessed = handleEvents();

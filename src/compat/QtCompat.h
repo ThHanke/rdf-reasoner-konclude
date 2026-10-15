@@ -18,6 +18,7 @@
 
 #include <unordered_map>
 #include <vector>
+#include <typeinfo>
 #include <unordered_set>
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wshadow"
@@ -138,11 +139,63 @@ uint qHash(const T& key, uint seed = 0);
 // call to different overloads (pointer vs. generic), causing inconsistent
 // bucket assignment inside std::unordered_set. std::hash<T*> is always
 // available and consistent across all TUs.
+// Native bisect aid: REPRO_HASH_SEED=<n> mixes a seed into pointer hashes (QHash/QSet shim and
+// qHash(T*)), reordering every pointer-keyed container without changing heap layout.
+// Seed 0 (default, and always in non-native builds) keeps the original identity hash.
+inline std::uint64_t reproHashSeed() {
+#ifdef NATIVE_DEBUG_BUILD
+    static const std::uint64_t seed = []() -> std::uint64_t {
+        const char* e = std::getenv("REPRO_HASH_SEED");
+        return e ? std::strtoull(e, nullptr, 0) : 0ull;
+    }();
+    return seed;
+#else
+    return 0;
+#endif
+}
+// REPRO_SEED_TYPES=a,b : only reorder containers whose key type name (typeid) contains one of
+// the comma-separated substrings (empty / unset = all pointer-keyed containers).
+inline bool reproSeedTypeEnabled(const char* typeName) {
+#ifdef NATIVE_DEBUG_BUILD
+    static const std::string filter = []() { const char* e = std::getenv("REPRO_SEED_TYPES"); return std::string(e ? e : ""); }();
+    if (filter.empty()) return true;
+    std::size_t pos = 0;
+    while (pos <= filter.size()) {
+        std::size_t c = filter.find(',', pos);
+        std::string tok = filter.substr(pos, c == std::string::npos ? std::string::npos : c - pos);
+        if (!tok.empty() && std::string(typeName).find(tok) != std::string::npos) return true;
+        if (c == std::string::npos) break;
+        pos = c + 1;
+    }
+    return false;
+#else
+    (void)typeName;
+    return true;
+#endif
+}
+template<typename K>
+inline bool reproSeedEnabledFor() {
+    static const bool v = reproSeedTypeEnabled(typeid(K).name());
+    return v;
+}
+inline std::size_t reproPointerHash(const void* p, bool enabled = true) {
+#ifdef NATIVE_DEBUG_BUILD
+    const std::uint64_t seed = enabled ? reproHashSeed() : 0;
+    if (seed != 0) {
+        std::uint64_t z = reinterpret_cast<std::uintptr_t>(p) ^ (seed * 0x9E3779B97F4A7C15ull);
+        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+        z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+        return static_cast<std::size_t>(z ^ (z >> 31));
+    }
+#endif
+    return std::hash<const void*>{}(p);
+}
+
 template<typename K>
 struct QHasherFn {
     std::size_t operator()(const K& k) const {
         if constexpr (std::is_pointer_v<K>) {
-            return std::hash<K>{}(k);
+            return reproPointerHash(reinterpret_cast<const void*>(k), reproSeedEnabledFor<K>());
         } else {
             return static_cast<std::size_t>(qHash(k));
         }
@@ -163,11 +216,68 @@ struct QHasherFn {
 // - count(k):         number of values stored for k.
 // - operator[]:       get-or-create first element, single-value semantics.
 
+#ifdef REPRO_ORDERED_QHASH
+// Bisect variant: insertion-ordered map (iteration order independent of key addresses).
+// Used only to test whether address-dependent hash iteration order causes the
+// non-deterministic realization loss. Not for production.
+template<typename K, typename V, typename H>
+struct ReproOrderedMap {
+    using List = std::list<std::pair<K, V>>;
+    using iterator = typename List::iterator;
+    using const_iterator = typename List::const_iterator;
+    List mList;
+    robin_hood::unordered_map<K, iterator, H> mIdx;
+
+    ReproOrderedMap() = default;
+    ReproOrderedMap(const ReproOrderedMap& o) { *this = o; }
+    ReproOrderedMap(ReproOrderedMap&&) = default;
+    ReproOrderedMap& operator=(ReproOrderedMap&&) = default;
+    ReproOrderedMap& operator=(const ReproOrderedMap& o) {
+        if (this == &o) return *this;
+        mList.clear(); mIdx.clear();
+        for (auto& kv : o.mList) { mList.push_back(kv); mIdx[kv.first] = std::prev(mList.end()); }
+        return *this;
+    }
+    V& operator[](const K& k) {
+        auto it = mIdx.find(k);
+        if (it != mIdx.end()) return it->second->second;
+        mList.emplace_back(k, V{});
+        auto li = std::prev(mList.end());
+        mIdx[k] = li;
+        return li->second;
+    }
+    iterator find(const K& k) { auto it = mIdx.find(k); return it == mIdx.end() ? mList.end() : it->second; }
+    const_iterator find(const K& k) const { auto it = mIdx.find(k); return it == mIdx.end() ? mList.end() : const_iterator(it->second); }
+    std::size_t count(const K& k) const { return mIdx.count(k); }
+    bool empty() const { return mList.empty(); }
+    std::size_t size() const { return mList.size(); }
+    void clear() { mList.clear(); mIdx.clear(); }
+    std::size_t erase(const K& k) {
+        auto it = mIdx.find(k);
+        if (it == mIdx.end()) return 0;
+        mList.erase(it->second); mIdx.erase(it); return 1;
+    }
+    iterator erase(iterator pos) { mIdx.erase(pos->first); return mList.erase(pos); }
+    iterator begin() { return mList.begin(); }
+    iterator end() { return mList.end(); }
+    const_iterator begin() const { return mList.begin(); }
+    const_iterator end() const { return mList.end(); }
+    const_iterator cbegin() const { return mList.cbegin(); }
+    const_iterator cend() const { return mList.cend(); }
+};
+#endif
+
 template<typename K, typename V>
 struct QHash {
 private:
     using Bucket = std::vector<V>;
+#ifdef REPRO_ORDERED_QHASH
+    using Map    = ReproOrderedMap<K, Bucket, QHasherFn<K>>;
+#elif defined(REPRO_STD_QHASH)
+    using Map    = std::unordered_map<K, Bucket, QHasherFn<K>>;
+#else
     using Map    = robin_hood::unordered_node_map<K, Bucket, QHasherFn<K>>;
+#endif
     Map mData;
 
 public:
@@ -346,11 +456,78 @@ public:
     }
 };
 
+#ifdef REPRO_ORDERED_QHASH
+// Insertion-ordered set (bisect variant, see ReproOrderedMap).
+template<typename T, typename H>
+struct ReproOrderedSet {
+    using List = std::list<T>;
+    using iterator = typename List::iterator;
+    using const_iterator = typename List::const_iterator;
+    using value_type = T;
+    using key_type = T;
+    List mList;
+    robin_hood::unordered_map<T, iterator, H> mIdx;
+
+    ReproOrderedSet() = default;
+    ReproOrderedSet(std::initializer_list<T> il) { for (auto& v : il) insert(v); }
+    template<typename It> ReproOrderedSet(It f, It l) { insert(f, l); }
+    ReproOrderedSet(const ReproOrderedSet& o) { *this = o; }
+    ReproOrderedSet(ReproOrderedSet&&) = default;
+    ReproOrderedSet& operator=(ReproOrderedSet&&) = default;
+    ReproOrderedSet& operator=(const ReproOrderedSet& o) {
+        if (this == &o) return *this;
+        mList.clear(); mIdx.clear();
+        for (auto& v : o.mList) { mList.push_back(v); mIdx[v] = std::prev(mList.end()); }
+        return *this;
+    }
+    std::pair<iterator, bool> insert(const T& v) {
+        auto it = mIdx.find(v);
+        if (it != mIdx.end()) return {it->second, false};
+        mList.push_back(v);
+        auto li = std::prev(mList.end());
+        mIdx[v] = li;
+        return {li, true};
+    }
+    std::pair<iterator, bool> insert(T&& v) { return insert(static_cast<const T&>(v)); }
+    template<typename It> void insert(It f, It l) { for (; f != l; ++f) insert(*f); }
+    template<typename... A> std::pair<iterator, bool> emplace(A&&... a) { return insert(T(std::forward<A>(a)...)); }
+    iterator find(const T& v) { auto it = mIdx.find(v); return it == mIdx.end() ? mList.end() : it->second; }
+    const_iterator find(const T& v) const { auto it = mIdx.find(v); return it == mIdx.end() ? mList.end() : const_iterator(it->second); }
+    std::size_t count(const T& v) const { return mIdx.count(v); }
+    std::size_t erase(const T& v) {
+        auto it = mIdx.find(v);
+        if (it == mIdx.end()) return 0;
+        mList.erase(it->second); mIdx.erase(it); return 1;
+    }
+    iterator erase(const_iterator pos) { mIdx.erase(*pos); return mList.erase(pos); }
+    void reserve(std::size_t) {}
+    void swap(ReproOrderedSet& o) { mList.swap(o.mList); mIdx.swap(o.mIdx); }
+    bool empty() const { return mList.empty(); }
+    std::size_t size() const { return mList.size(); }
+    void clear() { mList.clear(); mIdx.clear(); }
+    iterator begin() { return mList.begin(); }
+    iterator end() { return mList.end(); }
+    const_iterator begin() const { return mList.begin(); }
+    const_iterator end() const { return mList.end(); }
+    const_iterator cbegin() const { return mList.cbegin(); }
+    const_iterator cend() const { return mList.cend(); }
+    bool operator==(const ReproOrderedSet& o) const {
+        if (size() != o.size()) return false;
+        for (auto& v : mList) if (!o.count(v)) return false;
+        return true;
+    }
+    bool operator!=(const ReproOrderedSet& o) const { return !(*this == o); }
+};
+template<typename T> using ReproSetBase = ReproOrderedSet<T, QHasherFn<T>>;
+#else
+template<typename T> using ReproSetBase = std::unordered_set<T, QHasherFn<T>>;
+#endif
+
 // QSet backed by std::unordered_set (matches Qt's hash-based QSet semantics).
 // Requires T to have qHash(T) + operator== (or operator< for fallback types).
 template<typename T>
-struct QSet : public std::unordered_set<T, QHasherFn<T>> {
-    using Base = std::unordered_set<T, QHasherFn<T>>;
+struct QSet : public ReproSetBase<T> {
+    using Base = ReproSetBase<T>;
     using Base::Base;
     bool contains(const T& v) const { return Base::count(v) > 0; }
     void insert(const T& v) { Base::insert(v); }
@@ -1203,6 +1380,7 @@ uint qHash(const T& key, uint seed) {
 // On 32-bit (WASM): just cast — Qt does the same.
 template<typename T>
 uint qHash(T* key, uint seed = 0) {
+    if (reproHashSeed() != 0 && reproSeedEnabledFor<T*>()) return static_cast<uint>(reproPointerHash(reinterpret_cast<const void*>(key))) ^ seed;
     uintptr_t v = reinterpret_cast<uintptr_t>(key);
     uint h;
     if constexpr (sizeof(uintptr_t) > sizeof(uint)) {
@@ -1435,11 +1613,22 @@ struct QDateTime {
 
 #include <pthread.h>
 #include <time.h>
+#include "DetSched.h"
+
+// Serial (deterministic) mode: REPRO_SERIAL=1 in native debug builds models every primitive
+// logically on DetSched::block()/wake(); the pthread code below is the normal path.
+#ifdef NATIVE_DEBUG_BUILD
+#define DETS_ON() (DetSched::on())
+#else
+#define DETS_ON() (false)
+#endif
 
 struct QMutex {
     enum RecursionMode { NonRecursive = 0, Recursive = 1 };
     pthread_mutex_t m;
+    void* dOwner = nullptr; int dCount = 0; bool dRec = false;
     explicit QMutex(RecursionMode mode = NonRecursive) {
+        dRec = (mode == Recursive);
         pthread_mutexattr_t a;
         pthread_mutexattr_init(&a);
         if (mode == Recursive)
@@ -1448,9 +1637,21 @@ struct QMutex {
         pthread_mutexattr_destroy(&a);
     }
     ~QMutex() { pthread_mutex_destroy(&m); }
-    void lock()   { pthread_mutex_lock(&m); }
-    void unlock() { pthread_mutex_unlock(&m); }
-    bool tryLock(int = 0) { return pthread_mutex_trylock(&m) == 0; }
+    void dLock() {
+        DetSched::maybePreempt();
+        void* me = DetSched::self();
+        if (dOwner == me && dRec) { dCount++; return; }
+        while (dOwner) DetSched::block(this);
+        dOwner = me; dCount = 1;
+    }
+    void dUnlock() {
+        if (--dCount == 0) { dOwner = nullptr; DetSched::wake(this, false); }
+        DetSched::maybePreempt();
+    }
+    bool dTry() { void* me = DetSched::self(); if (dOwner == me && dRec) { dCount++; return true; } if (dOwner) return false; dOwner = me; dCount = 1; return true; }
+    void lock()   { if (DETS_ON()) { dLock(); return; } pthread_mutex_lock(&m); }
+    void unlock() { if (DETS_ON()) { dUnlock(); return; } pthread_mutex_unlock(&m); }
+    bool tryLock(int = 0) { if (DETS_ON()) return dTry(); return pthread_mutex_trylock(&m) == 0; }
 };
 
 struct QMutexLocker {
@@ -1472,18 +1673,30 @@ struct QSemaphore {
         pthread_cond_destroy(&cv);
     }
     void release(int n = 1) {
+        if (DETS_ON()) { count += n; DetSched::wake(this, true); DetSched::maybePreempt(); return; }
         pthread_mutex_lock(&mtx);
         count += n;
         pthread_cond_broadcast(&cv);
         pthread_mutex_unlock(&mtx);
     }
     void acquire(int n = 1) {
+        if (DETS_ON()) { while (count < n) DetSched::block(this); count -= n; return; }
         pthread_mutex_lock(&mtx);
         while (count < n) pthread_cond_wait(&cv, &mtx);
         count -= n;
         pthread_mutex_unlock(&mtx);
     }
     bool tryAcquire(int n = 1, int ms = -1) {
+        if (DETS_ON()) {
+            if (ms == 0) { if (count < n) return false; count -= n; return true; }
+            long long dl = ms < 0 ? -1 : DetSched::vnow() + ms;
+            while (count < n) {
+                if (ms < 0) { DetSched::block(this); continue; }
+                long long rem = dl - DetSched::vnow();
+                if (rem <= 0 || DetSched::block(this, rem)) { if (count < n) return false; }
+            }
+            count -= n; return true;
+        }
         pthread_mutex_lock(&mtx);
         if (ms == 0) {
             // Non-blocking: Qt tryAcquire() with no timeout arg
@@ -1518,13 +1731,24 @@ struct QSemaphore {
 
 struct QReadWriteLock {
     pthread_rwlock_t rw;
+    void* dWriter = nullptr; int dReaders = 0;
     QReadWriteLock()  { pthread_rwlock_init(&rw, nullptr); }
     ~QReadWriteLock() { pthread_rwlock_destroy(&rw); }
-    void lockForRead()  { pthread_rwlock_rdlock(&rw); }
-    void lockForWrite() { pthread_rwlock_wrlock(&rw); }
-    void unlock()       { pthread_rwlock_unlock(&rw); }
-    bool tryLockForRead(int = 0)  { return pthread_rwlock_tryrdlock(&rw) == 0; }
-    bool tryLockForWrite(int = 0) { return pthread_rwlock_trywrlock(&rw) == 0; }
+    void lockForRead()  {
+        if (DETS_ON()) { while (dWriter) DetSched::block(this); dReaders++; return; }
+        pthread_rwlock_rdlock(&rw); }
+    void lockForWrite() {
+        if (DETS_ON()) { while (dWriter || dReaders) DetSched::block(this); dWriter = DetSched::self(); return; }
+        pthread_rwlock_wrlock(&rw); }
+    void unlock()       {
+        if (DETS_ON()) { if (dWriter) dWriter = nullptr; else dReaders--; DetSched::wake(this, true); return; }
+        pthread_rwlock_unlock(&rw); }
+    bool tryLockForRead(int = 0)  {
+        if (DETS_ON()) { if (dWriter) return false; dReaders++; return true; }
+        return pthread_rwlock_tryrdlock(&rw) == 0; }
+    bool tryLockForWrite(int = 0) {
+        if (DETS_ON()) { if (dWriter || dReaders) return false; dWriter = DetSched::self(); return true; }
+        return pthread_rwlock_trywrlock(&rw) == 0; }
 };
 
 struct QTimer {
@@ -1538,6 +1762,11 @@ struct QWaitCondition {
     QWaitCondition()  { pthread_cond_init(&cv, nullptr); }
     ~QWaitCondition() { pthread_cond_destroy(&cv); }
     void wait(QMutex* m, unsigned long ms = ULONG_MAX) {
+        if (DETS_ON()) {
+            int saved = m->dCount; m->dCount = 1; m->dUnlock();
+            DetSched::block(this, ms == ULONG_MAX ? -1 : (long long)ms);
+            m->dLock(); m->dCount = saved; return;
+        }
         if (ms == ULONG_MAX) { pthread_cond_wait(&cv, &m->m); return; }
         struct timespec ts;
         clock_gettime(CLOCK_REALTIME, &ts);
@@ -1546,8 +1775,8 @@ struct QWaitCondition {
         if (ts.tv_nsec >= 1000000000L) { ts.tv_sec++; ts.tv_nsec -= 1000000000L; }
         pthread_cond_timedwait(&cv, &m->m, &ts);
     }
-    void wakeOne() { pthread_cond_signal(&cv); }
-    void wakeAll() { pthread_cond_broadcast(&cv); }
+    void wakeOne() { if (DETS_ON()) { DetSched::wake(this, false); return; } pthread_cond_signal(&cv); }
+    void wakeAll() { if (DETS_ON()) { DetSched::wake(this, true); return; } pthread_cond_broadcast(&cv); }
 };
 
 // ---------------------------------------------------------------------------
@@ -1994,7 +2223,9 @@ struct QVariant {
     QVariant() = default;
     QVariant(bool b) : mType(Bool) { mVal.bval = b; }
     QVariant(int i) : mType(Int) { mVal.ival = i; }
+    QVariant(long n) : mType(LongLong) { mVal.llval = static_cast<long long>(n); }
     QVariant(long long n) : mType(LongLong) { mVal.llval = n; }
+    QVariant(unsigned long n) : mType(LongLong) { mVal.llval = static_cast<long long>(n); }
     QVariant(unsigned long long n) : mType(LongLong) { mVal.llval = static_cast<long long>(n); }
     QVariant(double d) : mType(Double) { mVal.dval = d; }
     QVariant(const QString& s) : mType(String), mStr(s) {}

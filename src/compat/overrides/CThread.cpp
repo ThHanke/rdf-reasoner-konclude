@@ -7,6 +7,10 @@
  *		queue.  postEvent is non-blocking; run() is the blocking event loop.
  *		State is stored in a static map so CThread.h needs no modification.
  */
+#include "KonStall.h"
+#include "DetSched.h"
+#include "Concurrent/Events/CHandleEventsEvent.h"
+#include <memory>
 #include <deque>
 #include <functional>
 #include <unordered_map>
@@ -25,6 +29,9 @@ namespace {
         bool shouldStop = false;
         bool running    = false;
         bool started    = false;
+#ifdef NATIVE_DEBUG_BUILD
+        DetSched::Th*    dth = nullptr;
+#endif
 
         PthreadState() {
             pthread_mutex_init(&queueMutex, nullptr);
@@ -105,6 +112,14 @@ namespace Konclude {
             if (!s) {
                 delete event; return;
             }
+#ifdef NATIVE_DEBUG_BUILD
+            if (DetSched::on()) {
+                s->eventQueue.push_back(event);
+                DetSched::wake(&s->queueCond, true);
+                DetSched::maybePreempt();
+                return;
+            }
+#endif
             pthread_mutex_lock(&s->queueMutex);
             s->eventQueue.push_back(event);
             pthread_cond_signal(&s->queueCond);
@@ -114,7 +129,22 @@ namespace Konclude {
         void CThread::waitSynchronization() {
             QSemaphore syncSem(0);
             postEvent(new CWaitSynchronizationEvent(&syncSem));
+#ifdef NATIVE_DEBUG_BUILD
+            // Timed watchdog: print queue depth every 5s, abort at 30s for post-mortem.
+            for (int tries = 0; ; ++tries) {
+                if (syncSem.tryAcquire(1, 5000)) break;
+                PthreadState* s = getState(this);
+                size_t qd = s ? s->eventQueue.size() : 0u;
+                fprintf(stderr, "WATCHDOG[%s]: waitSync slice %d, queue_depth=%zu\n",
+                        threadName.c_str(), tries + 1, qd);
+                if (tries >= 5) {
+                    fprintf(stderr, "WATCHDOG: 30s timeout — aborting for GDB post-mortem\n");
+                    abort();
+                }
+            }
+#else
             syncSem.acquire();
+#endif
         }
 
         bool CThread::isThreadRunning() {
@@ -139,6 +169,27 @@ namespace Konclude {
             s->running = true;
             threadRuns = true;
 
+#ifdef NATIVE_DEBUG_BUILD
+            if (DETS_ON()) {
+                for (;;) {
+                    while (s->eventQueue.empty() && !s->shouldStop) DetSched::block(&s->queueCond);
+                    if (s->shouldStop) {
+                        while (!s->eventQueue.empty()) { delete s->eventQueue.front(); s->eventQueue.pop_front(); }
+                        break;
+                    }
+                    QEvent* ev = s->eventQueue.front();
+                    s->eventQueue.pop_front();
+                    DetSched::note(((uint64_t)threadID << 32) ^ (uint64_t)ev->type());
+                    try { this->event(ev); } catch (...) {}
+                    delete ev;
+                }
+                s->running = false;
+                threadRuns = false;
+                threadStopped();
+                if (mWatchDog) mWatchDog->checkoutThread(this);
+                return;
+            }
+#endif
             pthread_mutex_lock(&s->queueMutex);
             while (true) {
                 while (s->eventQueue.empty() && !s->shouldStop) {
@@ -182,6 +233,10 @@ namespace Konclude {
         void CThread::concludeWaiting()   {}
 
         bool CThread::event(QEvent* event) {
+            // Timestamps for stall detection; the task-processor loop event lives as long as the thread
+            // and must not count.
+            std::unique_ptr<KonStall::EventTouch> konStallTouch;
+            if (event->type() != Concurrent::Events::CHandleEventsEvent::EVENTTYPE) konStallTouch.reset(new KonStall::EventTouch());
             try {
                 TIMEMEASUREMENTENDWAITING();
                 TIMEMEASUREMENTBEGINEXECUTION();
@@ -230,8 +285,19 @@ namespace Konclude {
             s->shouldStop = false;
             s->running    = false;
             s->started    = false;
+#ifdef NATIVE_DEBUG_BUILD
+            if (DetSched::on()) s->dth = DetSched::spawn(threadName.toStdString());
+#endif
             int rc = pthread_create(&s->thread, nullptr, [](void* arg) -> void* {
-                    static_cast<CThread*>(arg)->run();
+                    CThread* self = static_cast<CThread*>(arg);
+#ifdef NATIVE_DEBUG_BUILD
+                    PthreadState* st = getState(self);
+                    if (DetSched::on() && st && st->dth) DetSched::childStart(st->dth);
+#endif
+                    self->run();
+#ifdef NATIVE_DEBUG_BUILD
+                    if (DetSched::on() && st && st->dth) DetSched::finish(st->dth);
+#endif
                     return nullptr;
                 }, this);
             if (rc == 0) {
@@ -242,6 +308,14 @@ namespace Konclude {
         void CThread::stopThread(bool waitStopped) {
             PthreadState* s = getState(this);
             if (!s || !s->started) return;
+#ifdef NATIVE_DEBUG_BUILD
+            if (DetSched::on()) {
+                s->shouldStop = true;
+                DetSched::wake(&s->queueCond, true);
+                if (waitStopped) { DetSched::join(s->dth); pthread_join(s->thread, nullptr); s->started = false; }
+                return;
+            }
+#endif
             pthread_mutex_lock(&s->queueMutex);
             s->shouldStop = true;
             pthread_cond_signal(&s->queueCond);

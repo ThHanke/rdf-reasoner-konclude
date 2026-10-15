@@ -18,11 +18,11 @@ namespace Konclude {
 		// to ensure the STPU thread has fully exited completeTask() before the reasoner
 		// is deleted.  See: docs/solutions/architecture-patterns/
 		// wasm-pthread-concurrency-architecture-2026-05-08.md
-		static std::unordered_map<CSingleThreadTaskProcessorUnit*, std::mutex*> sCompleteTaskGuards;
-		static std::mutex sGuardsMutex;
+		static std::unordered_map<CSingleThreadTaskProcessorUnit*, QMutex*> sCompleteTaskGuards;
+		static QMutex sGuardsMutex;
 
-		std::mutex* stpuGetCompleteTaskGuard(CSingleThreadTaskProcessorUnit* stpu) {
-			std::lock_guard<std::mutex> lk(sGuardsMutex);
+		QMutex* stpuGetCompleteTaskGuard(CSingleThreadTaskProcessorUnit* stpu) {
+			std::lock_guard<QMutex> lk(sGuardsMutex);
 			auto it = sCompleteTaskGuards.find(stpu);
 			return it != sCompleteTaskGuards.end() ? it->second : nullptr;
 		}
@@ -73,8 +73,8 @@ namespace Konclude {
 			mStatComputionTime = 0;
 			mStatBlockingTime = 0;
 
-			mLastProcessingStartedTag = 0;
-			mLastProcessingStartRequestTag = 0;
+			mLastProcessingStartedTag.store(0, std::memory_order_relaxed);
+			mLastProcessingStartRequestTag.store(0, std::memory_order_relaxed);
 			mTaskProcessingCount = 0;
 			mTaskSchedulingCount = 0;
 			mStatRecievedScheduleTasks = 0;
@@ -85,8 +85,8 @@ namespace Konclude {
 			mDebugLastCompletedTask = nullptr;
 			mTaskSchedulingQueue = nullptr;
 
-			std::lock_guard<std::mutex> lk(sGuardsMutex);
-			sCompleteTaskGuards[this] = new std::mutex();
+			std::lock_guard<QMutex> lk(sGuardsMutex);
+			sCompleteTaskGuards[this] = new QMutex();
 		}
 
 		CSingleThreadTaskProcessorUnit::~CSingleThreadTaskProcessorUnit() {
@@ -95,7 +95,7 @@ namespace Konclude {
 			mProcessingStopped = true;
 			mProcessingWakeUpSemaphore.release();
 
-			std::lock_guard<std::mutex> lk(sGuardsMutex);
+			std::lock_guard<QMutex> lk(sGuardsMutex);
 			auto it = sCompleteTaskGuards.find(this);
 			if (it != sCompleteTaskGuards.end()) {
 				delete it->second;
@@ -286,7 +286,7 @@ namespace Konclude {
 
 		CSingleThreadTaskProcessorUnit* CSingleThreadTaskProcessorUnit::startProcessing() {
 			WASM_TRACE2("STPU", "start", "running=%d lastTag=%lld",
-			    (int)isRunning(), (long long)mLastProcessingStartedTag);
+			    (int)isRunning(), (long long)mLastProcessingStartedTag.load(std::memory_order_relaxed));
 			// Call 2+: unconditionally drain stale signals/events and reset tags so
 			// that signalizeEvent() can release the semaphore for the new classify()
 			// call.  Stale KPSet pthread callbacks arriving after the previous
@@ -298,17 +298,11 @@ namespace Konclude {
 				// Drain stale semaphore counts first (non-blocking).
 				while (mProcessingWakeUpSemaphore.tryAcquire(1, 0)) {}
 
-				// Drain stale events from the channel handler (two passes for safety).
-				if (mEventHandler->needEventProcessing()) {
-					CEventLinker* li = mEventHandler->takeEvents(nullptr);
-					while (li) {
-						CEventLinker* next = li->getNextEventLinker();
-						CEvent* staleEvent = li->getData();
-						if (staleEvent) mMemoryAllocator->releaseMemoryPoolContainer(staleEvent);
-						li = next;
-					}
-				}
-				if (mEventHandler->needEventProcessing()) {
+				// Drain stale events from the channel handler. takeEvents() is not atomic:
+				// late KPSet pthread callbacks can enqueue between passes, so loop until
+				// the channel is empty. Terminates because KPSet pthreads stop posting
+				// once classification is done.
+				while (mEventHandler->needEventProcessing()) {
 					CEventLinker* li = mEventHandler->takeEvents(nullptr);
 					while (li) {
 						CEventLinker* next = li->getNextEventLinker();
@@ -322,7 +316,7 @@ namespace Konclude {
 				while (mProcessingWakeUpSemaphore.tryAcquire(1, 0)) {}
 
 				// Reset tags so signalizeEvent()'s equality guard passes again.
-				mLastProcessingStartRequestTag = mLastProcessingStartedTag;
+				mLastProcessingStartRequestTag.store(mLastProcessingStartedTag.load(std::memory_order_relaxed), std::memory_order_relaxed);
 
 				// Reset mProcessingStopped (set by stopProcessing() in some code paths)
 				// so processingLoop() does not exit immediately on next entry.
@@ -336,13 +330,13 @@ namespace Konclude {
 				// by 1.  Pre-sync the started tag so that prepareOntology()'s signalizeEvent()
 				// call (on the manager thread) sees equal tags before the STPU pthread has had
 				// a chance to acquire the semaphore and update the tag itself.
-				mLastProcessingStartedTag = mLastProcessingStartRequestTag;
+				mLastProcessingStartedTag.store(mLastProcessingStartRequestTag.load(std::memory_order_relaxed), std::memory_order_relaxed);
 			} else if (!mEventSignalized) {
 				// Thread already alive (call 2+): post CHandleEventsEvent to re-enter
 				// processingLoop().  Only needed if the previous processingLoop() exited
 				// (mProcessingStopped path) or the thread is idle.
 				postEvent(new Concurrent::Events::CHandleEventsEvent());
-				mLastProcessingStartedTag = mLastProcessingStartRequestTag;
+				mLastProcessingStartedTag.store(mLastProcessingStartRequestTag.load(std::memory_order_relaxed), std::memory_order_relaxed);
 			}
 			return this;
 		}
@@ -415,7 +409,7 @@ namespace Konclude {
 					mStatBlockingTime += mBlockingTimer.elapsed();
 					mComputionTimer.start();
 #endif
-					mLastProcessingStartedTag = mLastProcessingStartRequestTag;
+					mLastProcessingStartedTag.store(mLastProcessingStartRequestTag.load(std::memory_order_acquire), std::memory_order_release);
 					// Exit immediately if woken for shutdown — don't touch event handlers
 					// or task queues that may be partially destroyed.
 					if (mProcessingStopped) {
@@ -632,7 +626,7 @@ namespace Konclude {
 			// Guard held for classify()'s quiesce-wait: after prepareOntology() returns,
 			// classify() acquires this mutex to ensure the last completeTask() has fully
 			// exited before reasoner.delete() frees mCallbackExecuter.
-			std::lock_guard<std::mutex> completeTaskGuard(*sCompleteTaskGuards[this]);
+			std::lock_guard<QMutex> completeTaskGuard(*sCompleteTaskGuards[this]);
 			cint64 completedCount = 0;
 			mTaskCompletionQueue = task->getLastListLink()->setNext(mTaskCompletionQueue);
 			while (mTaskCompletionQueue) {

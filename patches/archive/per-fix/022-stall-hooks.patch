@@ -1,0 +1,47 @@
+--- a/Source/Scheduler/CTaskProcessorThreadBase.cpp
++++ b/Source/Scheduler/CTaskProcessorThreadBase.cpp
+@@ -18,6 +18,7 @@
+  *
+  */
+ 
++#include "KonStall.h"
+ #include "CTaskProcessorThreadBase.h"
+ 
+ 
+@@ -586,6 +587,7 @@
+ 
+ 
+ 		bool CTaskProcessorThreadBase::processTask(CTask* task) {
++			KonStall::Scope konStallScope;
+ 			mLastProcessedTask = task;
+ 			task->clearNext();
+ 			task->getTaskStatus()->setTaskPROCESSINGState();
+--- a/Source/Reasoner/Kernel/Manager/CReasonerManagerThread.cpp
++++ b/Source/Reasoner/Kernel/Manager/CReasonerManagerThread.cpp
+@@ -18,6 +18,7 @@
+  *
+  */
+ 
++#include "KonStall.h"
+ #include "CReasonerManagerThread.h"
+ 
+ 
+@@ -140,9 +141,15 @@
+ 
+ 
+ 				CReasonerManager *CReasonerManagerThread::prepareOntology(CConcreteOntology* ontology, const QList<COntologyProcessingRequirement*>& reqList) {
+-					CBlockingCallbackData callback;
+-					postEvent(new CPrepareOntologyEvent(ontology,reqList,&callback));
+-					callback.waitForCallback();
++					CBlockingCallbackData* callback = new CBlockingCallbackData();
++					KonStall::beginWait();
++					postEvent(new CPrepareOntologyEvent(ontology,reqList,callback));
++					while (!callback->waitForCallback(1000)) {
++						if (KonStall::stallDetected()) {
++							return this; // callback intentionally leaked, see KonStall.h
++						}
++					}
++					delete callback;
+ 					return this;
+ 				}
+ 

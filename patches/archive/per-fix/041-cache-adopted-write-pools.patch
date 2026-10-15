@@ -1,0 +1,50 @@
+--- a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.cpp
++++ b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.cpp
+@@ -158,6 +158,20 @@
+ 				// and are released later by cleanUnusedSlots. Cache thread only.
+ 				static std::unordered_set<CBackendRepresentativeMemoryCacheOntologyData*> sFinalOntologyDataVersions;
+ 
++				// Memory pools received with association write messages, adopted by the cache; per ontology identifier. Cache thread only.
++				static std::unordered_map<cint64, CMemoryPool*> sAdoptedWritePools;
++				static void releaseAdoptedWritePools(cint64 ontologyIdentifier, CMemoryPoolAllocationManager* memMan) {
++					std::unordered_map<cint64, CMemoryPool*>::iterator it = sAdoptedWritePools.find(ontologyIdentifier);
++					if (it != sAdoptedWritePools.end()) {
++						CMemoryPool* pools = it->second;
++						sAdoptedWritePools.erase(it);
++						if (pools) {
++							memMan->releaseTemporaryMemoryPools(pools);
++						}
++					}
++				}
++
++
+ 				static void releaseAllIndividualAssociationContexts(CBackendRepresentativeMemoryCacheOntologyData* ontologyData, CMemoryPoolAllocationManager* memMan) {
+ 					std::unordered_set<CBackendRepresentativeMemoryCacheIndividualAssociationContext*> contexts;
+ 					CBackendRepresentativeMemoryCacheIndividualAssociationData** vec = ontologyData->getIndividualIdAssoiationDataVector();
+@@ -469,6 +483,7 @@
+ 												staleData->getRecomputationReferenceLinker()->setOntologyDataInactive();
+ 											}
+ 											releaseAllIndividualAssociationContexts(staleData, evictMemMan);
++											releaseAdoptedWritePools(staleId, evictMemMan);
+ 											CBackendRepresentativeMemoryCacheOntologyContext* staleOntCtx = staleData->getOntologyContext();
+ 											if (staleOntCtx) {
+ 												CMemoryPool* staleOntCtxPools = staleOntCtx->getMemoryPoolContainer()->getMemoryPools();
+@@ -599,6 +614,7 @@
+ 
+ 									if (sFinalOntologyDataVersions.erase(ontologyData) > 0) {
+ 										releaseAllIndividualAssociationContexts(ontologyData, memMan);
++										releaseAdoptedWritePools(ontologyData->getOntologyIdentifer(), memMan);
+ 										CBackendRepresentativeMemoryCacheOntologyContext* finalOntCtx = ontologyData->getOntologyContext();
+ 										if (finalOntCtx) {
+ 											CMemoryPool* finalOntCtxPools = finalOntCtx->getMemoryPoolContainer()->getMemoryPools();
+@@ -3950,6 +3966,10 @@
+ 						CBackendRepresentativeMemoryCacheWriteData* dataLinkerIt = newWriteData;
+ 
+ 						cint64 ontologyIdentifier = dataLinkerIt->getOntologyIdentifier();
++						if (memoryPools) {
++							CMemoryPool*& adoptedPools = sAdoptedWritePools[ontologyIdentifier];
++							adoptedPools = memoryPools->append(adoptedPools);
++						}
+ 
+ 						CBackendRepresentativeMemoryCacheOntologyData* ontologyData = mOntologyIdentifierDataHash->value(ontologyIdentifier);
+ 						mLastHandledOntologyContext = ontologyData;

@@ -1,0 +1,14 @@
+--- a/Source/Reasoner/Kernel/Manager/CReasonerManagerThread.cpp
++++ b/Source/Reasoner/Kernel/Manager/CReasonerManagerThread.cpp
+@@ -673,6 +673,11 @@
+ 							reqPrepData->mDepCount = reqPrepData->mOntoReqDataHash.count();
+ 							mProcessingRequirementsSet.insert(reqPrepData);
+ 
++							// Clear dedup sets: (CConcreteOntology*, processorType) entries from
++							// prior calls must not block callbacks for new ontologies that happen
++							// to land at the same freed address (mimalloc pointer reuse, patch-009).
++							mProcessingEndMessageSet.clear();
++							mProcessingStartMessageSet.clear();
+ 							continueRequirementProcessing(reqPrepData,ontology);
+ 						} else {
+ 							if (callbackData) {

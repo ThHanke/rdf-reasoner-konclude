@@ -1,0 +1,807 @@
+--- a/Source/Reasoner/Classifier/COptimizedKPSetClassOntologyClassificationItem.cpp
++++ b/Source/Reasoner/Classifier/COptimizedKPSetClassOntologyClassificationItem.cpp
+@@ -337,6 +337,11 @@
+ 				return this;
+ 			}
+ 
++			QList<COptimizedKPSetClassOntologyClassificationItem::CPendingInitMessage>*
++			COptimizedKPSetClassOntologyClassificationItem::getPendingInitMessageList() {
++				return &mPendingInitMessages;
++			}
++
+ 		}; // end namespace Classifier
+ 
+ 	}; // end namespace Reasoner
+--- a/Source/Reasoner/Classifier/COptimizedKPSetClassOntologyClassificationItem.h
++++ b/Source/Reasoner/Classifier/COptimizedKPSetClassOntologyClassificationItem.h
+@@ -150,6 +150,17 @@
+ 					COptimizedKPSetClassOntologyClassificationItem* incTruePossibleSubsumerCount(cint64 incSubsumCount = 1);
+ 					COptimizedKPSetClassOntologyClassificationItem* incFalsePossibleSubsumerCount(cint64 incSubsumCount = 1);
+ 
++					// Buffer for TELLCLASSINITIALIZEPOSSIBLESUBSUM — copied off the pool
++					// (freed right after processToldClassificationMessage returns).
++					// Flushed in concept-tag order at the phase transition.
++					struct CPendingInitMessage {
++						CConcept* subsumedConcept;
++						bool eqConceptsNonCandidatePossSubsumers;
++						QList<QPair<CConcept*,bool>> possSubsumers;  // (concept, isValid)
++						QList<CConcept*> eqConNonCandSubsumers;
++					};
++					QList<CPendingInitMessage>* getPendingInitMessageList();
++
+ 				// protected methods
+ 				protected:
+ 
+@@ -194,6 +205,7 @@
+ 					CBOXHASH<CConcept*,CConcept*> mEquivConCandidateHash;
+ 
+ 					CMemoryPoolContainer mMemoryPoolContainer;
++					QList<CPendingInitMessage> mPendingInitMessages;
+ 
+ 				// private methods
+ 				private:
+--- a/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.cpp
++++ b/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.cpp
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include "COptimizedKPSetClassSubsumptionClassifierThread.h"
++#include "JustificationCache.h"
+ 
+ namespace Konclude {
+ 
+@@ -287,7 +288,15 @@
+ 					}
+ 				}
+ 
+-
++				// Sort by concept tag so extraction order is canonical across runs.
++				// CBOXSET<CConcept*> iteration order varies with pointer-hash values
++				// (mimalloc addresses differ per run), causing different initial
++				// nextItemList populations and different fastSatisfiable precheck
++				// outcomes in subsequent scheduling.
++				std::stable_sort(extClassConceptItemList.begin(), extClassConceptItemList.end(),
++					[](const COptimizedKPSetClassTestingItem* a, const COptimizedKPSetClassTestingItem* b) {
++						return a->getTestingConcept()->getConceptTag() < b->getTestingConcept()->getConceptTag();
++					});
+ 
+ 				for (QList<COptimizedKPSetClassTestingItem*>::const_iterator it = extClassConceptItemList.constBegin(), itEnd = extClassConceptItemList.constEnd(); it != itEnd; ++it) {
+ 					COptimizedKPSetClassTestingItem* classItem = (*it);
+@@ -340,6 +349,22 @@
+ 								if (!insufficientFlag && !possibleSubsumerFlag && !incompleteProcessedFlag) {
+ 									classItem->setResultSatisfiableDerivated(true);
+ 									classItem->setPossibleSubsumptionMapInitialized(true);
++									// Populate JustificationCache for saturation-derived subsumers.
++									// KPSet skips the full tableau for ResultSatisfiableDerivated concepts,
++									// so CSatisfiableTaskClassificationMessageAnalyser never runs for them.
++									{
++										int64_t subTag = concept->getConceptTag();
++										QList<COptimizedKPSetClassTestingItem*>* satSubsumerList = classItem->getSubsumingConceptItemList();
++										for (auto it = satSubsumerList->constBegin(); it != satSubsumerList->constEnd(); ++it) {
++											CConcept* superCon = (*it)->getTestingConcept();
++											if (superCon && superCon->hasClassName()) {
++												int64_t superTag = superCon->getConceptTag();
++												if (!JustificationCache::instance().lookup(subTag, superTag)) {
++													JustificationCache::instance().insert(subTag, superTag, {superTag});
++												}
++											}
++										}
++									}
+ 								}
+ 								ontClassItem->incRemainingSatisfiableTestsCount();
+ 								remainingCandItemSet->insert(classItem);
+@@ -639,11 +664,17 @@
+ 			}
+ 
+ 			bool itemSortLessSubsumptionsThan(const COptimizedKPSetClassTestingItem* item1, const COptimizedKPSetClassTestingItem* item2) {
+-				return item1->getSubsumingConceptItemCount() < item2->getSubsumingConceptItemCount();
++				cint64 c1 = item1->getSubsumingConceptItemCount();
++				cint64 c2 = item2->getSubsumingConceptItemCount();
++				if (c1 != c2) return c1 < c2;
++				return item1->getTestingConcept()->getConceptTag() < item2->getTestingConcept()->getConceptTag();
+ 			}
+ 
+ 			bool itemSortMoreSubsumptionsThan(const COptimizedKPSetClassTestingItem* item1, const COptimizedKPSetClassTestingItem* item2) {
+-				return item1->getSubsumingConceptItemCount() > item2->getSubsumingConceptItemCount();
++				cint64 c1 = item1->getSubsumingConceptItemCount();
++				cint64 c2 = item2->getSubsumingConceptItemCount();
++				if (c1 != c2) return c1 > c2;
++				return item1->getTestingConcept()->getConceptTag() < item2->getTestingConcept()->getConceptTag();
+ 			}
+ 
+ 
+@@ -777,6 +808,14 @@
+ 
+ 							COptimizedKPSetClassTestingItem* nextSatTestItem = nullptr;
+ 							if (!nextItemList->isEmpty()) {
++								// Sort before taking so thread-completion order does not
++								// affect which concept is processed next.
++								if (nextItemList->size() > 1) {
++									std::stable_sort(nextItemList->begin(), nextItemList->end(),
++										[](const COptimizedKPSetClassTestingItem* a, const COptimizedKPSetClassTestingItem* b) {
++											return a->getTestingConcept()->getConceptTag() < b->getTestingConcept()->getConceptTag();
++										});
++								}
+ 								nextSatTestItem = nextItemList->takeFirst();
+ 								remainingCandItemSet->remove(nextSatTestItem);
+ 								nextCandItemSet->remove(nextSatTestItem);
+@@ -788,7 +827,9 @@
+ 								for (QSet<COptimizedKPSetClassTestingItem*>::const_iterator it = nextCandItemSet->constBegin(), itEnd = nextCandItemSet->constEnd(); it != itEnd && maxItCount > 0; ++it, --maxItCount) {
+ 									COptimizedKPSetClassTestingItem* item = (*it);
+ 									cint64 predCount = item->getUnprocessedPredecessorItemCount();
+-									if (!minItem || predCount < minUnpPredCount) {
++									if (!minItem || predCount < minUnpPredCount ||
++											(predCount == minUnpPredCount &&
++											 item->getTestingConcept()->getConceptTag() < minItem->getTestingConcept()->getConceptTag())) {
+ 										minUnpPredCount = predCount;
+ 										minItem = item;
+ 									}
+@@ -799,18 +840,14 @@
+ 
+ 							} else if (!remainingCandItemSet->isEmpty()) {
+ 								COptimizedKPSetClassTestingItem* minItem = nullptr;
+-								//cint64 minUnpPredCount = 0;
+-								//for (QSet<COptimizedKPSetClassTestingItem*>::const_iterator it = remainingCandItemSet->constBegin(), itEnd = remainingCandItemSet->constEnd(); it != itEnd; ++it) {
+-								//	COptimizedKPSetClassTestingItem* item = (*it);
+-								//	cint64 predCount = item->getUnprocessedPredecessorItemCount();
+-								//	if (!minItem || minUnpPredCount < predCount) {
+-								//		minUnpPredCount = predCount;
+-								//		minItem = item;
+-								//	}
+-								//}
+-								//nextSatTestItem = minItem;
+-								QSet<COptimizedKPSetClassTestingItem*>::const_iterator itNext = remainingCandItemSet->constBegin();
+-								nextSatTestItem = *itNext;
++								// Pick item with lowest concept tag for canonical dispatch order.
++								for (QSet<COptimizedKPSetClassTestingItem*>::const_iterator it = remainingCandItemSet->constBegin(), itEnd = remainingCandItemSet->constEnd(); it != itEnd; ++it) {
++									COptimizedKPSetClassTestingItem* item = (*it);
++									if (!minItem || item->getTestingConcept()->getConceptTag() < minItem->getTestingConcept()->getConceptTag()) {
++										minItem = item;
++									}
++								}
++								nextSatTestItem = minItem;
+ 								remainingCandItemSet->remove(nextSatTestItem);
+ 							}
+ 
+@@ -848,7 +885,7 @@
+ 								}
+ 
+ 								QList<COptimizedKPSetClassTestingItem*> classList(*optKPSetClassificationItem->getSatisfiableConceptItemList());
+-								qSort(classList.begin(),classList.end(),itemSortLessSubsumptionsThan);
++								std::stable_sort(classList.begin(),classList.end(),itemSortLessSubsumptionsThan);
+ 								QList<COptimizedKPSetClassTestingItem*> resevePossSubsumClassList;
+ 								foreach (COptimizedKPSetClassTestingItem* item, classList) {
+ 									COptimizedKPSetClassPossibleSubsumptionMap* possSubSumMap = item->getPossibleSubsumptionMap(false);
+@@ -924,6 +961,11 @@
+ 								OPTIMIZEDKPSETCLASSCLASSIFIERDEBUGCONSISTENCYTEST(testDebugPossibleSubsumerCorrectCounted(optKPSetClassificationItem));
+ 								OPTIMIZEDKPSETCLASSCLASSIFIERDEBUGCONSISTENCYTEST(createDebugKPSetString(optKPSetClassificationItem,"./Debugging/Classification/classkpsets-inital.txt"));
+ 
++								// Process all buffered TELLCLASSINITIALIZEPOSSIBLESUBSUM messages
++								// in canonical concept-tag order now that upPropSet/downPropSet
++								// are fully constructed.
++								flushPendingInitMessages(optKPSetClassificationItem);
++
+ 
+ 								foreach (COptimizedKPSetClassTestingItem* item, classList) {
+ 									COptimizedKPSetClassPossibleSubsumptionMap* possSubsumMap = item->getPossibleSubsumptionMap(false);
+@@ -1042,7 +1084,7 @@
+ 									for (QSet<COptimizedKPSetClassTestingItem*>::const_iterator it = remTestingSet->constBegin(), itEnd = remTestingSet->constEnd(); it != itEnd; ++it) {
+ 										COptimizedKPSetClassTestingItem* possSubsumerItem = *it;
+ 										QList<COptimizedKPSetClassTestingItem*>* subsumersSortedList = new QList<COptimizedKPSetClassTestingItem*>(possSubsumerItem->getPossibleSubsumedSet(false)->toList());										
+-										qSort(subsumersSortedList->begin(),subsumersSortedList->end(),itemSortMoreSubsumptionsThan);
++										std::stable_sort(subsumersSortedList->begin(),subsumersSortedList->end(),itemSortMoreSubsumptionsThan);
+ 										possSubsumerItem->setPossibleSubsumedList(subsumersSortedList);
+ 									}
+ 									OPTIMIZEDKPSETCLASSCLASSIFIERDEBUGCONSISTENCYTEST(testDebugPossibleSubsumerCorrectReferenced(optKPSetClassificationItem));
+@@ -1774,124 +1816,201 @@
+ 						//}
+ 
+ 					} else if (messageData->getClassificationMessageDataType() == CClassificationMessageData::TELLCLASSINITIALIZEPOSSIBLESUBSUM) {
+-						++mStatProcesedPossSubsumInitMessCount;
+-						CClassificationInitializePossibleClassSubsumptionMessageData* possSubsumMessageData = (CClassificationInitializePossibleClassSubsumptionMessageData*)messageData;
+-						CConcept* subsumedConcept = possSubsumMessageData->getSubsumedConcept();
+-						CCLASSPOSSIBLESUBSUMPTIONMESSAGELIST<CClassificationInitializePossibleClassSubsumptionData*>* possSubsumerList = possSubsumMessageData->getClassPossibleSubsumerList();
+-						bool eqConceptsNonCandidatePossSubsumers = possSubsumMessageData->hasEqConceptsNonCandidatePossSubsumers();
+-						CCLASSPOSSIBLESUBSUMPTIONMESSAGELIST<CConcept*>* eqConNonCandPossSubsumerList = possSubsumMessageData->getClassEqConceptNonCandidatePossibleSubsumerList();
+-
+-#ifdef OPTIMIZEDKPSETCLASSCLASSIFIERDEBUGB
+-						QString iriClassNameString = CIRIName::getRecentIRIName(subsumedConcept->getClassNameLinker());
+-						possSubsumInitConList.append(iriClassNameString);
+-#endif
++					++mStatProcesedPossSubsumInitMessCount;
++					CClassificationInitializePossibleClassSubsumptionMessageData* possSubsumMessageData =
++						(CClassificationInitializePossibleClassSubsumptionMessageData*)messageData;
++					// Copy message data off the pool (freed after this function returns).
++					// Actual processing is deferred to flushPendingInitMessages(), which runs
++					// after the satisfiable-testing phase transition in canonical tag order.
++					COptimizedKPSetClassOntologyClassificationItem::CPendingInitMessage msg;
++					msg.subsumedConcept = possSubsumMessageData->getSubsumedConcept();
++					msg.eqConceptsNonCandidatePossSubsumers = possSubsumMessageData->hasEqConceptsNonCandidatePossSubsumers();
++					if (possSubsumMessageData->getClassPossibleSubsumerList()) {
++						for (auto it  = possSubsumMessageData->getClassPossibleSubsumerList()->constBegin(),
++						          itE = possSubsumMessageData->getClassPossibleSubsumerList()->constEnd();
++						     it != itE; ++it) {
++							CClassificationInitializePossibleClassSubsumptionData* d = *it;
++							msg.possSubsumers.append(std::make_pair(d->getPossibleSubsumerConcept(), d->isPossibleSubsumerValid()));
++						}
++					}
++					if (possSubsumMessageData->getClassEqConceptNonCandidatePossibleSubsumerList()) {
++						for (auto it  = possSubsumMessageData->getClassEqConceptNonCandidatePossibleSubsumerList()->constBegin(),
++						          itE = possSubsumMessageData->getClassEqConceptNonCandidatePossibleSubsumerList()->constEnd();
++						     it != itE; ++it) {
++							msg.eqConNonCandSubsumers.append(*it);
++						}
++					}
++					optKPSetClassificationItem->getPendingInitMessageList()->append(std::move(msg));
++					if (optKPSetClassificationItem->hasSatisfiableTestingPhaseFinished()) {
++						// Late arrival after phase transition (rare in WASM sync-mode).
++						flushPendingInitMessages(optKPSetClassificationItem);
++					}
+ 
++				} else if (messageData->getClassificationMessageDataType() == CClassificationMessageData::TELLCLASSUPDATEPOSSIBLESUBSUM) {
++						++mStatProcesedPossSubsumUpdateMessCount;
++						CClassificationUpdatePossibleClassSubsumptionMessageData* possSubsumMessageData = (CClassificationUpdatePossibleClassSubsumptionMessageData*)messageData;
++						CConcept* subsumedConcept = possSubsumMessageData->getSubsumedConcept();
+ 
+ 						COptimizedKPSetClassTestingItem* subsumedItem = nullptr;
+ 						subsumedItem = optKPSetClassificationItem->getConceptSatisfiableTestItem(subsumedConcept);
+ 
+-						QSet<CConcept*>* equivConNonCandidateSet = optKPSetClassificationItem->getEquivaltentConceptNonCandidateSet();
+ 						COptimizedKPSetClassPossibleSubsumptionMap* possSubsumMap = subsumedItem->getPossibleSubsumptionMap(false);
+-						if (equivConNonCandidateSet->isEmpty() && (!possSubsumerList || possSubsumerList->empty())) {
+-							if (possSubsumMap) {
+-								for (COptimizedKPSetClassPossibleSubsumptionMap::const_iterator it = possSubsumMap->constBegin(), itEnd = possSubsumMap->constEnd(); it != itEnd; ++it) {
+-									COptimizedKPSetClassPossibleSubsumptionData* possSubsumData = it.value();
+-									if (possSubsumData->isSubsumptionUnknown()) {
+-										possSubsumData->setSubsumptionInvalid(true);
+-										if (possSubsumData->isUpdateRequired()) {
+-											prunePossibleSubsumptions(optKPSetClassificationItem,subsumedItem,possSubsumData);
+-										}
+-										OPTIMIZEDKPSETCLASSCLASSIFIERDEBUGCONSISTENCYTEST(testDebugPossibleSubsumerCorrectCounted(optKPSetClassificationItem));
++						if (possSubsumMap && !possSubsumMap->empty()) {
++							possSubsumMap = subsumedItem->getPossibleSubsumptionMap(true);
++							for (COptimizedKPSetClassPossibleSubsumptionMap::const_iterator it = possSubsumMap->constBegin(), itEnd = possSubsumMap->constEnd(); it != itEnd; ++it) {
++								COptimizedKPSetClassPossibleSubsumptionData* possSubsumData = it.value();
++								if (possSubsumData->isUpdateRequired()) {
++									prunePossibleSubsumptions(optKPSetClassificationItem,subsumedItem,possSubsumData);
++									OPTIMIZEDKPSETCLASSCLASSIFIERDEBUGCONSISTENCYTEST(testDebugPossibleSubsumerCorrectCounted(optKPSetClassificationItem));
++								}
++							}
++						}
++					} else if (messageData->getClassificationMessageDataType() == CClassificationMessageData::TELLCLASSPSEUDOMODELIDENTIFIERS) {
++						++mStatProcesedPseudoModelMessCount;
++						CClassificationPseudoModelIdentifierMessageData* pmMessageData = (CClassificationPseudoModelIdentifierMessageData*)messageData;
++						CConcept* pmConcept = pmMessageData->getPseudoModelConcept();
++						CMemoryPool* pmMemoryPools = pmMessageData->getPseudoModelMemoryPools();
++						CClassificationClassPseudoModelHash* pmHash = pmMessageData->getPseudoModelHash();
++
++						COptimizedKPSetClassTestingItem* pmItem = nullptr;
++						pmItem = optKPSetClassificationItem->getConceptSatisfiableTestItem(pmConcept);
++						pmItem->getClassPseudoModel()->setPseudoModelHash(pmHash);
++						pmItem->setClassPseudoModelInitalized(true);
++
++						optKPSetClassificationItem->addMemoryPools(pmMemoryPools);
++
++					}
++					messageDataLinkerIt = messageDataLinkerIt->getNext();
++				}
++				OPTIMIZEDKPSETCLASSCLASSIFIERDEBUGCONSISTENCYTEST(testDebugPossibleSubsumerCorrectCounted(optKPSetClassificationItem));
++				return true;
++			}
++
++
++			void COptimizedKPSetClassSubsumptionClassifierThread::flushPendingInitMessages(
++					COptimizedKPSetClassOntologyClassificationItem* optKPSetClassificationItem) {
++				QList<COptimizedKPSetClassOntologyClassificationItem::CPendingInitMessage>* pendingList =
++					optKPSetClassificationItem->getPendingInitMessageList();
++				if (pendingList->isEmpty()) {
++					return;
++				}
++
++				// Sort by concept tag → canonical processing order regardless of
++				// which saturation pthread delivered its message first.
++				std::stable_sort(pendingList->begin(), pendingList->end(),
++					[](const COptimizedKPSetClassOntologyClassificationItem::CPendingInitMessage& a,
++					   const COptimizedKPSetClassOntologyClassificationItem::CPendingInitMessage& b) {
++						return a.subsumedConcept->getConceptTag() < b.subsumedConcept->getConceptTag();
++					});
++
++				QSet<CConcept*>* equivConNonCandidateSet = optKPSetClassificationItem->getEquivaltentConceptNonCandidateSet();
++				CBOXHASH<CConcept*,CConcept*>* equivConCandidateHash = optKPSetClassificationItem->getEquivalentConceptCandidateHash();
++
++				for (const COptimizedKPSetClassOntologyClassificationItem::CPendingInitMessage& msg : *pendingList) {
++					CConcept* subsumedConcept = msg.subsumedConcept;
++
++#ifdef OPTIMIZEDKPSETCLASSCLASSIFIERDEBUGB
++					QString iriClassNameString = CIRIName::getRecentIRIName(subsumedConcept->getClassNameLinker());
++					possSubsumInitConList.append(iriClassNameString);
++#endif
++
++					COptimizedKPSetClassTestingItem* subsumedItem =
++						optKPSetClassificationItem->getConceptSatisfiableTestItem(subsumedConcept);
++
++					COptimizedKPSetClassPossibleSubsumptionMap* possSubsumMap = subsumedItem->getPossibleSubsumptionMap(false);
++					if (equivConNonCandidateSet->isEmpty() && msg.possSubsumers.isEmpty()) {
++						if (possSubsumMap) {
++							for (COptimizedKPSetClassPossibleSubsumptionMap::const_iterator it = possSubsumMap->constBegin(),
++							         itEnd = possSubsumMap->constEnd(); it != itEnd; ++it) {
++								COptimizedKPSetClassPossibleSubsumptionData* possSubsumData = it.value();
++								if (possSubsumData->isSubsumptionUnknown()) {
++									possSubsumData->setSubsumptionInvalid(true);
++									if (possSubsumData->isUpdateRequired()) {
++										prunePossibleSubsumptions(optKPSetClassificationItem,subsumedItem,possSubsumData);
+ 									}
++									OPTIMIZEDKPSETCLASSCLASSIFIERDEBUGCONSISTENCYTEST(testDebugPossibleSubsumerCorrectCounted(optKPSetClassificationItem));
+ 								}
+ 							}
+-						} else {
+-							if (!subsumedItem->isPossibleSubsumptionMapInitialized() || possSubsumMap) {
+-								possSubsumMap = subsumedItem->getPossibleSubsumptionMap(true);
+-								CBOXHASH<CConcept*,CConcept*>* equivConCandidateHash = optKPSetClassificationItem->getEquivalentConceptCandidateHash();
+-								if (possSubsumMap->isEmpty()) {
+-									// initialize the possible subsumption map
+-									if (possSubsumerList) {
+-										for (CCLASSPOSSIBLESUBSUMPTIONMESSAGELIST<CClassificationInitializePossibleClassSubsumptionData*>::const_iterator it = possSubsumerList->constBegin(), itEnd = possSubsumerList->constEnd(); it != itEnd; ++it) {
+-											CClassificationInitializePossibleClassSubsumptionData* possSubsumDataIt = *it;
+-											if (possSubsumDataIt->isPossibleSubsumerValid()) {
+-												CConcept* possSubsumConcept = possSubsumDataIt->getPossibleSubsumerConcept();
+-												if (possSubsumConcept->getOperatorCode() != CCEQ || !equivConCandidateHash->contains(possSubsumConcept)) {
+-													COptimizedKPSetClassTestingItem* possSubsumItem = optKPSetClassificationItem->getConceptSatisfiableTestItem(possSubsumConcept);
+-													if (!subsumedItem->hasSubsumerConceptItem(possSubsumItem) && subsumedItem != possSubsumItem) {
+-														COptimizedKPSetClassPossibleSubsumptionData* possSubsumData = new COptimizedKPSetClassPossibleSubsumptionData(possSubsumItem);
+-														possSubsumMap->insert(CConceptTagComparer(possSubsumConcept),possSubsumData);
+-														incRemainingPossibleSubsumptionTestingCount(optKPSetClassificationItem,possSubsumMap);
+-														OPTIMIZEDKPSETCLASSCLASSIFIERDEBUGCONSISTENCYTEST(testDebugPossibleSubsumerCorrectCounted(optKPSetClassificationItem));
+-													}
+-													OPTIMIZEDKPSETCLASSCLASSIFIERDEBUGCONSISTENCYTEST(testDebugPossibleSubsumerCorrectCounted(optKPSetClassificationItem));
+-												}
++						}
++					} else {
++						if (!subsumedItem->isPossibleSubsumptionMapInitialized() || possSubsumMap) {
++							possSubsumMap = subsumedItem->getPossibleSubsumptionMap(true);
++							if (possSubsumMap->isEmpty()) {
++								// ── Initialize the possible-subsumption map ──────────────────────
++								for (const QPair<CConcept*,bool>& ps : msg.possSubsumers) {
++									if (ps.second) {  // isValid
++										CConcept* possSubsumConcept = ps.first;
++										if (possSubsumConcept->getOperatorCode() != CCEQ ||
++												!equivConCandidateHash->contains(possSubsumConcept)) {
++											COptimizedKPSetClassTestingItem* possSubsumItem =
++												optKPSetClassificationItem->getConceptSatisfiableTestItem(possSubsumConcept);
++											if (!subsumedItem->hasSubsumerConceptItem(possSubsumItem) && subsumedItem != possSubsumItem) {
++												COptimizedKPSetClassPossibleSubsumptionData* possSubsumData =
++													new COptimizedKPSetClassPossibleSubsumptionData(possSubsumItem);
++												possSubsumMap->insert(CConceptTagComparer(possSubsumConcept),possSubsumData);
++												incRemainingPossibleSubsumptionTestingCount(optKPSetClassificationItem,possSubsumMap);
++												OPTIMIZEDKPSETCLASSCLASSIFIERDEBUGCONSISTENCYTEST(testDebugPossibleSubsumerCorrectCounted(optKPSetClassificationItem));
+ 											}
++											OPTIMIZEDKPSETCLASSCLASSIFIERDEBUGCONSISTENCYTEST(testDebugPossibleSubsumerCorrectCounted(optKPSetClassificationItem));
+ 										}
+ 									}
+-									OPTIMIZEDKPSETCLASSCLASSIFIERDEBUGCONSISTENCYTEST(testDebugPossibleSubsumerCorrectCounted(optKPSetClassificationItem));
+-									if (eqConceptsNonCandidatePossSubsumers) {
+-										if (eqConNonCandPossSubsumerList) {
+-											for (CCLASSPOSSIBLESUBSUMPTIONMESSAGELIST<CConcept*>::const_iterator it = eqConNonCandPossSubsumerList->constBegin(), itEnd = eqConNonCandPossSubsumerList->constEnd(); it != itEnd; ++it) {
+-												CConcept* eqConcept = *it;
+-												COptimizedKPSetClassTestingItem* possEqSubsumItem = optKPSetClassificationItem->getConceptSatisfiableTestItem(eqConcept);
+-												if (!subsumedItem->hasSubsumerConceptItem(possEqSubsumItem) && subsumedItem != possEqSubsumItem) {
+-													if (!possSubsumMap->contains(CConceptTagComparer(eqConcept))) {
+-														COptimizedKPSetClassPossibleSubsumptionData* possSubsumData = new COptimizedKPSetClassPossibleSubsumptionData(possEqSubsumItem);
+-														possSubsumMap->insert(CConceptTagComparer(eqConcept),possSubsumData);
+-														incRemainingPossibleSubsumptionTestingCount(optKPSetClassificationItem,possSubsumMap);
+-													}
+-												}
++								}
++								OPTIMIZEDKPSETCLASSCLASSIFIERDEBUGCONSISTENCYTEST(testDebugPossibleSubsumerCorrectCounted(optKPSetClassificationItem));
++								if (msg.eqConceptsNonCandidatePossSubsumers) {
++									for (CConcept* eqConcept : msg.eqConNonCandSubsumers) {
++										COptimizedKPSetClassTestingItem* possEqSubsumItem =
++											optKPSetClassificationItem->getConceptSatisfiableTestItem(eqConcept);
++										if (!subsumedItem->hasSubsumerConceptItem(possEqSubsumItem) && subsumedItem != possEqSubsumItem) {
++											if (!possSubsumMap->contains(CConceptTagComparer(eqConcept))) {
++												COptimizedKPSetClassPossibleSubsumptionData* possSubsumData =
++													new COptimizedKPSetClassPossibleSubsumptionData(possEqSubsumItem);
++												possSubsumMap->insert(CConceptTagComparer(eqConcept),possSubsumData);
++												incRemainingPossibleSubsumptionTestingCount(optKPSetClassificationItem,possSubsumMap);
+ 											}
+ 										}
+-									} else {
+-										for (QSet<CConcept*>::const_iterator it = equivConNonCandidateSet->constBegin(), itEnd = equivConNonCandidateSet->constEnd(); it != itEnd; ++it) {
+-											CConcept* eqConcept = *it;
+-											COptimizedKPSetClassTestingItem* possEqSubsumItem = optKPSetClassificationItem->getConceptSatisfiableTestItem(eqConcept);
+-											if (!subsumedItem->hasSubsumerConceptItem(possEqSubsumItem) && subsumedItem != possEqSubsumItem) {
+-												if (!possSubsumMap->contains(CConceptTagComparer(eqConcept))) {
+-													COptimizedKPSetClassPossibleSubsumptionData* possSubsumData = new COptimizedKPSetClassPossibleSubsumptionData(possEqSubsumItem);
+-													possSubsumMap->insert(CConceptTagComparer(eqConcept),possSubsumData);
+-													incRemainingPossibleSubsumptionTestingCount(optKPSetClassificationItem,possSubsumMap);
+-												}
++									}
++								} else {
++									for (QSet<CConcept*>::const_iterator it = equivConNonCandidateSet->constBegin(),
++											itEnd = equivConNonCandidateSet->constEnd(); it != itEnd; ++it) {
++										CConcept* eqConcept = *it;
++										COptimizedKPSetClassTestingItem* possEqSubsumItem =
++											optKPSetClassificationItem->getConceptSatisfiableTestItem(eqConcept);
++										if (!subsumedItem->hasSubsumerConceptItem(possEqSubsumItem) && subsumedItem != possEqSubsumItem) {
++											if (!possSubsumMap->contains(CConceptTagComparer(eqConcept))) {
++												COptimizedKPSetClassPossibleSubsumptionData* possSubsumData =
++													new COptimizedKPSetClassPossibleSubsumptionData(possEqSubsumItem);
++												possSubsumMap->insert(CConceptTagComparer(eqConcept),possSubsumData);
++												incRemainingPossibleSubsumptionTestingCount(optKPSetClassificationItem,possSubsumMap);
+ 											}
+ 										}
+ 									}
+-									OPTIMIZEDKPSETCLASSCLASSIFIERDEBUGCONSISTENCYTEST(testDebugPossibleSubsumerCorrectCounted(optKPSetClassificationItem));
++								}
++								OPTIMIZEDKPSETCLASSCLASSIFIERDEBUGCONSISTENCYTEST(testDebugPossibleSubsumerCorrectCounted(optKPSetClassificationItem));
+ 
+-									// prune ancestor items
+-									QSet<COptimizedKPSetClassTestingItem*>* upPropSet = subsumedItem->getUpPropagationItemSet();
+-									for (QSet<COptimizedKPSetClassTestingItem*>::const_iterator it = upPropSet->constBegin(), itEnd = upPropSet->constEnd(); it != itEnd; ++it) {
+-										COptimizedKPSetClassTestingItem* upPropItem = *it;
+-										COptimizedKPSetClassPossibleSubsumptionMap* upPropItemPossSubsumMap = upPropItem->getPossibleSubsumptionMap(false);
+-										if (upPropItemPossSubsumMap) {
+-											COptimizedKPSetClassPossibleSubsumptionMap::const_iterator itPoss = possSubsumMap->constBegin(), itPossEnd = possSubsumMap->constEnd();
+-											COptimizedKPSetClassPossibleSubsumptionMap::const_iterator itUpPoss = upPropItemPossSubsumMap->constBegin(), itUpPossEnd = upPropItemPossSubsumMap->constEnd();
+-											while (itPoss != itPossEnd && itUpPoss != itUpPossEnd) {
+-												CConcept* possCon = itPoss.key().getConcept();
+-												CConcept* possUpCon = itUpPoss.key().getConcept();
+-												if (possCon->getConceptTag() == possUpCon->getConceptTag()) {
+-													++itPoss;
+-													++itUpPoss;
+-												} else if (possCon->getConceptTag() < possUpCon->getConceptTag()) {
+-													++itPoss;
+-												} else if (possCon->getConceptTag() > possUpCon->getConceptTag()) {
+-													COptimizedKPSetClassPossibleSubsumptionData* upPossData = itUpPoss.value();
+-													if (!subsumedItem->hasSubsumerConceptItem(upPossData->getClassItem()) && subsumedItem != upPossData->getClassItem()) {
+-														if (!upPossData->isSubsumptionInvalided()) {
+-															upPossData->setSubsumptionInvalid(true);
+-															if (upPossData->isUpdateRequired()) {
+-																prunePossibleSubsumptions(optKPSetClassificationItem,upPropItem,upPossData);
+-															}
+-															OPTIMIZEDKPSETCLASSCLASSIFIERDEBUGCONSISTENCYTEST(testDebugPossibleSubsumerCorrectCounted(optKPSetClassificationItem));
+-														}
+-													}
+-													++itUpPoss;
+-												}
+-											}
+-											while (itUpPoss != itUpPossEnd) {
++								// ── Cross-prune ancestor items ──────────────────────────────────
++								QSet<COptimizedKPSetClassTestingItem*>* upPropSet = subsumedItem->getUpPropagationItemSet();
++								for (QSet<COptimizedKPSetClassTestingItem*>::const_iterator it = upPropSet->constBegin(),
++										itEnd = upPropSet->constEnd(); it != itEnd; ++it) {
++									COptimizedKPSetClassTestingItem* upPropItem = *it;
++									COptimizedKPSetClassPossibleSubsumptionMap* upPropItemPossSubsumMap =
++										upPropItem->getPossibleSubsumptionMap(false);
++									if (upPropItemPossSubsumMap) {
++										COptimizedKPSetClassPossibleSubsumptionMap::const_iterator
++											itPoss = possSubsumMap->constBegin(), itPossEnd = possSubsumMap->constEnd();
++										COptimizedKPSetClassPossibleSubsumptionMap::const_iterator
++											itUpPoss = upPropItemPossSubsumMap->constBegin(),
++											itUpPossEnd = upPropItemPossSubsumMap->constEnd();
++										while (itPoss != itPossEnd && itUpPoss != itUpPossEnd) {
++											CConcept* possCon    = itPoss.key().getConcept();
++											CConcept* possUpCon  = itUpPoss.key().getConcept();
++											if (possCon->getConceptTag() == possUpCon->getConceptTag()) {
++												++itPoss; ++itUpPoss;
++											} else if (possCon->getConceptTag() < possUpCon->getConceptTag()) {
++												++itPoss;
++											} else {
+ 												COptimizedKPSetClassPossibleSubsumptionData* upPossData = itUpPoss.value();
+-												if (!subsumedItem->hasSubsumerConceptItem(upPossData->getClassItem()) && subsumedItem != upPossData->getClassItem()) {
++												if (!subsumedItem->hasSubsumerConceptItem(upPossData->getClassItem()) &&
++														subsumedItem != upPossData->getClassItem()) {
+ 													if (!upPossData->isSubsumptionInvalided()) {
+ 														upPossData->setSubsumptionInvalid(true);
+ 														if (upPossData->isUpdateRequired()) {
+@@ -1903,41 +2022,47 @@
+ 												++itUpPoss;
+ 											}
+ 										}
+-									}
+-
+-									// prune descendant items
+-									QSet<COptimizedKPSetClassTestingItem*>* downPropSet = subsumedItem->getDownPropagationItemSet();
+-									for (QSet<COptimizedKPSetClassTestingItem*>::const_iterator it = downPropSet->constBegin(), itEnd = downPropSet->constEnd(); it != itEnd; ++it) {
+-										COptimizedKPSetClassTestingItem* downPropItem = *it;
+-										COptimizedKPSetClassPossibleSubsumptionMap* downPropItemPossSubsumMap = downPropItem->getPossibleSubsumptionMap(false);
+-										if (downPropItemPossSubsumMap) {
+-											COptimizedKPSetClassPossibleSubsumptionMap::const_iterator itPoss = possSubsumMap->constBegin(), itPossEnd = possSubsumMap->constEnd();
+-											COptimizedKPSetClassPossibleSubsumptionMap::const_iterator itDownPoss = downPropItemPossSubsumMap->constBegin(), itDownPossEnd = downPropItemPossSubsumMap->constEnd();
+-											while (itPoss != itPossEnd && itDownPoss != itDownPossEnd) {
+-												CConcept* possCon = itPoss.key().getConcept();
+-												CConcept* possDownCon = itDownPoss.key().getConcept();
+-												if (possCon->getConceptTag() == possDownCon->getConceptTag()) {
+-													++itPoss;
+-													++itDownPoss;
+-												} else if (possDownCon->getConceptTag() < possCon->getConceptTag()) {
+-													++itDownPoss;
+-												} else if (possDownCon->getConceptTag() > possCon->getConceptTag()) {
+-													COptimizedKPSetClassPossibleSubsumptionData* possData = itPoss.value();
+-													if (!downPropItem->hasSubsumerConceptItem(possData->getClassItem()) && downPropItem != possData->getClassItem()) {
+-														if (!possData->isSubsumptionInvalided()) {
+-															possData->setSubsumptionInvalid(true);
+-															if (possData->isUpdateRequired()) {
+-																prunePossibleSubsumptions(optKPSetClassificationItem,subsumedItem,possData);
+-															}
+-															OPTIMIZEDKPSETCLASSCLASSIFIERDEBUGCONSISTENCYTEST(testDebugPossibleSubsumerCorrectCounted(optKPSetClassificationItem));
+-														}
++										while (itUpPoss != itUpPossEnd) {
++											COptimizedKPSetClassPossibleSubsumptionData* upPossData = itUpPoss.value();
++											if (!subsumedItem->hasSubsumerConceptItem(upPossData->getClassItem()) &&
++													subsumedItem != upPossData->getClassItem()) {
++												if (!upPossData->isSubsumptionInvalided()) {
++													upPossData->setSubsumptionInvalid(true);
++													if (upPossData->isUpdateRequired()) {
++														prunePossibleSubsumptions(optKPSetClassificationItem,upPropItem,upPossData);
+ 													}
+-													++itPoss;
++													OPTIMIZEDKPSETCLASSCLASSIFIERDEBUGCONSISTENCYTEST(testDebugPossibleSubsumerCorrectCounted(optKPSetClassificationItem));
+ 												}
+ 											}
+-											while (itPoss != itPossEnd) {
+-												COptimizedKPSetClassPossibleSubsumptionData* possData = itDownPoss.value();
+-												if (!downPropItem->hasSubsumerConceptItem(possData->getClassItem()) && downPropItem != possData->getClassItem()) {
++											++itUpPoss;
++										}
++									}
++								}
++
++								// ── Cross-prune descendant items ────────────────────────────────
++								QSet<COptimizedKPSetClassTestingItem*>* downPropSet = subsumedItem->getDownPropagationItemSet();
++								for (QSet<COptimizedKPSetClassTestingItem*>::const_iterator it = downPropSet->constBegin(),
++										itEnd = downPropSet->constEnd(); it != itEnd; ++it) {
++									COptimizedKPSetClassTestingItem* downPropItem = *it;
++									COptimizedKPSetClassPossibleSubsumptionMap* downPropItemPossSubsumMap =
++										downPropItem->getPossibleSubsumptionMap(false);
++									if (downPropItemPossSubsumMap) {
++										COptimizedKPSetClassPossibleSubsumptionMap::const_iterator
++											itPoss = possSubsumMap->constBegin(), itPossEnd = possSubsumMap->constEnd();
++										COptimizedKPSetClassPossibleSubsumptionMap::const_iterator
++											itDownPoss = downPropItemPossSubsumMap->constBegin(),
++											itDownPossEnd = downPropItemPossSubsumMap->constEnd();
++										while (itPoss != itPossEnd && itDownPoss != itDownPossEnd) {
++											CConcept* possCon    = itPoss.key().getConcept();
++											CConcept* possDownCon = itDownPoss.key().getConcept();
++											if (possCon->getConceptTag() == possDownCon->getConceptTag()) {
++												++itPoss; ++itDownPoss;
++											} else if (possDownCon->getConceptTag() < possCon->getConceptTag()) {
++												++itDownPoss;
++											} else {
++												COptimizedKPSetClassPossibleSubsumptionData* possData = itPoss.value();
++												if (!downPropItem->hasSubsumerConceptItem(possData->getClassItem()) &&
++														downPropItem != possData->getClassItem()) {
+ 													if (!possData->isSubsumptionInvalided()) {
+ 														possData->setSubsumptionInvalid(true);
+ 														if (possData->isUpdateRequired()) {
+@@ -1948,112 +2073,92 @@
+ 												}
+ 												++itPoss;
+ 											}
+-										} else if (downPropItem->isPossibleSubsumptionMapInitialized()) {
+-											for (COptimizedKPSetClassPossibleSubsumptionMap::const_iterator itPoss = possSubsumMap->constBegin(), itPossEnd = possSubsumMap->constEnd(); itPoss != itPossEnd; ++itPoss) {
+-												COptimizedKPSetClassPossibleSubsumptionData* possData = itPoss.value();
+-												if (!downPropItem->hasSubsumerConceptItem(possData->getClassItem()) && downPropItem != possData->getClassItem()) {
+-													if (!possData->isSubsumptionInvalided()) {
+-														possData->setSubsumptionInvalid(true);
+-														if (possData->isUpdateRequired()) {
+-															prunePossibleSubsumptions(optKPSetClassificationItem,subsumedItem,possData);
+-														}
++										}
++										while (itPoss != itPossEnd) {
++											COptimizedKPSetClassPossibleSubsumptionData* possData = itDownPoss.value();
++											if (!downPropItem->hasSubsumerConceptItem(possData->getClassItem()) &&
++													downPropItem != possData->getClassItem()) {
++												if (!possData->isSubsumptionInvalided()) {
++													possData->setSubsumptionInvalid(true);
++													if (possData->isUpdateRequired()) {
++														prunePossibleSubsumptions(optKPSetClassificationItem,subsumedItem,possData);
+ 													}
++													OPTIMIZEDKPSETCLASSCLASSIFIERDEBUGCONSISTENCYTEST(testDebugPossibleSubsumerCorrectCounted(optKPSetClassificationItem));
+ 												}
+ 											}
++											++itPoss;
+ 										}
+-									}
+-
+-								} else {
+-									// prune the possible subsumption map
+-									COptimizedKPSetClassPossibleSubsumptionMap::const_iterator itPoss = possSubsumMap->constBegin(), itPossEnd = possSubsumMap->constEnd();
+-									if (possSubsumerList) {
+-										CCLASSPOSSIBLESUBSUMPTIONMESSAGELIST<CClassificationInitializePossibleClassSubsumptionData*>::const_iterator itNew = possSubsumerList->constBegin(), itNewEnd = possSubsumerList->constEnd();
+-										while (itPoss != itPossEnd && itNew != itNewEnd) {
++									} else if (downPropItem->isPossibleSubsumptionMapInitialized()) {
++										for (COptimizedKPSetClassPossibleSubsumptionMap::const_iterator itPoss = possSubsumMap->constBegin(),
++												itPossEnd = possSubsumMap->constEnd(); itPoss != itPossEnd; ++itPoss) {
+ 											COptimizedKPSetClassPossibleSubsumptionData* possData = itPoss.value();
+-											CConcept* possCon = itPoss.key().getConcept();
+-											CClassificationInitializePossibleClassSubsumptionData* possNewSubsumDataIt = *itNew;
+-											if (possNewSubsumDataIt->isPossibleSubsumerValid()) {
+-												CConcept* newCon = possNewSubsumDataIt->getPossibleSubsumerConcept();
+-												if (possCon->getConceptTag() == newCon->getConceptTag()) {
+-													++itPoss;
+-													++itNew;
+-												} else if (possCon->getConceptTag() < newCon->getConceptTag()) {
+-													if (possCon->getOperatorCode() != CCEQ) {
+-														if (!possData->isSubsumptionInvalided()) {
+-															possData->setSubsumptionInvalid(true);
+-															if (possData->isUpdateRequired()) {
+-																prunePossibleSubsumptions(optKPSetClassificationItem,subsumedItem,possData);
+-															}
+-															OPTIMIZEDKPSETCLASSCLASSIFIERDEBUGCONSISTENCYTEST(testDebugPossibleSubsumerCorrectCounted(optKPSetClassificationItem));
+-														}
++											if (!downPropItem->hasSubsumerConceptItem(possData->getClassItem()) &&
++													downPropItem != possData->getClassItem()) {
++												if (!possData->isSubsumptionInvalided()) {
++													possData->setSubsumptionInvalid(true);
++													if (possData->isUpdateRequired()) {
++														prunePossibleSubsumptions(optKPSetClassificationItem,subsumedItem,possData);
+ 													}
+-													++itPoss;
+-												} else if (possCon->getConceptTag() > newCon->getConceptTag()) {
+-													++itNew;
+ 												}
+-											} else {
+-												++itNew;
+ 											}
+ 										}
+ 									}
+-									while (itPoss != itPossEnd) {
++								}
++							} else {
++								// ── Prune existing map using buffered list ───────────────────────
++								COptimizedKPSetClassPossibleSubsumptionMap::const_iterator
++									itPoss = possSubsumMap->constBegin(), itPossEnd = possSubsumMap->constEnd();
++								const int newCount = msg.possSubsumers.size();
++								int newIdx = 0;
++								if (newCount > 0) {
++									while (itPoss != itPossEnd && newIdx < newCount) {
+ 										COptimizedKPSetClassPossibleSubsumptionData* possData = itPoss.value();
+ 										CConcept* possCon = itPoss.key().getConcept();
+-										if (possCon->getOperatorCode() != CCEQ) {
+-											if (!possData->isSubsumptionInvalided()) {
+-												possData->setSubsumptionInvalid(true);
+-												if (possData->isUpdateRequired()) {
+-													prunePossibleSubsumptions(optKPSetClassificationItem,subsumedItem,possData);
++										const QPair<CConcept*,bool>& ne = msg.possSubsumers[newIdx];
++										if (ne.second) {  // isValid
++											CConcept* newCon = ne.first;
++											if (possCon->getConceptTag() == newCon->getConceptTag()) {
++												++itPoss; ++newIdx;
++											} else if (possCon->getConceptTag() < newCon->getConceptTag()) {
++												if (possCon->getOperatorCode() != CCEQ) {
++													if (!possData->isSubsumptionInvalided()) {
++														possData->setSubsumptionInvalid(true);
++														if (possData->isUpdateRequired()) {
++															prunePossibleSubsumptions(optKPSetClassificationItem,subsumedItem,possData);
++														}
++														OPTIMIZEDKPSETCLASSCLASSIFIERDEBUGCONSISTENCYTEST(testDebugPossibleSubsumerCorrectCounted(optKPSetClassificationItem));
++													}
+ 												}
+-												OPTIMIZEDKPSETCLASSCLASSIFIERDEBUGCONSISTENCYTEST(testDebugPossibleSubsumerCorrectCounted(optKPSetClassificationItem));
++												++itPoss;
++											} else {
++												++newIdx;
+ 											}
++										} else {
++											++newIdx;
+ 										}
+-										++itPoss;
+ 									}
+ 								}
+-							}
+-						}
+-						subsumedItem->setPossibleSubsumptionMapInitialized(true);
+-
+-
+-					} else if (messageData->getClassificationMessageDataType() == CClassificationMessageData::TELLCLASSUPDATEPOSSIBLESUBSUM) {
+-						++mStatProcesedPossSubsumUpdateMessCount;
+-						CClassificationUpdatePossibleClassSubsumptionMessageData* possSubsumMessageData = (CClassificationUpdatePossibleClassSubsumptionMessageData*)messageData;
+-						CConcept* subsumedConcept = possSubsumMessageData->getSubsumedConcept();
+-
+-						COptimizedKPSetClassTestingItem* subsumedItem = nullptr;
+-						subsumedItem = optKPSetClassificationItem->getConceptSatisfiableTestItem(subsumedConcept);
+-
+-						COptimizedKPSetClassPossibleSubsumptionMap* possSubsumMap = subsumedItem->getPossibleSubsumptionMap(false);
+-						if (possSubsumMap && !possSubsumMap->empty()) {
+-							possSubsumMap = subsumedItem->getPossibleSubsumptionMap(true);
+-							for (COptimizedKPSetClassPossibleSubsumptionMap::const_iterator it = possSubsumMap->constBegin(), itEnd = possSubsumMap->constEnd(); it != itEnd; ++it) {
+-								COptimizedKPSetClassPossibleSubsumptionData* possSubsumData = it.value();
+-								if (possSubsumData->isUpdateRequired()) {
+-									prunePossibleSubsumptions(optKPSetClassificationItem,subsumedItem,possSubsumData);
+-									OPTIMIZEDKPSETCLASSCLASSIFIERDEBUGCONSISTENCYTEST(testDebugPossibleSubsumerCorrectCounted(optKPSetClassificationItem));
++								while (itPoss != itPossEnd) {
++									COptimizedKPSetClassPossibleSubsumptionData* possData = itPoss.value();
++									CConcept* possCon = itPoss.key().getConcept();
++									if (possCon->getOperatorCode() != CCEQ) {
++										if (!possData->isSubsumptionInvalided()) {
++											possData->setSubsumptionInvalid(true);
++											if (possData->isUpdateRequired()) {
++												prunePossibleSubsumptions(optKPSetClassificationItem,subsumedItem,possData);
++											}
++											OPTIMIZEDKPSETCLASSCLASSIFIERDEBUGCONSISTENCYTEST(testDebugPossibleSubsumerCorrectCounted(optKPSetClassificationItem));
++										}
++									}
++									++itPoss;
+ 								}
+ 							}
+ 						}
+-					} else if (messageData->getClassificationMessageDataType() == CClassificationMessageData::TELLCLASSPSEUDOMODELIDENTIFIERS) {
+-						++mStatProcesedPseudoModelMessCount;
+-						CClassificationPseudoModelIdentifierMessageData* pmMessageData = (CClassificationPseudoModelIdentifierMessageData*)messageData;
+-						CConcept* pmConcept = pmMessageData->getPseudoModelConcept();
+-						CMemoryPool* pmMemoryPools = pmMessageData->getPseudoModelMemoryPools();
+-						CClassificationClassPseudoModelHash* pmHash = pmMessageData->getPseudoModelHash();
+-
+-						COptimizedKPSetClassTestingItem* pmItem = nullptr;
+-						pmItem = optKPSetClassificationItem->getConceptSatisfiableTestItem(pmConcept);
+-						pmItem->getClassPseudoModel()->setPseudoModelHash(pmHash);
+-						pmItem->setClassPseudoModelInitalized(true);
+-
+-						optKPSetClassificationItem->addMemoryPools(pmMemoryPools);
+-
+ 					}
+-					messageDataLinkerIt = messageDataLinkerIt->getNext();
++					subsumedItem->setPossibleSubsumptionMapInitialized(true);
++					OPTIMIZEDKPSETCLASSCLASSIFIERDEBUGCONSISTENCYTEST(testDebugPossibleSubsumerCorrectCounted(optKPSetClassificationItem));
+ 				}
+-				OPTIMIZEDKPSETCLASSCLASSIFIERDEBUGCONSISTENCYTEST(testDebugPossibleSubsumerCorrectCounted(optKPSetClassificationItem));
+-				return true;
++				pendingList->clear();
+ 			}
+ 
+ 
+--- a/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.h
++++ b/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.h
+@@ -174,6 +174,7 @@
+ 					void testDebugPossibleSubsumerCorrectReferenced(COptimizedKPSetClassOntologyClassificationItem *optKPSetClassificationItem);
+ 
+ 					void incRemainingPossibleSubsumptionTestingCount(COptimizedKPSetClassOntologyClassificationItem *optKPSetClassificationItem, COptimizedKPSetClassPossibleSubsumptionMap* posSubsumMap);
++					void flushPendingInitMessages(COptimizedKPSetClassOntologyClassificationItem *optKPSetClassificationItem);
+ 					void decRemainingPossibleSubsumptionTestingCount(COptimizedKPSetClassOntologyClassificationItem *optKPSetClassificationItem, COptimizedKPSetClassPossibleSubsumptionMap* posSubsumMap, bool subsumptionConfirmed);
+ 
+ 
+--- a/Source/Reasoner/Classifier/COptimizedKPSetClassTestingItem.cpp
++++ b/Source/Reasoner/Classifier/COptimizedKPSetClassTestingItem.cpp
+@@ -65,7 +65,7 @@
+ 				delete mPossibleSubsumptionMap;
+ 			}
+ 
+-			CConcept* COptimizedKPSetClassTestingItem::getTestingConcept() {
++			CConcept* COptimizedKPSetClassTestingItem::getTestingConcept() const {
+ 				return mConceptSat;
+ 			}
+ 
+@@ -210,11 +210,19 @@
+ 
+ 
+ 			bool itemSortLessThan(const COptimizedKPSetClassTestingItem* item1, const COptimizedKPSetClassTestingItem* item2) {
+-				return item1->getSubsumingConceptItemCount() > item2->getSubsumingConceptItemCount();
++				cint64 c1 = item1->getSubsumingConceptItemCount();
++				cint64 c2 = item2->getSubsumingConceptItemCount();
++				if (c1 != c2) return c1 > c2;
++				// Tie-break by concept tag: stable integer ID assigned sequentially
++				// during parsing. Without this, equal-count siblings land in
++				// thread-completion order (nondeterministic in WASM pthreads),
++				// causing different direct edges to be chosen in the transitive
++				// reduction loop across runs.
++				return item1->getTestingConcept()->getConceptTag() < item2->getTestingConcept()->getConceptTag();
+ 			}
+ 
+ 			QList<COptimizedKPSetClassTestingItem*>* COptimizedKPSetClassTestingItem::sortSubsumingConceptItemList() {
+-				qSort(mSubsumingConceptItemList.begin(),mSubsumingConceptItemList.end(),itemSortLessThan);
++				std::stable_sort(mSubsumingConceptItemList.begin(),mSubsumingConceptItemList.end(),itemSortLessThan);
+ 				return &mSubsumingConceptItemList;
+ 			}
+ 
+--- a/Source/Reasoner/Classifier/COptimizedKPSetClassTestingItem.h
++++ b/Source/Reasoner/Classifier/COptimizedKPSetClassTestingItem.h
+@@ -76,7 +76,7 @@
+ 
+ 
+ 					COptimizedKPSetClassTestingItem* initSatisfiableTestingItem(CConcept* satTestConcept, QHash<CConcept*,CClassificationSatisfiableCalculationConceptReferenceLinking*>* conRefLinkDataHash);
+-					CConcept* getTestingConcept();
++					CConcept* getTestingConcept() const;
+ 
+ 
+ 					CHierarchyNode* getSatisfiableConceptHierarchyNode();

@@ -1,0 +1,159 @@
+--- a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCacheReader.h
++++ b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCacheReader.h
+@@ -86,6 +86,10 @@
+ 
+ 						CBackendRepresentativeMemoryCacheReader* updateSlot(CBackendRepresentativeMemoryCacheSlotItem* updatedSlot);
+ 						CBackendRepresentativeMemoryCacheReader* fixOntologyData(CBackendRepresentativeMemoryCacheOntologyData* ontologyData);
++						//! Remember the cache that owns the fixed data's extra usage reference (set by createOntologyFixedCacheReader)
++						CBackendRepresentativeMemoryCacheReader* setFixedReleaseCache(void* cache);
++						//! Hand the fixed data's usage reference back to the cache (queued, executed on the cache thread)
++						void releaseFixedOntologyData();
+ 						CBackendRepresentativeMemoryCacheReader* checkRecomputationIdUsage(cint64 recomputationId);
+ 
+ 
+@@ -216,6 +220,7 @@
+ 						cint64 mRecomputationId;
+ 						CBackendRepresentativeMemoryCacheOntologyData* mOntologyData;
+ 						CBackendRepresentativeMemoryCacheOntologyData* mFixedOntologyData;
++						void* mFixedReleaseCache = nullptr;
+ 
+ 
+ 					// private methods
+--- a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCacheReader.cpp
++++ b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCacheReader.cpp
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include "CBackendRepresentativeMemoryCacheReader.h"
++#include "CBackendRepresentativeMemoryCache.h"
+ 
+ 
+ namespace Konclude {
+@@ -75,6 +76,22 @@
+ 				}
+ 
+ 
++				CBackendRepresentativeMemoryCacheReader* CBackendRepresentativeMemoryCacheReader::setFixedReleaseCache(void* cache) {
++					mFixedReleaseCache = cache;
++					return this;
++				}
++
++
++				void CBackendRepresentativeMemoryCacheReader::releaseFixedOntologyData() {
++					if (mFixedOntologyData && mFixedReleaseCache) {
++						static_cast<CBackendRepresentativeMemoryCache*>(mFixedReleaseCache)->queueFixedReaderRelease(mFixedOntologyData);
++					}
++					mFixedOntologyData = nullptr;
++					mOntologyData = nullptr;
++					mFixedReleaseCache = nullptr;
++				}
++
++
+ 				bool CBackendRepresentativeMemoryCacheReader::hasUpdatedSlotItem() {
+                     return mUpdatedSlot.fetchAndAddRelaxed(0) != nullptr;
+ 				}
+--- a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.h
++++ b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.h
+@@ -112,6 +112,9 @@
+ 
+ 						CBackendRepresentativeMemoryCacheReader* createCacheReader();
+ 						CBackendRepresentativeMemoryCacheReader* createOntologyFixedCacheReader(cint64 ontologyIdentifier);
++						//! Thread-safe: a fixed reader gives its usage reference back (processed by drainFixedReaderReleases on the cache thread)
++						void queueFixedReaderRelease(CBackendRepresentativeMemoryCacheOntologyData* ontologyData);
++						void drainFixedReaderReleases();
+ 						CBackendRepresentativeMemoryCacheWriter* createCacheWriter();
+ 
+ 
+@@ -246,6 +249,8 @@
+ 						CCACHINGHASH<cint64, CBackendRepresentativeMemoryCacheOntologyData*>* mOntologyIdentifierDataHash;
+ 						QHash<cint64, CBackendRepresentativeMemoryCacheOntologyData*> mFixedOntologyIdentifierDataHash;
+ 						QReadWriteLock mFixedOntologyIdentifierDataHashLock;
++						QMutex mPendingFixedReleasesMutex;
++						QList<CBackendRepresentativeMemoryCacheOntologyData*> mPendingFixedReleases;
+ 
+ 
+ 						//CCACHINGHASH<cint64,CBackendRepresentativeMemoryLabelSignatureResolveCacheItem>* mSigLabelItemHash[CBackendRepresentativeMemoryLabelCacheItem::LABEL_CACHE_ITEM_TYPE_COUNT];
+--- a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.cpp
++++ b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.cpp
+@@ -361,6 +361,7 @@
+ 
+ 
+ 				CBackendRepresentativeMemoryCacheOntologyData* CBackendRepresentativeMemoryCache::prepareOntologyDataUpdate(cint64 ontologyIdentifier, cint64 minIndiCount) {
++					drainFixedReaderReleases();
+ 					CBackendRepresentativeMemoryCacheOntologyData*& ontologyData = (*mOntologyIdentifierDataHash)[ontologyIdentifier];
+ 					if (!ontologyData || ontologyData->isSlotUpdateIntegrated()) {
+ 						CBackendRepresentativeMemoryCacheOntologyData* prevOntologyData = ontologyData;
+@@ -587,6 +588,9 @@
+ 						ontologyData->incUsageCount();
+ 					}
+ 					reader->fixOntologyData(ontologyData);
++					if (ontologyData) {
++						reader->setFixedReleaseCache(this);
++					}
+ 					mFixedOntologyIdentifierDataHashLock.unlock();
+ 					if (ontologyData) {
+ 						ontologyData->waitIndividualLabelAssociationIndexed();
+@@ -595,6 +599,49 @@
+ 				}
+ 
+ 
++				void CBackendRepresentativeMemoryCache::queueFixedReaderRelease(CBackendRepresentativeMemoryCacheOntologyData* ontologyData) {
++					mPendingFixedReleasesMutex.lock();
++					mPendingFixedReleases.append(ontologyData);
++					mPendingFixedReleasesMutex.unlock();
++				}
++
++
++				void CBackendRepresentativeMemoryCache::drainFixedReaderReleases() {
++					QList<CBackendRepresentativeMemoryCacheOntologyData*> pending;
++					mPendingFixedReleasesMutex.lock();
++					pending.swap(mPendingFixedReleases);
++					mPendingFixedReleasesMutex.unlock();
++					if (pending.isEmpty()) {
++						return;
++					}
++					CMemoryPoolAllocationManager* memMan = mContext.getMemoryPoolAllocationManager();
++					for (CBackendRepresentativeMemoryCacheOntologyData* data : pending) {
++						data->decUsageCount();
++						if (data->getUsageCount() <= 0) {
++							++mOntologyDataReleasedCount;
++							if (data->getRecomputationReferenceLinker()) {
++								data->getRecomputationReferenceLinker()->setOntologyDataInactive();
++							}
++							CBackendRepresentativeMemoryCacheOntologyContext* ontCtx = data->getOntologyContext();
++							if (ontCtx) {
++								CMemoryPool* ontCtxPools = ontCtx->getMemoryPoolContainer()->getMemoryPools();
++								if (ontCtxPools) {
++									memMan->releaseTemporaryMemoryPools(ontCtxPools);
++								}
++								delete ontCtx;
++							}
++							CMemoryPool* tmpPools = data->getTemporaryContext()->getMemoryPoolContainer()->getMemoryPools();
++							if (tmpPools) {
++								memMan->releaseTemporaryMemoryPools(tmpPools);
++							}
++							KonPoolStats::gOntDataFreed.fetch_add(1, std::memory_order_relaxed);
++							KonPoolStats::gOntDataReaderReleased.fetch_add(1, std::memory_order_relaxed);
++							delete data;
++						}
++					}
++				}
++
++
+ 				CBackendRepresentativeMemoryCacheWriter* CBackendRepresentativeMemoryCache::createCacheWriter() {
+ 					CBackendRepresentativeMemoryCacheWriter* writer = new CBackendRepresentativeMemoryCacheWriter(this);
+ 					return writer;
+--- a/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingItem.cpp
++++ b/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingItem.cpp
+@@ -58,6 +58,11 @@
+ 				for (auto* v : mRepresentativeCacheCombinedExistentialRoleSetLabelItemDataHash) { delete v; }
+ 				for (auto* v : mDataRoleDetCacheLabelItemSetHash) { delete v; }
+ 				for (auto* v : mDataRoleNonDetCacheLabelItemSetHash) { delete v; }
++				if (mBackendAssocCacheReader) {
++					mBackendAssocCacheReader->releaseFixedOntologyData();
++					delete mBackendAssocCacheReader;
++					mBackendAssocCacheReader = nullptr;
++				}
+ 
+ 			}
+ 

@@ -18,7 +18,7 @@ set(KONCLUDE_EMSCRIPTEN_LINK_FLAGS
     "-sNO_EXIT_RUNTIME=1"
     "--bind"
     "-sUSE_PTHREADS=1"
-    "-sPTHREAD_POOL_SIZE=8"
+    "-sPTHREAD_POOL_SIZE=32"
     "-sPTHREAD_POOL_SIZE_STRICT=2"
     "-sMALLOC=mimalloc"
     "-Wl,--error-limit=0"
@@ -29,4 +29,5 @@ set(KONCLUDE_EMSCRIPTEN_LINK_FLAGS
     "-sEXPORTED_RUNTIME_METHODS=[\"HEAPU8\"]"
     "-sEXPORTED_FUNCTIONS=[\"_malloc\",\"_free\"]"
     "--no-wasm-opt"
+    "--profiling-funcs"
 )

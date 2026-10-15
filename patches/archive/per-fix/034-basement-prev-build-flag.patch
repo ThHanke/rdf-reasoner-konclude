@@ -1,0 +1,12 @@
+--- a/Source/Reasoner/Ontology/COntologyDataBoxes.cpp
++++ b/Source/Reasoner/Ontology/COntologyDataBoxes.cpp
+@@ -125,6 +125,9 @@
+ 
+ 			COntologyDataBoxes* COntologyDataBoxes::setBasicBuild(bool basicBuild) {
+ 				mBasicBuild = basicBuild;
++				if (basicBuild) {
++					mPrevOntBasicBuild = true;
++				}
+ 				return this;
+ 			}
+ 

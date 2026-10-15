@@ -1,0 +1,30 @@
+--- a/Source/Reasoner/Realizer/CRealizerThread.h
++++ b/Source/Reasoner/Realizer/CRealizerThread.h
+@@ -91,6 +91,10 @@
+ 					virtual bool realize(CConcreteOntology* ontology, CConfigurationBase* config, const QList<COntologyProcessingRequirement*>& requirementList);
+ 					virtual bool callbackRealized(CConcreteOntology* ontology, CCallbackData* callback);
+ 
++					// Free all COntologyRealizingItem objects in mOntItemHash.  Safe to call
++					// after pthread_join (thread stopped) once triples have been extracted.
++					virtual void clearRealizingItems();
++
+ 					virtual CRealizationMessageObserver* tellRealizationMessage(CConcreteOntology *ontology, CRealizationMessageData* messageData, CMemoryPool* memoryPool);
+ 
+ 				// protected methods
+--- a/Source/Reasoner/Realizer/CRealizerThread.cpp
++++ b/Source/Reasoner/Realizer/CRealizerThread.cpp
+@@ -41,6 +41,14 @@
+ 
+ 			CRealizerThread::~CRealizerThread() {
+ 				stopThread();
++				clearRealizingItems();
++			}
++
++			void CRealizerThread::clearRealizingItems() {
++				for (auto it = mOntItemHash.begin(); it != mOntItemHash.end(); ++it) {
++					delete it.value();
++				}
++				mOntItemHash.clear();
+ 			}
+ 
+ 

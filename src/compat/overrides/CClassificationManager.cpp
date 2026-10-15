@@ -63,7 +63,7 @@ namespace Konclude {
                     if (!classifier) {
                         classifier = mClassifierFac->createClassifier(ontology, config);
                         mOntoClassifierSet.insert(classifier);
-                        mOntoClassifierHash.insert(ontology, classifier);
+                        mOntoClassifierHash.insert({ontology, ontology->getCallGeneration()}, classifier);
                     }
                     readWriteLock.unlock();
                 }
@@ -135,7 +135,7 @@ namespace Konclude {
                     if (!classifier) {
                         classifier = mClassifierFac->getDataPropertyClassifier(ontology, config);
                         mOntoClassifierSet.insert(classifier);
-                        mOntoDataPropertyClassifierHash.insert(ontology, classifier);
+                        mOntoDataPropertyClassifierHash.insert({ontology, ontology->getCallGeneration()}, classifier);
                     }
                     readWriteLock.unlock();
                 }
@@ -159,7 +159,7 @@ namespace Konclude {
                     if (!classifier) {
                         classifier = mClassifierFac->getObjectPropertyClassifier(ontology, config);
                         mOntoClassifierSet.insert(classifier);
-                        mOntoObjectPropertyClassifierHash.insert(ontology, classifier);
+                        mOntoObjectPropertyClassifierHash.insert({ontology, ontology->getCallGeneration()}, classifier);
                     }
                     readWriteLock.unlock();
                 }
