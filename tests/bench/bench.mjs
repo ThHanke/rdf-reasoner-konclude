@@ -194,12 +194,12 @@ async function main() {
   console.log('**Reading these numbers:**');
   console.log('');
   console.log('- Single host, shared machine; numbers carry the host load average from the header. A difference smaller than the printed spread is not evidence of a difference.');
-  console.log('- ³ "TS layer total" = full public `RdfReasoner` call on a fresh instance: Worker + module start, encode, sync, reasoning, output, `store.addQuad`. It includes startup that §1a/§1b exclude.');
+  console.log('- ³ "TS layer total" = one full public `RdfReasoner` call in a fresh process: Worker + module start, encode, sync, reasoning, output, `store.addQuad`. It includes startup that §1a/§1b exclude.');
   console.log('- ⁴ HermiT (via ROBOT/ODK) is a different reasoner run in Docker; "reason" = consistency + classification + axiom generation, excluding JVM start and parsing.');
   console.log('- ⁷ Konclude excl. realization = Konclude total − its `Finished (lazy) realization` phase; an approximation of parse + classification + serialisation.');
   console.log('- The earlier "WASM classify" column (2026-09-18 and before) excluded parse/mapping, which then lived in "load"; v0.8.0 performs that work lazily inside reasoning. Old and new phase columns are therefore not comparable. Details and the A/B measurement: `docs/solutions/performance-issues/benchmark-phase-boundary-shift-2026-10.md`.');
   console.log('- WASM runs: warm-up and run counts are per case (`tests/bench/cases.mjs`); slow cases use fewer runs and are marked ‡.');
-  console.log('- Outliers are never filtered. Intermittent very slow runs (several times the median) have been observed through the TS layer on Roberts (see the spread markers); they are consistent with, but not confirmed as, the known WASM stall/recovery issue listed as open in `docs/next-session-prompt.md`.');
+  console.log('- Outliers are never filtered. The Roberts *one axiom added* scenario shows an intermittent very slow call (maximum ~220 s against ~31–34 s typical): after a call that grows the WASM heap past 2 GiB, the next changed-content call recycles the Worker (terminate and start a new one in the same process). This is an open follow-up (\`docs/next-session-prompt.md\` item 4; \`docs/solutions/performance-issues/ts-runner-in-process-slow-runs-2026-10.md\`). The TS-layer cold numbers run one fresh process per measurement and are not affected.');
   console.log('- LUBM+data native input: NTriples merged to RDF/XML via rdflib (auto-generated, .gitignored).');
   console.log('');
 
@@ -411,7 +411,7 @@ async function main() {
 
   console.log('');
   console.log('**Scenario definitions:**');
-  console.log('- *cold*: first public call on a fresh `RdfReasoner` (includes Worker and WASM start).');
+  console.log('- *cold*: first public call on a fresh `RdfReasoner` in a fresh process (includes Worker and WASM start). Each repetition of the four scenarios is its own process.');
   console.log('- *unchanged content*: same Store again. The call still encodes the whole Store and sends `sync`; the kernel compares its 128-bit content digest set with the previous one, answers "unchanged" and skips the rebuild. Cost = encode + one Worker round-trip, so it scales with store size, not with reasoning effort.');
   console.log('- *identical content, new Store*: a different Store instance with the same quads; the digest ignores Store identity, order and duplicates, so this is also a no-rebuild call.');
   console.log('- *one axiom added*: `rdfs:subClassOf owl:Thing` for a new class; the digest changes, the generation bumps and the ontology is rebuilt (full recompute on a warm Worker).');

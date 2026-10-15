@@ -2,11 +2,11 @@
 
 ```
 Date:      2026-10-15
-Package:   rdf-reasoner-konclude 0.8.0  (git 0342967, dirty tree; vendor/konclude 056334ad)
+Package:   rdf-reasoner-konclude 0.8.0  (git 1bd5942; vendor/konclude 056334ad)
 WASM:      dist/konclude.wasm sha256 a8e8134d27e1; pthread pool 32; Konclude processors 8
 Native:    Konclude v0.7.0-1138 - 500e11d9 (image 49374483e311); threads 8 (-w AUTO)
 HermiT:    1.9.10 (image 731aaa3c781f)
-Host:      Intel(R) Xeon(R) Silver 4216 CPU @ 2.10GHz, 8 cores, 41 GB; load average at start 4.84
+Host:      Intel(R) Xeon(R) Silver 4216 CPU @ 2.10GHz, 8 cores, 41 GB; load average at start 4.56
 Runtime:   Node v25.1.0
 ```
 
@@ -20,8 +20,8 @@ Markers: † spread (max−min)/median above 10%; ‡ fewer than 5 samples (indi
 
 | Ontology | Exp. | Triples | Konclude total | HermiT reason ⁴ | WASM ingest→result | WASM / Konclude |
 |---|---|---|---|---|---|---|
-| LUBM schema | SHI | 307 | 67 ms [66–69]‡ | 55 ms | 301 ms [300–318] | ~4.5× |
-| GALEN | SHIF | 30817 | 317 ms [311–327]‡ | 4627 ms | 1592 ms [1573–1611] | ~5.0× |
+| LUBM schema | SHI | 307 | 67 ms [67–68]‡ | 57 ms | 298 ms [286–352]† | ~4.4× |
+| GALEN | SHIF | 30817 | 321 ms [317–321]‡ | 4692 ms | 1589 ms [1569–1649] | ~5.0× |
 
 #### §1b ABox ontologies (realization) — classification path, and full role-closure realization
 
@@ -29,27 +29,27 @@ Native realization outputs rdf:type only and never computes role assertions; WAS
 
 | Ontology | Exp. | Triples | Konclude total (types only) | Konclude excl. realization ⁷ | WASM classification path (ingest→result) | WASM / Konclude (classification path) | WASM full realization (ingest→result, incl. role closure) |
 |---|---|---|---|---|---|---|---|
-| Roberts family | SROIQ | 3866 | 2073 ms [2026–2180]‡ | 1774 ms | 1843 ms [1839–1858]‡ | ~1.0× | 26879 ms [26711–28000]‡ |
-| LUBM schema + data | SHI | 100850 | 1210 ms [1206–1224]‡ | 1206 ms | 2870 ms [2842–2907] | ~2.4× | 3523 ms [3490–3752] |
+| Roberts family | SROIQ | 3866 | 2205 ms [2098–2222]‡ | 1899 ms | 1854 ms [1835–1907]‡ | ~1.0× | 26748 ms [26511–27000]‡ |
+| LUBM schema + data | SHI | 100850 | 1217 ms [1217–1229]‡ | 1215 ms | 2868 ms [2830–2894] | ~2.4× | 3508 ms [3477–3683] |
 
 #### §1c WASM phase breakdown (breakdown only — do not compare phases across releases)
 
 | Ontology | Op | init (one-off) | ingest (encode+sync) | reasoning | output decode | ingest→result | TS layer total ³ |
 |---|---|---|---|---|---|---|---|
-| LUBM schema | classification | 926 ms [907–1222]† | 1 ms [1–1] | 298 ms [297–314] | 2 ms [2–3]† | 301 ms [300–318] | 425 ms [398–447]† |
-| GALEN | classification | 973 ms [922–1104]† | 54 ms [54–60]† | 1511 ms [1498–1536] | 20 ms [19–21] | 1592 ms [1573–1611] | 1868 ms [1848–1903] |
-| Roberts family | realization | 910 ms [899–1487]†‡ | 7 ms [6–13]†‡ | 26507 ms [26317–27576]‡ | 386 ms [366–412]†‡ | 26879 ms [26711–28000]‡ | 225064 ms [28829–274802]†‡ |
-| LUBM schema + data | realization | 882 ms [810–905]† | 173 ms [172–195]† | 2805 ms [2755–2976] | 544 ms [538–582] | 3523 ms [3490–3752] | 4391 ms [4211–4877]† |
+| LUBM schema | classification | 946 ms [894–1280]† | 1 ms [1–2]† | 294 ms [284–349]† | 2 ms [1–2]† | 298 ms [286–352]† | 467 ms [464–482] |
+| GALEN | classification | 928 ms [892–999]† | 56 ms [55–61]† | 1511 ms [1487–1574] | 20 ms [19–23]† | 1589 ms [1569–1649] | 1940 ms [1905–1958] |
+| Roberts family | realization | 909 ms [898–1433]†‡ | 11 ms [6–16]†‡ | 26333 ms [26122–26539]‡ | 399 ms [382–449]†‡ | 26748 ms [26511–27000]‡ | 29471 ms [28942–29744]‡ |
+| LUBM schema + data | realization | 877 ms [783–900]† | 172 ms [170–188] | 2783 ms [2762–2957] | 541 ms [538–555] | 3508 ms [3477–3683] | 4307 ms [4222–4343] |
 
 **Reading these numbers:**
 
 - Single host, shared machine; numbers carry the host load average from the header. A difference smaller than the printed spread is not evidence of a difference.
-- ³ "TS layer total" = full public `RdfReasoner` call on a fresh instance: Worker + module start, encode, sync, reasoning, output, `store.addQuad`. It includes startup that §1a/§1b exclude.
+- ³ "TS layer total" = one full public `RdfReasoner` call in a fresh process: Worker + module start, encode, sync, reasoning, output, `store.addQuad`. It includes startup that §1a/§1b exclude.
 - ⁴ HermiT (via ROBOT/ODK) is a different reasoner run in Docker; "reason" = consistency + classification + axiom generation, excluding JVM start and parsing.
 - ⁷ Konclude excl. realization = Konclude total − its `Finished (lazy) realization` phase; an approximation of parse + classification + serialisation.
-- The earlier "WASM classify" column (2026-09-18 and before) excluded parse/mapping, which then lived in "load"; v0.8.0 performs that work lazily inside reasoning. Old and new phase columns are therefore not comparable. Details and the A/B measurement: `docs/solutions/performance-issues/benchmark-phase-boundary-shift-2026-10.md`.
+- The earlier "WASM classify" column (2026-09-18 and before) excluded parse/mapping, which then lived in "load"; v0.8.0 performs that work lazily inside reasoning. Old and new phase columns are therefore not comparable. Details and the old-vs-new measurement: `docs/solutions/performance-issues/benchmark-phase-boundary-shift-2026-10.md`.
 - WASM runs: warm-up and run counts are per case (`tests/bench/cases.mjs`); slow cases use fewer runs and are marked ‡.
-- Outliers are never filtered. Intermittent very slow runs (several times the median) have been observed through the TS layer on Roberts (see the spread markers); they are consistent with, but not confirmed as, the known WASM stall/recovery issue listed as open in `docs/next-session-prompt.md`.
+- Outliers are never filtered. The Roberts *one axiom added* scenario shows an intermittent very slow call (maximum ~220 s against ~31–34 s typical): after a call that grows the WASM heap past 2 GiB, the next changed-content call recycles the Worker (terminate and start a new one in the same process). This is an open follow-up (`docs/next-session-prompt.md` item 4; `docs/solutions/performance-issues/ts-runner-in-process-slow-runs-2026-10.md`). The TS-layer cold numbers run one fresh process per measurement and are not affected.
 - LUBM+data native input: NTriples merged to RDF/XML via rdflib (auto-generated, .gitignored).
 
 
@@ -94,7 +94,7 @@ Native Konclude has no output path for role assertions, sameAs, or justification
 |---|---|---|---|---|---|---|---|---|
 | LUBM schema | SHI | classification | 0 | 0 | 0 | 44 | +0 (×1.0 total) | 55 |
 | GALEN | SHIF | classification | 0 | 0 | 0 | 3287 | +0 (×1.0 total) | 4752 |
-| Roberts family | SROIQ | realization | 348562 | 0 | 348648 | 4552 | +348648 (×77.6 total) | 5900 |
+| Roberts family | SROIQ | realization | 348562 | 0 | 348648 | 4552 | +348648 (×77.6 total) | 5902 |
 | LUBM schema + data | SHI | realization | 98497 | 0 | 98541 | 39981 | +98541 (×3.5 total) | 73984 |
 
 **Capabilities notes:**
@@ -112,13 +112,13 @@ Native Konclude has no output path for role assertions, sameAs, or justification
 
 | Ontology | Exp. | cold (first call) | unchanged content | identical content, new Store | one axiom added (full rebuild) |
 |---|---|---|---|---|---|
-| LUBM schema | SHI | 439 ms [392–470]† | 4 ms [3–4]† | 6 ms [5–13]† | 132 ms [115–149]† |
-| GALEN | SHIF | 1901 ms [1837–1977] | 81 ms [78–102]† | 117 ms [111–134]† | 1409 ms [1377–1429] |
-| Roberts family | SROIQ | 29365 ms [29131–31125]‡ | 16 ms [13–18]†‡ | 1377 ms [1373–1583]†‡ | 34568 ms [26633–347953]†‡ |
-| LUBM schema + data | SHI | 4397 ms [4300–4538] | 238 ms [234–283]† | 1368 ms [1292–1416] | 3697 ms [3637–3796] |
+| LUBM schema | SHI | 462 ms [439–493]† | 5 ms [3–6]† | 10 ms [8–16]† | 136 ms [111–147]† |
+| GALEN | SHIF | 2000 ms [1963–2035] | 84 ms [74–88]† | 136 ms [132–138] | 1458 ms [1405–1465] |
+| Roberts family | SROIQ | 29090 ms [28479–29364]‡ | 17 ms [14–17]†‡ | 1602 ms [1592–1737]‡ | 33840 ms [31293–220383]†‡ |
+| LUBM schema + data | SHI | 4425 ms [4326–4484] | 278 ms [272–280] | 1368 ms [1367–1409] | 3695 ms [3641–3713] |
 
 **Scenario definitions:**
-- *cold*: first public call on a fresh `RdfReasoner` (includes Worker and WASM start).
+- *cold*: first public call on a fresh `RdfReasoner` in a fresh process (includes Worker and WASM start). Each repetition of the four scenarios is its own process.
 - *unchanged content*: same Store again. The call still encodes the whole Store and sends `sync`; the kernel compares its 128-bit content digest set with the previous one, answers "unchanged" and skips the rebuild. Cost = encode + one Worker round-trip, so it scales with store size, not with reasoning effort.
 - *identical content, new Store*: a different Store instance with the same quads; the digest ignores Store identity, order and duplicates, so this is also a no-rebuild call.
 - *one axiom added*: `rdfs:subClassOf owl:Thing` for a new class; the digest changes, the generation bumps and the ontology is rebuilt (full recompute on a warm Worker).
