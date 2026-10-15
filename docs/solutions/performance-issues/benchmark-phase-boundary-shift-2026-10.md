@@ -18,7 +18,7 @@ tags: [benchmark, wasm, syncTripleBuffer, loadTripleBuffer, measurement]
 
 ## Method
 
-Same harness (`tests/bench/ab-compare.mjs`, driven by `tests/bench/ab-run.mjs`) against two checkouts: v0.7.2 (`322b997`, built TS + its committed `dist/konclude.*`) and v0.8.0 (`a7fcbc1`). Direct Embind use, one cold module per run, old/new alternated, n=5 (Roberts n=1), host 8-core Xeon Silver 4216, load average at start 2.8-3.3 (other sessions share the host; the first attempts at load ~15 were discarded). Times in ms, median [min..max]. ingest-to-result = load + reasoning + output decode (init excluded).
+Same harness (`ab-compare.mjs` / `ab-run.mjs`, commit `0342967`; removed afterwards because old-release testing was concluded) against two checkouts: v0.7.2 (`322b997`, built TS + its committed `dist/konclude.*`) and v0.8.0 (`a7fcbc1`). Direct Embind use, one cold module per run, old/new alternated, n=5 (Roberts n=1), host 8-core Xeon Silver 4216, load average at start 2.8-3.3 (other sessions share the host; the first attempts at load ~15 were discarded). Times in ms, median [min..max]. ingest-to-result = load + reasoning + output decode (init excluded).
 
 | Case | old load | old reasoning | old total | new load | new reasoning | new total | delta |
 |---|---|---|---|---|---|---|---|

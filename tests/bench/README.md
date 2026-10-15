@@ -10,7 +10,7 @@ Options: `--quick`, `--case "<name>"` (one case; names in `cases.mjs`). The run 
 |---|---|
 | WASM ingest→result | encode + `syncTripleBuffer()` + reasoning (incl. lazy parse/mapping) + output decode. Module start (`init`) is one-off and excluded. |
 | Konclude total | Konclude's own "Total processing time" in the container: OWL/XML parse + reasoning + result serialisation. Container start excluded. |
-| TS layer total | a full public `RdfReasoner` call on a fresh instance, including Worker and module start. |
+| TS layer total | one full public `RdfReasoner` call in a fresh process, including Worker and module start. |
 | warm scenarios | one reasoner: unchanged content, identical content in a new Store, one added axiom. Kernel counters (`syncStats`) are asserted for each. |
 
 Only ingest→result vs Konclude total (TBox) or vs Konclude excl. realization (ABox classification path) is a ratio. Phase columns are a breakdown: v0.8.0 moved parse/mapping from "load" into "reasoning" (see `docs/solutions/performance-issues/benchmark-phase-boundary-shift-2026-10.md`), so phases are not comparable across releases.
@@ -22,5 +22,6 @@ Cells show `median [min–max]`; `†` = spread above 10%, `‡` = fewer than 5 
 - `bench.mjs` orchestrator and report; `meta.mjs` run metadata; `stats.mjs` summaries; `cases.mjs` budgets.
 - Runners: `wasm-runner.mjs` (direct Embind), `ts-runner.mjs` (RdfReasoner + warm scenarios), `native-runner.mjs` (Docker Konclude), `robot-runner.mjs` (HermiT), `binary-runner.mjs` (encoding micro-benchmark).
 - `equivalence.mjs` compares role assertions modulo equivalent/inverse roles declared in the input (Konclude picks one representative per equivalence class; the choice differs between builds).
-- A/B across checkouts: `ab-run.mjs` / `ab-compare.mjs` (e.g. a v0.7.2 worktree vs HEAD). Stability across many changed-content calls: `sequential-runner.mjs`.
+- TS-layer runner (`ts-runner.mjs`): **one fresh process, one fresh `RdfReasoner`, one call per measurement** (`simple-run.mjs`; `simple-warm.mjs` for the warm scenarios). Several reasoners created and terminated inside one Node process produced intermittent 4–5× slow kernel runs on Roberts (`docs/solutions/performance-issues/ts-runner-in-process-slow-runs-2026-10.md`), so in-process repetition is not used.
+- Stability across many changed-content calls on one reasoner: `sequential-runner.mjs` (by hand).
 - `gen-family.mjs` generates synthetic family ontologies; OWL/XML conversion helper: `scripts/native-xml-to-nt.mjs`.
