@@ -1,0 +1,16 @@
+--- a/Source/Reasoner/Classifier/CConfigDependedSubsumptionClassifierFactory.cpp
++++ b/Source/Reasoner/Classifier/CConfigDependedSubsumptionClassifierFactory.cpp
+@@ -39,6 +39,13 @@
+ 			CSubsumptionClassifier *CConfigDependedSubsumptionClassifierFactory::createClassifier(CConcreteOntology *ontology, CConfigurationBase *config) {
+ 				CSubsumptionClassifier *classifier = 0;
+ 				bool automatedClassifierSelection = CConfigDataReader::readConfigBoolean(config,"Konclude.Calculation.Classification.AutomatedOptimizedClassifierSelection",true);
++				if (!automatedClassifierSelection) {
++					bool onlyChangedABoxAxioms = ontology->getIncrementalRevisionData()->getAxiomChangeData()->hasOnlyChangedABoxAxioms();
++					bool previousClassifiedOntologyVersion = ontology->getIncrementalRevisionData()->getPreviousClassesClassifiedOntology() != nullptr;
++					if (!previousClassifiedOntologyVersion || onlyChangedABoxAxioms) {
++						classifier = new CIncrementalKPSetClassSubsumptionClassifierThread(reasonerMan);
++					}
++				}
+ 				if (automatedClassifierSelection) {
+ 
+ 					bool onlyChangedABoxAxioms = ontology->getIncrementalRevisionData()->getAxiomChangeData()->hasOnlyChangedABoxAxioms();

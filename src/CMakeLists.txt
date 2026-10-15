@@ -329,6 +329,13 @@ add_executable(konclude_wasm
     "${CMAKE_SOURCE_DIR}/src/tracing.cpp"
 )
 
+# The module's own sources must be compiled with atomics too, otherwise wasm-ld rejects the
+# shared-memory link ("not compiled with 'atomics' or 'bulk-memory' features").
+target_compile_options(konclude_wasm PRIVATE
+    $<$<BOOL:${EMSCRIPTEN}>:-pthread>
+    $<$<BOOL:${EMSCRIPTEN}>:-fexceptions>
+)
+
 set_target_properties(konclude_wasm PROPERTIES
     OUTPUT_NAME "konclude"
 )

@@ -1,4 +1,4 @@
-.PHONY: build build-wasm test test-browser smoke reason shell patches reset-patches fmt lint
+.PHONY: repro-wasm repro repro-selftest build build-wasm test test-browser smoke reason shell patches reset-patches fmt lint
 
 build:
 	npm run build
@@ -36,3 +36,15 @@ fmt:
 
 lint:
 	trunk check
+
+# Native (no WASM, no N3) realization determinism gate: N fresh-process samples vs oracle.
+# Usage: make repro N=5   (needs build-native/konclude_repro; ~40 s per sample at -O1)
+repro-selftest:
+	python3 scripts/oracle/test_canon.py
+
+repro: repro-selftest
+	bash scripts/repro-sample.sh tests/fixtures/roberts-family.nt tests/fixtures/oracle/roberts-family.oracle.json $(or $(N),5)
+
+# Usage: make repro-wasm N=8   (needs dist/ built; ~35 s per sample)
+repro-wasm:
+	bash scripts/wasm-sample.sh tests/fixtures/roberts-family.nt tests/fixtures/oracle/roberts-family.oracle.json $(or $(N),5)

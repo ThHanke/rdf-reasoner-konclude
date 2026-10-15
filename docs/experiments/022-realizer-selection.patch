@@ -1,0 +1,11 @@
+--- a/Source/Reasoner/Kernel/Manager/CRealizationManager.cpp
++++ b/Source/Reasoner/Kernel/Manager/CRealizationManager.cpp
+@@ -57,7 +57,7 @@
+ 						realizer = mOntoRealizerHash.value(ontology);
+ 						if (!realizer) {
+ 
+-							if (previousRealizedOntologyVersion && onlyChangedABoxAxioms) {
++							if (false && previousRealizedOntologyVersion && onlyChangedABoxAxioms) {
+ 								realizer = new CIncrementalKPSetOntologyConceptRealizingThread(mReasonerManager);
+ 							} else {
+ 								realizer = new COptimizedRepresentativeKPSetOntologyRealizingThread(mReasonerManager);

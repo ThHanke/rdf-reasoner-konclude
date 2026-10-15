@@ -1,0 +1,145 @@
+diff --git a/src/KoncludeReasoner.cpp b/src/KoncludeReasoner.cpp
+index 20c9802..a79602e 100644
+--- a/src/KoncludeReasoner.cpp
++++ b/src/KoncludeReasoner.cpp
+@@ -310,6 +310,16 @@ public:
+                 dynamic_cast<CConvertBooleanConfigType*>(aoc->getConfigType());
+             if (bt) bt->readFromBoolean(reproEnvInt("REPRO_AUTO_CLASSIFIER_SELECT", 0) != 0);
+         }
++        // Incremental revisions: let the preprocessor link the previous built / consistent /
++        // classified / realized ontology versions (otherwise revisions only share data boxes
++        // with the basement and every component reruns from scratch).
++        {
++            CConfigData* ir = mConfig->createAndSetConfig("Konclude.Ontology.Revision.IncrementalRebuild");
++            if (ir) {
++                CConvertBooleanConfigType* bt = dynamic_cast<CConvertBooleanConfigType*>(ir->getConfigType());
++                if (bt) bt->readFromBoolean(reproEnvInt("REPRO_INCR_REBUILD", 1) != 0);
++            }
++        }
+         // Use all available hardware threads (capped at PTHREAD_POOL_SIZE=8).
+         CConfigData* pc = mConfig->createAndSetConfig("Konclude.Calculation.ProcessorCount");
+         if (pc) {
+@@ -2050,6 +2060,17 @@ bool KoncludeReasoner::runPipeline(KoncludeReasoner::Impl* impl, bool includeRea
+ 
+     for (auto* r : reqList) delete r;
+ 
++#ifdef NATIVE_DEBUG_BUILD
++    {
++        auto* ird = impl->mOntology->getIncrementalRevisionData();
++        fprintf(stderr, "INCR ont=%lld incremental=%d onlyABox=%d prevBuilt=%d prevCons=%d prevClassified=%d prevRealized=%d\n",
++            (long long)impl->mOntology->getOntologyID(), (int)ird->isIncrementalOntology(),
++            (int)ird->getAxiomChangeData()->hasOnlyChangedABoxAxioms(),
++            ird->getPreviousBuiltOntology() != nullptr, ird->getPreviousConsistentOntology() != nullptr,
++            ird->getPreviousClassesClassifiedOntology() != nullptr, ird->getPreviousClassTypesRealizedOntology() != nullptr);
++    }
++#endif
++
+     COntologyProcessingStepDataVector* stepDataVec =
+         impl->mOntology->getProcessingSteps()->getOntologyProcessingStepDataVector();
+     auto stepDone = [&](COntologyProcessingStep::PROCESSINGSTEPTYPE t) -> bool {
+diff --git a/src/compat/overrides/CClassificationManager.cpp b/src/compat/overrides/CClassificationManager.cpp
+index ad4bc4a..a4389ca 100644
+--- a/src/compat/overrides/CClassificationManager.cpp
++++ b/src/compat/overrides/CClassificationManager.cpp
+@@ -6,6 +6,8 @@
+ 
+ #include "Reasoner/Classifier/CClassificationManager.h"
+ #include "Reasoner/Classifier/CSubsumptionClassifierThread.h"
++#include "Reasoner/Ontology/COntologyIncrementalRevisionData.h"
++#include "Reasoner/Ontology/CConcreteOntology.h"
+ 
+ 
+ namespace Konclude {
+@@ -47,23 +49,28 @@ namespace Konclude {
+ 
+ 
+             CSubsumptionClassifier *CClassificationManager::getClassClassifier(CConcreteOntology *ontology, CConfigurationBase *config, bool create, bool backgroundClassification) {
+-                // Reuse singleton class classifier — avoids pthread pool exhaustion and
+-                // dangling-pointer crashes (classifier registers handlers in STPU).
++                // Reuse singleton classifiers — avoids pthread pool exhaustion and dangling-pointer
++                // crashes (classifier registers handlers in STPU). Two kinds, matching the factory rule:
++                //  - incremental KPSet (ontologies without a classified predecessor, and ABox-only
++                //    revisions; it records the individual-dependence tracking later revisions reuse)
++                //  - plain KPSet (revisions with TBox/RBox changes: full reclassification)
++                COntologyIncrementalRevisionData* incRevData = ontology->getIncrementalRevisionData();
++                bool incrementalKind = incRevData->getPreviousClassesClassifiedOntology() == nullptr ||
++                    incRevData->getAxiomChangeData()->hasOnlyChangedABoxAxioms();
++                static CSubsumptionClassifier* sIncrementalKind = nullptr;
++                static CSubsumptionClassifier* sPlainKind = nullptr;
++                CSubsumptionClassifier*& slot = incrementalKind ? sIncrementalKind : sPlainKind;
+                 readWriteLock.lockForRead();
+-                CSubsumptionClassifier *classifier = nullptr;
+-                if (!mOntoClassifierHash.isEmpty()) {
+-                    classifier = mOntoClassifierHash.constBegin().value();
+-                }
++                CSubsumptionClassifier *classifier = slot;
+                 readWriteLock.unlock();
+                 if (!classifier) {
+                     readWriteLock.lockForWrite();
+-                    if (!mOntoClassifierHash.isEmpty()) {
+-                        classifier = mOntoClassifierHash.constBegin().value();
+-                    }
++                    classifier = slot;
+                     if (!classifier) {
+                         classifier = mClassifierFac->createClassifier(ontology, config);
+                         mOntoClassifierSet.insert(classifier);
+                         mOntoClassifierHash.insert({ontology, ontology->getCallGeneration()}, classifier);
++                        slot = classifier;
+                     }
+                     readWriteLock.unlock();
+                 }
+diff --git a/src/compat/overrides/CPrecomputationManager.cpp b/src/compat/overrides/CPrecomputationManager.cpp
+index 59b7406..3d5ea43 100644
+--- a/src/compat/overrides/CPrecomputationManager.cpp
++++ b/src/compat/overrides/CPrecomputationManager.cpp
+@@ -16,6 +16,8 @@
+ 
+ #include "Reasoner/Consistiser/CTotallyPrecomputationThread.h"
+ #include "Reasoner/Consistiser/CIncrementalPrecomputationThread.h"
++#include "Reasoner/Ontology/COntologyIncrementalRevisionData.h"
++#include "Reasoner/Ontology/CConcreteOntology.h"
+ 
+ 
+ namespace Konclude {
+@@ -36,25 +38,33 @@ namespace Konclude {
+                 }
+ 
+                 CPrecomputator* CPrecomputationManager::getPrecomputator(CConcreteOntology *ontology, CConfigurationBase *config) {
+-                    // Return the singleton precomputator regardless of which ontology is requested.
++                    // Revision with ABox-only changes and a previous consistent version: one incremental
++                    // precomputator per ontology (upstream behaviour).
++                    // Otherwise return the singleton full precomputator regardless of ontology.
+                     // Upstream design: one precomputator per ontology (created lazily, never freed).
+                     // WASM fix: create ONE and reuse it — avoids pthread pool exhaustion and the
+                     // dangling-pointer crash that results from deleting a thread still registered
+                     // in the STPU's mEventHandlerLinker.
++                    COntologyIncrementalRevisionData* incRevData = ontology->getIncrementalRevisionData();
++                    bool incremental = incRevData->getPreviousConsistentOntology() != nullptr &&
++                        incRevData->getAxiomChangeData()->hasOnlyChangedABoxAxioms();
++                    static CPrecomputator* sFullPrecomputator = nullptr;
++
+                     CPrecomputator* precomputator = nullptr;
+                     mReadWriteLock.lockForRead();
+-                    if (!mOntoPrecomputatorHash.isEmpty()) {
+-                        precomputator = mOntoPrecomputatorHash.constBegin().value();
+-                    }
++                    precomputator = incremental ? mOntoPrecomputatorHash.value(ontology) : sFullPrecomputator;
+                     mReadWriteLock.unlock();
+ 
+                     if (!precomputator) {
+                         mReadWriteLock.lockForWrite();
+-                        if (!mOntoPrecomputatorHash.isEmpty()) {
+-                            precomputator = mOntoPrecomputatorHash.constBegin().value();
+-                        }
++                        precomputator = incremental ? mOntoPrecomputatorHash.value(ontology) : sFullPrecomputator;
+                         if (!precomputator) {
+-                            precomputator = new CTotallyPrecomputationThread(mReasonerManager);
++                            if (incremental) {
++                                precomputator = new CIncrementalPrecomputationThread(mReasonerManager);
++                            } else {
++                                precomputator = new CTotallyPrecomputationThread(mReasonerManager);
++                                sFullPrecomputator = precomputator;
++                            }
+                             mOntoPrecomputatorHash.insert(ontology, precomputator);
+                         }
+                         mReadWriteLock.unlock();

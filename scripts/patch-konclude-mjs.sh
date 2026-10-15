@@ -195,14 +195,14 @@ else
   echo "patch-konclude-mjs: [SKIP]    getNewWorker already allows on-demand allocation"
 fi
 
-# ── Patch 7: increase pthreadPoolSize 8→32 ───────────────────────────────────
-# KPSet classification spawns ~17 threads total. Chrome silently defers/drops
-# workers created mid-classification while 8+ WASM threads are already running:
-# the worker is allocated, its HTTP fetch succeeds, but the module never
-# evaluates. Pre-allocating 32 workers at module init ensures all threads are
-# ready before classify() is called, avoiding on-demand creation in the browser.
-# The "384 threads per subprocess" exhaustion was a benchmark-only issue (12
-# concurrent subprocesses × 32); regular usage runs one instance at a time.
+# ── Patch 7: pre-allocate 32 pthread workers (was a no-op: BEFORE and AFTER were both 20) ──
+# The link flag PTHREAD_POOL_SIZE is 8, but one reasoning call peaks at ~15-17 threads, and
+# workers of the PREVIOUS call are only returned to the pool when the JS event loop of the
+# module's main thread processes their cleanupThread messages. The main thread (the Worker that
+# runs the module) blocks in waitSynchronization() during a call, and creating a NEW pthread
+# worker needs that same event loop -> permanent deadlock when the pool is exhausted
+# (observed: idle process, ~1 in 3 second Roberts materialize calls). Pre-allocating 32 workers
+# (two generations of peak usage) makes every call run from the pool without spawning.
 BEFORE_POOL='var pthreadPoolSize=8;'
 AFTER_POOL='var pthreadPoolSize=32;'
 
@@ -215,7 +215,7 @@ after  = 'var pthreadPoolSize=32;'
 text = open(path).read()
 open(path, 'w').write(text.replace(before, after, 1))
 PYEOF
-  echo "patch-konclude-mjs: [APPLIED] pthreadPoolSize 8→32 (pre-allocate for KPSet browser deadlock fix)"
+  echo "patch-konclude-mjs: [APPLIED] pthreadPoolSize 8→32 (no worker spawn while the main thread is blocked)"
 else
   echo "patch-konclude-mjs: [SKIP]    pthreadPoolSize already patched"
 fi
@@ -242,5 +242,21 @@ PYEOF
 else
   echo "patch-konclude-mjs: [SKIP]    threadPrintErr already forced in pthreads"
 fi
+
+# ── Patch 9: include the JS/WASM stack in the "thread crashed" message ────────
+# A trap in a pthread (e.g. an allocator running out of the 4 GiB heap) only killed the thread and
+# left the caller waiting; the stack (function names with --profiling-funcs) shows where.
+python3 - "$DIST_FILE" <<'PYEOF'
+import sys
+path = sys.argv[1]
+text = open(path).read()
+before = 'crashed: "+(e&&e.message));'
+after  = 'crashed: "+(e&&e.message)+" STACK: "+(e&&e.stack));'
+if before in text:
+    open(path, 'w').write(text.replace(before, after, 1))
+    print("patch-konclude-mjs: [APPLIED] thread crash message includes the stack")
+else:
+    print("patch-konclude-mjs: [SKIP]    thread crash message already includes the stack")
+PYEOF
 
 echo "patch-konclude-mjs: done"

@@ -54,6 +54,24 @@ if [ ! -d "${PATCHES_DIR}" ]; then
     exit 0
 fi
 
+# ENABLED allowlist: when patches/ENABLED exists, only apply patches listed there.
+# Each line in ENABLED is a patch basename prefix (e.g. "028" or "028-atomic-stpu-tags").
+# Lines starting with # are ignored. Misspelled names produce a warning.
+ENABLED_FILE="${PATCHES_DIR}/ENABLED"
+declare -A ENABLED_SET=()
+USE_ENABLED=0
+if [ -f "${ENABLED_FILE}" ]; then
+    USE_ENABLED=1
+    while IFS= read -r line; do
+        # Strip comments and whitespace
+        line="${line%%#*}"
+        line="${line//[[:space:]]/}"
+        [ -z "${line}" ] && continue
+        ENABLED_SET["${line}"]=1
+    done < "${ENABLED_FILE}"
+    echo "ENABLED allowlist active: ${#ENABLED_SET[@]} entries."
+fi
+
 # Collect sorted patch files.
 mapfile -t PATCHES < <(find "${PATCHES_DIR}" -maxdepth 1 -name '*.patch' | sort)
 
@@ -63,11 +81,30 @@ if [ "${#PATCHES[@]}" -eq 0 ]; then
     exit 0
 fi
 
+APPLIED_COUNT=0
 for PATCH in "${PATCHES[@]}"; do
     PATCH_NAME="$(basename "${PATCH}")"
+    PATCH_BASE="${PATCH_NAME%.patch}"
+
+    # ENABLED allowlist filter
+    if [ "${USE_ENABLED}" -eq 1 ]; then
+        MATCHED=0
+        for KEY in "${!ENABLED_SET[@]}"; do
+            if [[ "${PATCH_BASE}" == "${KEY}"* || "${PATCH_BASE}" == *"${KEY}"* ]]; then
+                MATCHED=1
+                break
+            fi
+        done
+        if [ "${MATCHED}" -eq 0 ]; then
+            echo "SKIP: ${PATCH_NAME} (not in ENABLED)"
+            continue
+        fi
+    fi
+
     # Check if already applied.
     if git -C "${VENDOR_DIR}" apply --check --reverse --ignore-whitespace "${PATCH}" 2>/dev/null; then
         echo "SKIP: ${PATCH_NAME} (already applied)"
+        APPLIED_COUNT=$((APPLIED_COUNT + 1))
         continue
     fi
     # Check if it applies cleanly.
@@ -78,12 +115,30 @@ for PATCH in "${PATCHES[@]}"; do
             exit 1
         fi
         echo "APPLIED: ${PATCH_NAME}"
+        APPLIED_COUNT=$((APPLIED_COUNT + 1))
     else
         echo "ERROR: ${PATCH_NAME} cannot be applied cleanly." >&2
         echo "SUGGEST: Try 'git -C vendor/konclude apply --reject ${PATCH}' to investigate." >&2
         exit 1
     fi
 done
+
+# Warn about ENABLED entries that matched no patch file
+if [ "${USE_ENABLED}" -eq 1 ]; then
+    for KEY in "${!ENABLED_SET[@]}"; do
+        FOUND=0
+        for PATCH in "${PATCHES[@]}"; do
+            PATCH_BASE="$(basename "${PATCH}" .patch)"
+            if [[ "${PATCH_BASE}" == "${KEY}"* || "${PATCH_BASE}" == *"${KEY}"* ]]; then
+                FOUND=1; break
+            fi
+        done
+        if [ "${FOUND}" -eq 0 ]; then
+            echo "WARN: ENABLED entry '${KEY}' matched no patch file — possible typo." >&2
+        fi
+    done
+    echo "Total patches applied/skipped-as-applied: ${APPLIED_COUNT} of ${#ENABLED_SET[@]} enabled."
+fi
 
 touch "${SENTINEL}"
 echo "Done."
