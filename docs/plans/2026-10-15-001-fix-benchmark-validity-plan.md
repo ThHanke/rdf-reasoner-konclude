@@ -149,7 +149,7 @@ Accept/refute rule (fixed before measuring): H1 is **accepted** if, per ontology
 
 ### Phase B — rebuild the benchmark (only after Unit 1 verdict)
 
-- [ ] **Unit 2: Define timing boundaries against native's real timers**
+- [x] **Unit 2: Define timing boundaries against native's real timers**
 
 **Goal:** Like-for-like comparison with each number defined.
 
@@ -171,7 +171,7 @@ Accept/refute rule (fixed before measuring): H1 is **accepted** if, per ontology
 **Verification:**
 - Every ratio column cites matching boundaries in a one-line definition; native wall-clock-in-container vs `Total processing time` difference is documented.
 
-- [ ] **Unit 3: Methodology hardening and metadata**
+- [x] **Unit 3: Methodology hardening and metadata**
 
 **Goal:** Reproducible, judgeable results; no harness-caused failures.
 
@@ -199,7 +199,7 @@ Accept/refute rule (fixed before measuring): H1 is **accepted** if, per ontology
 **Verification:**
 - Roberts TS row produces numbers; every row shows n, spread and an indicative marker where applicable; metadata block present.
 
-- [ ] **Unit 4: Honest warm-behaviour scenarios**
+- [x] **Unit 4: Honest warm-behaviour scenarios**
 
 **Goal:** Replace the incremental/cache table.
 
@@ -220,7 +220,7 @@ Accept/refute rule (fixed before measuring): H1 is **accepted** if, per ontology
 **Verification:**
 - No ratio-to-native column; scenario names match behaviour.
 
-- [ ] **Unit 5: Limit and correct output-equivalence claims**
+- [x] **Unit 5: Limit and correct output-equivalence claims** (done: the 620-pair role difference is explained by explicit `owl:equivalentProperty` in the input and normalises to 0; the only remaining difference between v0.7.2 and v0.8.0 Roberts output is 4 `rdfs:subClassOf owl:Thing` edges of equivalent-class representatives)
 
 **Goal:** State only what is verified.
 
@@ -246,7 +246,7 @@ Accept/refute rule (fixed before measuring): H1 is **accepted** if, per ontology
 **Verification:**
 - Doc says exactly what is compared (types exact; roles per the chosen method).
 
-- [ ] **Unit 6: Regenerate docs and prune prose**
+- [x] **Unit 6: Regenerate docs and prune prose**
 
 **Goal:** `docs/benchmark.md` generated from measured data plus verified, linked explanations.
 

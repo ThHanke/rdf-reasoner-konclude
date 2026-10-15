@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { Worker as NodeWorker } from 'node:worker_threads';
 import { Store, Parser as N3Parser, DataFactory } from 'n3';
+import { summarize } from './stats.mjs';
 
 /**
  * Wraps Node.js worker_threads.Worker to match the Web Worker EventTarget API
@@ -216,7 +217,8 @@ export async function benchAll(cases = TS_CASES, opts = { warmup: 2, runs: 5 }) 
 
     const runs = [];
     for (let i = 0; i < opts.runs; i++) {
-      runs.push(await runOnce(true));
+      // Explanation pass only on the first measured run (it roughly doubles the cost of slow cases).
+      runs.push(await runOnce(i === 0));
       await tryGC();
     }
 
@@ -246,6 +248,7 @@ export async function benchAll(cases = TS_CASES, opts = { warmup: 2, runs: 5 }) 
       explMs,
       explQuads,
       explOverhead,
+      stats: { total: summarize(allMs) },
     };
 
     let explInfo = '';
@@ -259,12 +262,14 @@ export async function benchAll(cases = TS_CASES, opts = { warmup: 2, runs: 5 }) 
   return results;
 }
 
-// ── Incremental reasoning benchmark ─────────────────────────────────────────
-// Measures three scenarios per case using a SINGLE RdfReasoner instance:
-//   1. Cold start: first reason() call (full pipeline)
-//   2. Cache hit:  second call on unchanged store (fingerprint match → skip)
-//   3. Re-reason:  add 1 axiom → store fingerprint changes → full re-computation
-//                  but Worker stays alive, WASM module warm
+// ── Warm-behaviour benchmark ───────────────────────────────────────────────
+// Scenarios on ONE RdfReasoner (warm Worker), each timed as a full public call:
+//   cold:       first call on a fresh reasoner (includes Worker + WASM startup; same as TS total in the speed table)
+//   unchanged:  same Store, same content — the call encodes the Store and the kernel answers "digest unchanged" (no rebuild)
+//   new-store:  a DIFFERENT Store instance with identical content — same digest, so also no rebuild
+//   changed:    one added axiom — digest changes, kernel rebuilds the ontology (full recompute, warm Worker)
+// The kernel's own counters (syncStats: generation, rebuilds) are asserted for each scenario so the numbers cannot
+// silently measure something else; the run aborts if the digest semantics differ from what the labels claim.
 
 export async function benchIncremental(cases = TS_CASES, opts = { runs: 3 }) {
   if (!existsSync(DIST_INDEX)) {
@@ -273,7 +278,7 @@ export async function benchIncremental(cases = TS_CASES, opts = { runs: 3 }) {
 
   globalThis.Worker = NodeWorkerShim;
 
-  const { RdfReasoner, INFERRED_GRAPH_IRI } = await import(DIST_INDEX);
+  const { RdfReasoner } = await import(DIST_INDEX);
   const tryGC = async () => {
     if (globalThis.gc) globalThis.gc();
     await new Promise(r => setTimeout(r, 200));
@@ -283,7 +288,7 @@ export async function benchIncremental(cases = TS_CASES, opts = { runs: 3 }) {
   const results = [];
 
   for (const c of cases) {
-    process.stderr.write(`  incremental: ${c.name}... `);
+    process.stderr.write(`  warm: ${c.name}... `);
 
     let ntContents;
     try {
@@ -294,57 +299,45 @@ export async function benchIncremental(cases = TS_CASES, opts = { runs: 3 }) {
       continue;
     }
 
-    const coldRuns = [];
-    const cacheHitRuns = [];
-    const reReasonRuns = [];
+    const baseQuads = [];
+    for (const nt of ntContents) {
+      const s = await parseIntoStore(nt);
+      baseQuads.push(...s.getQuads(null, null, null, null));
+    }
+
+    const samples = { cold: [], unchanged: [], newStore: [], changed: [] };
 
     for (let i = 0; i < opts.runs; i++) {
-      // Fresh store + fresh reasoner per iteration
-      const baseStore = new Store();
-      for (const nt of ntContents) {
-        const s = await parseIntoStore(nt);
-        for (const q of s.getQuads(null, null, null, null)) baseStore.addQuad(q);
-      }
-
       const reasoner = new RdfReasoner();
       await reasoner.ready;
+      const call = (store) => (c.abox
+        ? reasoner.materialize(store, { includeClassHierarchy: true })
+        : reasoner.reason(store));
+      const stats = async () => reasoner._call('syncStats', []);
+      const time = async (store) => { const t = performance.now(); await call(store); return Math.round(performance.now() - t); };
 
       try {
-        // 1. Cold start
-        const store1 = new Store(baseStore.getQuads(null, null, null, null));
-        const t0 = performance.now();
-        if (c.abox) {
-          await reasoner.materialize(store1, { includeClassHierarchy: true });
-        } else {
-          await reasoner.reason(store1);
-        }
-        const t1 = performance.now();
-        coldRuns.push(Math.round(t1 - t0));
+        const store1 = new Store(baseQuads);
+        samples.cold.push(await time(store1));
+        const s0 = await stats();
 
-        // 2. Cache hit — same store, same content
-        const t2 = performance.now();
-        if (c.abox) {
-          await reasoner.materialize(store1, { includeClassHierarchy: true });
-        } else {
-          await reasoner.reason(store1);
-        }
-        const t3 = performance.now();
-        cacheHitRuns.push(Math.round(t3 - t2));
+        samples.unchanged.push(await time(store1));
+        const s1 = await stats();
+        if (s1.rebuilds !== s0.rebuilds || s1.generation !== s0.generation) throw new Error('unchanged call rebuilt the ontology');
 
-        // 3. Re-reason — add 1 axiom to change the store fingerprint
-        store1.addQuad(
+        samples.newStore.push(await time(new Store(baseQuads)));
+        const s2 = await stats();
+        if (s2.rebuilds !== s0.rebuilds || s2.generation !== s0.generation) throw new Error('identical content in a new Store rebuilt the ontology');
+
+        const changed = new Store(baseQuads);
+        changed.addQuad(
           DataFactory.namedNode('http://bench.example/IncrementalTestClass'),
           DataFactory.namedNode('http://www.w3.org/2000/01/rdf-schema#subClassOf'),
           DataFactory.namedNode('http://www.w3.org/2002/07/owl#Thing'),
         );
-        const t4 = performance.now();
-        if (c.abox) {
-          await reasoner.materialize(store1, { includeClassHierarchy: true });
-        } else {
-          await reasoner.reason(store1);
-        }
-        const t5 = performance.now();
-        reReasonRuns.push(Math.round(t5 - t4));
+        samples.changed.push(await time(changed));
+        const s3 = await stats();
+        if (s3.rebuilds !== s0.rebuilds + 1 || s3.generation !== s0.generation + 1) throw new Error('changed content did not trigger exactly one rebuild');
       } catch (e) {
         process.stderr.write(`FAIL: ${e.message}\n`);
         results.push({ ...c, result: { ok: false, error: e.message } });
@@ -357,16 +350,18 @@ export async function benchIncremental(cases = TS_CASES, opts = { runs: 3 }) {
       await tryGC();
     }
 
-    if (coldRuns.length === 0) continue;
+    if (samples.cold.length === 0) continue;
 
     const result = {
       ok: true,
-      coldMs:     median(coldRuns),
-      cacheHitMs: median(cacheHitRuns),
-      reReasonMs: median(reReasonRuns),
+      stats: {
+        cold: summarize(samples.cold),
+        unchanged: summarize(samples.unchanged),
+        newStore: summarize(samples.newStore),
+        changed: summarize(samples.changed),
+      },
     };
-
-    process.stderr.write(`cold ${result.coldMs} ms, cache-hit ${result.cacheHitMs} ms, re-reason ${result.reReasonMs} ms\n`);
+    process.stderr.write(`cold ${result.stats.cold.median} ms, unchanged ${result.stats.unchanged.median} ms, new-store ${result.stats.newStore.median} ms, changed ${result.stats.changed.median} ms\n`);
     results.push({ ...c, result });
   }
 

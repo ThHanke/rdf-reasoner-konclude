@@ -39,7 +39,8 @@
     "apply-patches": "bash scripts/apply-patches.sh",
     "patch-wasm": "bash scripts/patch-konclude-mjs.sh",
     "bench": "node --expose-gc tests/bench/bench.mjs 2>&1 | tee bench-results.md",
-    "test:browser": "playwright test"
+    "test:browser": "playwright test",
+    "bench:quick": "node --expose-gc tests/bench/bench.mjs --quick 2>&1 | tee bench-results.md"
   },
   "dependencies": {
     "n3": "^1.22.0"

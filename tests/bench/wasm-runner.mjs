@@ -6,6 +6,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { summarize } from './stats.mjs';
 import { parseNTriples, encodeQuadsForWasm, decodeWasmTripleBuffer, countByCategory } from './wasm-binary.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -66,6 +67,7 @@ async function benchOne(createModule, quads, abox) {
       inferredTypeCount:   counts.typeCount,
       inferredRoleCount:   counts.roleCount,
       inferredSameAsCount: counts.sameAsCount,
+      processorCount: typeof reasoner.processorCount === 'function' ? reasoner.processorCount() : null,
       ok: true,
     };
   } catch (e) {
@@ -150,6 +152,7 @@ export async function benchAll(cases = WASM_CASES, opts = { warmup: 1, runs: 3 }
 
     const result = {
       ok: true,
+      processorCount:      runs[0].processorCount,
       initMs:              median(runs.map(r => r.initMs)),
       loadMs:              median(runs.map(r => r.loadMs)),
       classifyMs:          median(runs.map(r => r.classifyMs)),
@@ -162,6 +165,16 @@ export async function benchAll(cases = WASM_CASES, opts = { warmup: 1, runs: 3 }
       inferredSameAsCount: runs[0].inferredSameAsCount,
       // For ABox cases: classification-only timing for fair speed comparison with native.
       classifyOnlyMs: c.abox ? median(classifyOnlyRuns.map(r => r.classifyMs)) : null,
+      // Full sample statistics (n, min, median, max, spread). totalMs = ingest-to-result (encode + sync + reasoning + output decode).
+      stats: {
+        init:             summarize(runs.map(r => r.initMs)),
+        ingest:           summarize(runs.map(r => r.loadMs)),
+        reasoning:        summarize(runs.map(r => r.classifyMs)),
+        output:           summarize(runs.map(r => r.outputMs)),
+        ingestToResult:   summarize(runs.map(r => r.totalMs)),
+        classifyOnly:     c.abox ? summarize(classifyOnlyRuns.map(r => r.classifyMs)) : null,
+        classifyOnlyIngestToResult: c.abox ? summarize(classifyOnlyRuns.map(r => r.totalMs)) : null,
+      },
     };
 
     const classifyOnlyNote = c.abox ? `, classifyOnly: ${result.classifyOnlyMs} ms` : '';

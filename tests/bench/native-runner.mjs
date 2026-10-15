@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { summarize } from './stats.mjs';
 import { dirname, join } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -146,7 +147,9 @@ export function benchOne(owlFile, mountDir, runs = 3, command = 'classification'
       '-o', containerOutPath,
     ];
 
+    const tWall0 = performance.now();
     const r = spawnSync('docker', dockerArgs, { encoding: 'utf8', timeout: 120000 });
+    const wallMs = Math.round(performance.now() - tWall0);
 
     if (r.error) {
       rmSync(outDir, { recursive: true, force: true });
@@ -184,6 +187,7 @@ export function benchOne(owlFile, mountDir, runs = 3, command = 'classification'
       propClassMs:  parseMs(log, RE_PROPCLASS),
       realizeMs:    parseMs(log, RE_REALIZE),
       totalMs:      parseMs(log, RE_TOTAL),
+      wallMs,
     });
   }
 
@@ -203,6 +207,9 @@ export function benchOne(owlFile, mountDir, runs = 3, command = 'classification'
     const vals = timings.map(t => t[f]).filter(v => v != null);
     result[f] = vals.length ? median(vals) : null;
   }
+  // totalMs = Konclude's own 'Total processing time' (parse + reasoning + result serialisation, inside the container).
+  // wallMs = host wall clock around `docker run` (adds container start; not used in ratios).
+  result.stats = { total: summarize(timings.map(t => t.totalMs)), wall: summarize(timings.map(t => t.wallMs)) };
   return result;
 }
 

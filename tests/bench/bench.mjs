@@ -19,14 +19,18 @@
 import { spawnSync, execFileSync } from 'node:child_process';
 import { writeFileSync, readFileSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { loadavg } from 'node:os';
 import { dirname, join } from 'node:path';
 import { benchAll as nativeBenchAll, NATIVE_CASES } from './native-runner.mjs';
 import { benchAll as wasmBenchAll, WASM_CASES } from './wasm-runner.mjs';
 import { TS_CASES } from './ts-runner.mjs';
+import { budgetFor } from './cases.mjs';
+import { fmtStat } from './stats.mjs';
+import { collectMeta, renderMeta } from './meta.mjs';
 import { benchAll as binaryBenchAll, BINARY_CASES } from './binary-runner.mjs';
 import { benchAll as robotBenchAll, ROBOT_CASES } from './robot-runner.mjs';
 
-function runInSubprocess(scriptPath, funcName, args) {
+function runInSubprocess(scriptPath, funcName, args, timeoutMs = 600_000) {
   const ts = Date.now();
   const tmpScript = join(__dirname, `_bench_sub_${ts}.mjs`);
   const tmpResult = join(__dirname, `_bench_res_${ts}.json`);
@@ -41,7 +45,7 @@ writeFileSync('${tmpResult.replaceAll('\\', '\\\\')}', JSON.stringify(result));
     execFileSync('node', ['--expose-gc', tmpScript], {
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'inherit'],
-      timeout: 600_000,
+      timeout: timeoutMs,
     });
     return JSON.parse(readFileSync(tmpResult, 'utf8'));
   } finally {
@@ -50,11 +54,13 @@ writeFileSync('${tmpResult.replaceAll('\\', '\\\\')}', JSON.stringify(result));
   }
 }
 
-function runBenchPerCase(scriptPath, funcName, cases, opts) {
+// optsFor(c) -> { opts, timeoutMs }: per-case run counts and subprocess budget (tests/bench/cases.mjs).
+function runBenchPerCase(scriptPath, funcName, cases, optsFor) {
   const results = [];
   for (const c of cases) {
     try {
-      const caseResults = runInSubprocess(scriptPath, funcName, [[c], opts]);
+      const { opts, timeoutMs } = optsFor(c);
+      const caseResults = runInSubprocess(scriptPath, funcName, [[c], opts], timeoutMs);
       results.push(...caseResults);
     } catch (e) {
       console.error(`  ${c.name}: FAIL (subprocess): ${e.message.split('\n')[0]}`);
@@ -84,174 +90,119 @@ function ratioStr(wasmMs, nativeMs) {
 }
 
 async function main() {
+  const quick = process.argv.includes('--quick');
+  const caseArg = process.argv.indexOf('--case') >= 0 ? process.argv[process.argv.indexOf('--case') + 1] : null;
+  const wanted = (c) => (caseArg ? c.name === caseArg : quick ? ['LUBM schema', 'GALEN'].includes(c.name) : true);
+  const wasmCases = WASM_CASES.filter(wanted);
+  const tsCases = TS_CASES.filter(wanted);
+  // Other sessions share this host: wait (up to 5 min) for a quiet 1-minute load average before measuring.
+  for (let i = 0; i < 20 && loadavg()[0] > 3.5; i++) await new Promise((r) => setTimeout(r, 15000));
+
+  const optsFor = (c) => { const b = budgetFor(c.name, quick); return { opts: { warmup: b.warmup, runs: b.runs }, timeoutMs: b.timeoutMs }; };
+
   console.error('Running native Konclude benchmark (Docker)...');
-  const nativeResults = await nativeBenchAll(NATIVE_CASES, 3);
+  const nativeResults = await nativeBenchAll(NATIVE_CASES.filter(wanted), 3);
 
   console.error('\nRunning HermiT benchmark (ROBOT/ODK Docker)...');
-  const robotResults = await robotBenchAll(ROBOT_CASES, 3);
+  const robotResults = await robotBenchAll(ROBOT_CASES.filter(wanted), 3);
 
   console.error('\nRunning WASM benchmark (per-case subprocess)...');
-  const wasmResults = runBenchPerCase('./wasm-runner.mjs', 'benchAll', WASM_CASES, { warmup: 1, runs: 3 });
+  const wasmResults = runBenchPerCase('./wasm-runner.mjs', 'benchAll', wasmCases, optsFor);
 
   console.error('\nRunning TypeScript-layer benchmark (per-case subprocess)...');
-  const tsResults = runBenchPerCase('./ts-runner.mjs', 'benchAll', TS_CASES, { warmup: 1, runs: 3 });
+  const tsResults = runBenchPerCase('./ts-runner.mjs', 'benchAll', tsCases, optsFor);
 
   console.error('\nRunning binary encoding micro-benchmark (per-case subprocess)...');
-  const binaryResults = runBenchPerCase('./binary-runner.mjs', 'benchAll', BINARY_CASES, { warmup: 1, runs: 3 });
+  const binaryResults = runBenchPerCase('./binary-runner.mjs', 'benchAll', BINARY_CASES.filter(wanted), optsFor);
 
-  console.error('\nRunning incremental reasoning benchmark (per-case subprocess)...');
-  const incrResults = runBenchPerCase('./ts-runner.mjs', 'benchIncremental', TS_CASES, { runs: 1 });
+  console.error('\nRunning warm-behaviour benchmark (per-case subprocess)...');
+  const incrResults = runBenchPerCase('./ts-runner.mjs', 'benchIncremental', tsCases, (c) => ({ opts: { runs: optsFor(c).opts.runs }, timeoutMs: optsFor(c).timeoutMs }));
 
   const nativeVersionRow = nativeResults.find(r => r.result?.nativeVersion);
-  const nativeVersion = nativeVersionRow?.result?.nativeVersion ?? 'unknown';
-  const nativeThreads = nativeVersionRow?.result?.threads ?? 'unknown';
-  const portedCommit = getPortedCommit();
-
   const nativeByName = Object.fromEntries(nativeResults.map(r => [r.name, r]));
   const robotByName  = Object.fromEntries(robotResults.map(r => [r.name, r]));
   const wasmByName   = Object.fromEntries(wasmResults.map(r => [r.name, r]));
   const tsByName     = Object.fromEntries(tsResults.map(r => [r.name, r]));
   const binaryByName = Object.fromEntries(binaryResults.map(r => [r.name, r]));
 
-  // ── Header ────────────────────────────────────────────────────────────────
-
-  const robotVersionRow = robotResults.find(r => r.result?.robotVersion);
-  const robotVersion = robotVersionRow?.result?.robotVersion ?? 'unknown';
+  // ── Header: run metadata ──────────────────────────────────────────────────
 
   console.log('## Benchmark Results\n');
-  console.log('```');
-  console.log(`Native:  Konclude ${nativeVersion} (konclude/konclude:latest)`);
-  console.log(`ROBOT:   ${robotVersion} + HermiT (obolibrary/odkfull:latest)`);
-  console.log(`Ported:  vendor/konclude @ ${portedCommit} (submodule)`);
-  console.log(`Threads: ${nativeThreads} (native -w AUTO / WASM pthreads)`);
-  console.log(`Date:    ${new Date().toISOString().slice(0, 10)}`);
-  console.log('```\n');
+  console.log(renderMeta(collectMeta(REPO_ROOT), {
+    nativeVersion: nativeVersionRow?.result?.nativeVersion,
+    nativeThreads: nativeVersionRow?.result?.threads,
+    robotVersion: robotResults.find(r => r.result?.robotVersion)?.result?.robotVersion,
+    processorCount: wasmResults.find(r => r.result?.processorCount != null)?.result?.processorCount,
+  }));
+  console.log(`\nMarkers: † spread (max−min)/median above 10%; ‡ fewer than 5 samples (indicative only). Cells show median [min–max].`);
+  console.log(quick ? '\n> Quick mode: LUBM schema and GALEN only, 3 runs each, no warm-up.\n' : '');
 
-  // ── § 1  SPEED BENCHMARK ──────────────────────────────────────────────────
+
+  // ── § 1  SPEED ─────────────────────────────────────────────────────────────
   //
-  // Comparable columns — same logical work, different runtime:
-  //
-  //   TBox cases (LUBM schema, GALEN):
-  //     "Native reasoning" vs "WASM classify" — both run classification().
-  //     Directly comparable.
-  //
-  //   ABox cases (Roberts family, LUBM schema + data):
-  //     WASM realization() computes the full role closure (CRoleRealization),
-  //     producing 271k+ role assertions for Roberts. Native realization CLI
-  //     may skip or short-circuit this step since it never serializes role
-  //     assertions. The realization times are NOT comparable.
-  //
-  //     Instead we show two WASM timing columns for ABox cases:
-  //       "WASM classify ²" — classification() only on the ABox input, same
-  //         logical work as native TBox phases.  Comparable to native.
-  //       "WASM realization ⁶" — full realization() incl. role closure.
-  //         Shown as reference; not comparable to native.
-  //
-  //     For native ABox cases we also split: "Native TBox ²" (without
-  //     realizeMs) vs "Native realize" (just the realizeMs phase).
-  //
-  // Not comparable in any case:
-  //   parse/load (different input formats), WASM output (serializes role
-  //   assertions native never writes), TS total (Worker RTT + store.addQuad).
+  // Boundary definitions (see docs/solutions/performance-issues/benchmark-phase-boundary-shift-2026-10.md):
+  //   WASM ingest→result = binary encode + syncTripleBuffer + reasoning (incl. lazy parse/mapping) + output decode.
+  //   Konclude total     = Konclude's own "Total processing time" inside the container: OWL/XML parse + reasoning + result
+  //                        serialisation. Excludes container start (Docker wall clock is recorded separately, not used).
+  //   Phase columns (ingest / reasoning / output) are a breakdown only: v0.8.0 moved parse+mapping from "load" into
+  //   "reasoning", so phase columns must never be compared across releases, only ingest→result.
+
+  const st = (r, key) => r?.stats?.[key] ?? null;
+  const ratio = (a, b) => (a && b ? `~${(a / b).toFixed(1)}×` : '—');
+  const isOk = (r) => r?.result && !r.result.error && r.result.ok !== false;
 
   console.log('### § 1 Speed Benchmark\n');
-  console.log('> **Comparable columns:** "WASM classify ²" vs "Konclude TBox ²" — same kernel, different runtime. "HermiT reason ⁴" vs "Konclude TBox ²" — different reasoner, same OWL 2 DL logic.');
-  console.log('> ABox realization times (role closure) are shown separately and are **not** comparable between systems.\n');
+  console.log('**Definitions.** *WASM ingest→result*: encode + `syncTripleBuffer()` + reasoning (includes the lazy parse/mapping) + output decode; WASM module start (*init*) is one-off and excluded. *Konclude total*: Konclude\'s own "Total processing time" inside the container (OWL/XML parse + reasoning + result serialisation; excludes container start). Ratios use only these two.\n');
 
-  const speedHeader = '| Ontology | Exp. | Input | Konclude parse ¹ | Konclude TBox ² | Konclude realize | HermiT JVM+parse | HermiT reason ⁴ | HermiT fill+write | WASM init ⁰ | WASM load ¹ | WASM classify ² | WASM realization ⁶ | WASM output | TS total ³ | WASM/Konclude ² | HermiT/Konclude ⁴ |';
-  const speedSep    = '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|';
-  console.log(speedHeader);
-  console.log(speedSep);
+  console.log('#### §1a TBox ontologies (classification) — end to end\n');
+  console.log('| Ontology | Exp. | Triples | Konclude total | HermiT reason ⁴ | WASM ingest→result | WASM / Konclude |');
+  console.log('|---|---|---|---|---|---|---|');
+  for (const c of wasmCases.filter(c => !c.abox)) {
+    const nc = nativeByName[c.name], rc = robotByName[c.name], wc = wasmByName[c.name];
+    const nTot = isOk(nc) ? st(nc.result, 'total') : null;
+    const wTot = isOk(wc) ? st(wc.result, 'ingestToResult') : null;
+    let rCell = '—';
+    if (rc?.result && !rc.result.error) rCell = fmtMs(rc.result.reasonMs);
+    else if (rc?.result?.error) rCell = rc.result.error.includes('timeout') ? 'TIMEOUT' : 'FAIL';
+    console.log(`| ${c.name} | ${c.expressiveness} | ${wc?.tripleCount ?? '—'} | ${nc?.result?.error ? 'N/A' : fmtStat(nTot)} | ${rCell} | ${wc?.result?.error ? 'FAIL' : fmtStat(wTot)} | ${ratio(wTot?.median, nTot?.median)} |`);
+  }
 
-  for (const c of WASM_CASES) {
-    const nc = nativeByName[c.name];
-    const rc = robotByName[c.name];
-    const wc = wasmByName[c.name];
-    const tc = tsByName[c.name];
+  console.log('\n#### §1b ABox ontologies (realization) — classification path, and full role-closure realization\n');
+  console.log('Native realization outputs rdf:type only and never computes role assertions; WASM `realization()` materialises the full role closure. Only the **classification path** is like-for-like: Konclude total minus its realization phase vs WASM `classification()` on the same input. The full-realization column is reported for reference and is **not comparable**.\n');
+  console.log('| Ontology | Exp. | Triples | Konclude total (types only) | Konclude excl. realization ⁷ | WASM classification path (ingest→result) | WASM / Konclude (classification path) | WASM full realization (ingest→result, incl. role closure) |');
+  console.log('|---|---|---|---|---|---|---|---|');
+  for (const c of wasmCases.filter(c => c.abox)) {
+    const nc = nativeByName[c.name], wc = wasmByName[c.name];
+    const nTot = isOk(nc) ? st(nc.result, 'total') : null;
+    const nExcl = nTot && nc.result.realizeMs != null ? nTot.median - nc.result.realizeMs : null;
+    const wCls = isOk(wc) ? st(wc.result, 'classifyOnlyIngestToResult') : null;
+    const wFull = isOk(wc) ? st(wc.result, 'ingestToResult') : null;
+    console.log(`| ${c.name} | ${c.expressiveness} | ${wc?.tripleCount ?? '—'} | ${nc?.result?.error ? 'N/A' : fmtStat(nTot)} | ${nExcl != null ? nExcl + ' ms' : '—'} | ${wc?.result?.error ? 'FAIL' : fmtStat(wCls)} | ${ratio(wCls?.median, nExcl)} | ${wc?.result?.error ? 'FAIL' : fmtStat(wFull)} |`);
+  }
 
-    const nt  = wc?.tripleCount ?? '—';
-    const exp = c.expressiveness;
-
-    let nParse = '—', nTbox = '—', nRealize = '—';
-    if (nc?.result && !nc.result.error) {
-      nParse = fmtMs(nc.result.parseMs);
-      const tboxMs =
-        (nc.result.preprocessMs ?? 0) +
-        (nc.result.precomputeMs  ?? 0) +
-        (nc.result.classifyMs    ?? 0) +
-        (nc.result.propClassMs   ?? 0);
-      nTbox = tboxMs > 0 ? `${tboxMs} ms` : '—';
-      nRealize = nc.result.realizeMs > 0 ? fmtMs(nc.result.realizeMs) : (c.abox ? '—' : 'n/a');
-    } else if (nc?.result?.error) {
-      nParse = nTbox = nRealize = 'N/A';
-    }
-
-    let rJvmParse = '—', rReason = '—', rFillWrite = '—';
-    if (rc?.result && !rc.result.error) {
-      rJvmParse  = fmtMs(rc.result.jvmParseMs);
-      rReason    = fmtMs(rc.result.reasonMs);
-      rFillWrite = fmtMs(rc.result.fillWriteMs);
-    } else if (rc?.result?.error) {
-      const errLabel = rc.result.error.includes('timeout') ? 'TIMEOUT' : `FAIL`;
-      rJvmParse = rReason = rFillWrite = errLabel;
-    }
-
-    let wInit = '—', wLoad = '—', wClassify = '—', wRealize = '—', wOutput = '—';
-    if (wc?.result?.ok) {
-      wInit     = fmtMs(wc.result.initMs);
-      wLoad     = fmtMs(wc.result.loadMs);
-      wClassify = c.abox ? fmtMs(wc.result.classifyOnlyMs) : fmtMs(wc.result.classifyMs);
-      wRealize  = c.abox ? fmtMs(wc.result.classifyMs) : 'n/a';
-      wOutput   = fmtMs(wc.result.outputMs);
-    } else if (wc?.result?.error) {
-      wInit = wLoad = wClassify = wRealize = wOutput = 'FAIL';
-    }
-
-    let tsTotal = '—';
-    if (tc?.result?.ok) {
-      tsTotal = fmtMs(tc.result.totalMs);
-    } else if (tc?.result?.error) {
-      tsTotal = tc.result.error === 'fixture missing' ? 'SKIP' : 'FAIL';
-    }
-
-    const nativeTboxMs = nc?.result && !nc.result.error
-      ? (nc.result.preprocessMs ?? 0) + (nc.result.precomputeMs ?? 0) +
-        (nc.result.classifyMs ?? 0) + (nc.result.propClassMs ?? 0)
-      : null;
-    const wasmClassifyOnlyMs = wc?.result?.ok
-      ? (c.abox ? wc.result.classifyOnlyMs : wc.result.classifyMs)
-      : null;
-    const robotReasonMs = rc?.result && !rc.result.error ? rc.result.reasonMs : null;
-
-    console.log(`| ${c.name} | ${exp} | ${nt} | ${nParse} | ${nTbox} | ${nRealize} | ${rJvmParse} | ${rReason} | ${rFillWrite} | ${wInit} | ${wLoad} | ${wClassify} | ${wRealize} | ${wOutput} | ${tsTotal} | ${ratioStr(wasmClassifyOnlyMs, nativeTboxMs)} | ${ratioStr(robotReasonMs, nativeTboxMs)} |`);
+  console.log('\n#### §1c WASM phase breakdown (breakdown only — do not compare phases across releases)\n');
+  console.log('| Ontology | Op | init (one-off) | ingest (encode+sync) | reasoning | output decode | ingest→result | TS layer total ³ |');
+  console.log('|---|---|---|---|---|---|---|---|');
+  for (const c of wasmCases) {
+    const wc = wasmByName[c.name], tc = tsByName[c.name];
+    const ok = isOk(wc);
+    const tsCell = tc?.result?.ok ? fmtStat(st(tc.result, 'total')) : (tc?.result?.error === 'fixture missing' ? 'SKIP' : tc?.result?.error ? 'FAIL' : '—');
+    console.log(`| ${c.name} | ${c.abox ? 'realization' : 'classification'} | ${ok ? fmtStat(st(wc.result, 'init')) : '—'} | ${ok ? fmtStat(st(wc.result, 'ingest')) : '—'} | ${ok ? fmtStat(st(wc.result, 'reasoning')) : '—'} | ${ok ? fmtStat(st(wc.result, 'output')) : '—'} | ${ok ? fmtStat(st(wc.result, 'ingestToResult')) : '—'} | ${tsCell} |`);
   }
 
   console.log('');
-  console.log('**Speed notes:**');
+  console.log('**Reading these numbers:**');
   console.log('');
-  console.log('⁰ "WASM init" = `createKoncludeModule()` + `new KoncludeReasoner()` — WASM compilation, memory allocation (1 GB linear memory), pthread pool startup. **Integration-specific overhead** with no native equivalent (native starts as a process). Excluded from the comparable ratio. Amortized in real use: the TS layer creates the module once and reuses it across calls.');
-  console.log('');
-  console.log('¹ "Native parse" = OWL/XML parsing; "WASM load" = binary encode + `syncTripleBuffer()` (content digest + store of the buffers; Raptor parsing + `mapTriples()` happen lazily inside the first `classification()`/`realization()`). Different input formats → **not comparable**.');
-  console.log('');
-  console.log('² **Comparable column.** Both run the same Konclude pipeline: triples-mapping → active-count → build → preprocess → consistency → precompute-saturation → class-classify → property-classify. "Native TBox" = preprocess + precompute + classify + propClassify (from Konclude verbose log, same pipeline steps). "WASM classify" = `classification()` wall-clock (same pipeline via `prepareOntology()`). For ABox cases, a **separate classification-only pass** is run so role-closure overhead does not inflate the number.');
-  console.log('');
-  console.log('³ "TS total" = binary encode + Worker `postMessage` + WASM init + load + classify + output decode + `store.addQuad`. Includes init overhead + output serialization. For ABox cases includes role assertions that native never emits. Median of 5 measured runs.');
-  console.log('');
-  console.log('⁴ **HermiT comparison.** HermiT is a different OWL 2 DL tableau reasoner (Java-based, run via ROBOT/ODK Docker). "HermiT JVM+parse" = JVM startup + OWLAPI parsing (no Konclude equivalent — different runtime). "HermiT reason" = consistency check + classification + axiom generation. "HermiT fill+write" = OWL/XML serialization. HermiT/Konclude ratio compares pure reasoning time. Roberts may timeout (HermiT is significantly slower on SROIQ).');
-  console.log('');
-  console.log('⁶ "WASM realization" = `realization()` timing — runs the full pipeline including 4 extra ABox steps: initRealize → conceptRealize → roleRealize → sameIndividualsRealize. The roleRealize step computes full transitive role closure (CRoleRealization) producing 271k+ role fillers for Roberts. Native realization may skip or short-circuit roleRealize since it never serializes role assertions. **Not** comparable to native realize time.');
-  console.log('');
-  console.log(`- Konclude native: 3 runs per ontology, median. WASM: 1 warm-up + median of 3 measured. TS: 2 warm-ups + median of 5 measured. HermiT: 3 runs median. Node.js ${process.version}, pthreads (PTHREAD_POOL_SIZE=8).`);
+  console.log('- Single host, shared machine; numbers carry the host load average from the header. A difference smaller than the printed spread is not evidence of a difference.');
+  console.log('- ³ "TS layer total" = full public `RdfReasoner` call on a fresh instance: Worker + module start, encode, sync, reasoning, output, `store.addQuad`. It includes startup that §1a/§1b exclude.');
+  console.log('- ⁴ HermiT (via ROBOT/ODK) is a different reasoner run in Docker; "reason" = consistency + classification + axiom generation, excluding JVM start and parsing.');
+  console.log('- ⁷ Konclude excl. realization = Konclude total − its `Finished (lazy) realization` phase; an approximation of parse + classification + serialisation.');
+  console.log('- The earlier "WASM classify" column (2026-09-18 and before) excluded parse/mapping, which then lived in "load"; v0.8.0 performs that work lazily inside reasoning. Old and new phase columns are therefore not comparable. Details and the A/B measurement: `docs/solutions/performance-issues/benchmark-phase-boundary-shift-2026-10.md`.');
+  console.log('- WASM runs: warm-up and run counts are per case (`tests/bench/cases.mjs`); slow cases use fewer runs and are marked ‡.');
+  console.log('- Outliers are never filtered. Intermittent very slow runs (several times the median) have been observed through the TS layer on Roberts (see the spread markers); they are consistent with, but not confirmed as, the known WASM stall/recovery issue listed as open in `docs/next-session-prompt.md`.');
   console.log('- LUBM+data native input: NTriples merged to RDF/XML via rdflib (auto-generated, .gitignored).');
   console.log('');
-  console.log('**Overhead analysis (measured 2026-10-15):**');
-  console.log('');
-  console.log('- **Fixed overhead:** `WASM init` (~0.9 s: module compile, 1 GB linear memory, pthread pool) is paid once per Worker and excluded from the comparable ratio. Small inputs (LUBM schema, 307 triples) are dominated by thread-coordination round-trips across the WASM↔JS boundary: 283 ms WASM vs 31 ms native (~9×).');
-  console.log('- **Data-heavy inputs are slowest relative to native:** GALEN (30k triples, SHIF) ~7× and LUBM+data (100k triples, SHI) ~17× native classification. Steps that walk all loaded triples (build, preprocess, active-count) run slower in WASM linear memory.');
-  console.log('- **Compute-heavy tableau workloads converge:** Roberts (SROIQ) classification is ~1.1× native (1858 ms vs 1707 ms).');
-  console.log('- **Realization with role closure is not comparable:** Roberts `realization()` takes ~26 s in WASM because it materializes ~349k role assertions; native realization (299 ms) never computes or writes them.');
-  console.log('- **No predictive model is published.** An earlier fixed-cost + per-expressiveness scaling model (230 ms + factor) was calibrated on 2026-09-18 numbers (GALEN 544 ms, LUBM+data 1169 ms) that do not reproduce: on 2026-10-15 main and this branch both measure GALEN at ~2.0 s end-to-end, so the model under-predicts. Treat any extrapolation to untested ontologies as unmeasured.');
-  console.log('- Investigation notes: `docs/solutions/performance-issues/wasm-preprocessing-overhead-2026-09-15.md`.');
+
   console.log('');
   console.log('**HermiT comparison context:**');
   console.log('');
@@ -317,13 +268,13 @@ async function main() {
     if (wc?.result?.ok) {
       wCount = wc.result.inferredTboxCount ?? '—';
       if (typeof wCount === 'number' && typeof nCount === 'number') {
-        matchCell = wCount === nCount ? '✓ exact' : `⚠ ${wCount} vs ${nCount}`;
+        matchCell = wCount === nCount ? '✓ equal count' : `⚠ ${wCount} vs ${nCount}`;
       }
     } else if (wc?.result?.error) {
       wCount = matchCell = 'FAIL';
     }
     if (typeof rCount === 'number' && typeof nCount === 'number') {
-      hermitVsCell = rCount === nCount ? '✓ exact' : `${rCount} (${rCount > nCount ? '+' : ''}${rCount - nCount})`;
+      hermitVsCell = rCount === nCount ? '✓ equal count' : `${rCount} (${rCount > nCount ? '+' : ''}${rCount - nCount})`;
     }
     console.log(`| ${c.name} | ${c.expressiveness} | ${nCount} | ${rCount} | ${wCount} | ${matchCell} | ${hermitVsCell} |`);
   }
@@ -356,13 +307,13 @@ async function main() {
     if (wc?.result?.ok) {
       wCount = wc.result.inferredTypeCount ?? '—';
       if (typeof wCount === 'number' && typeof nCount === 'number') {
-        matchCell = wCount === nCount ? '✓ exact' : `⚠ ${wCount} vs ${nCount}`;
+        matchCell = wCount === nCount ? '✓ equal count' : `⚠ ${wCount} vs ${nCount}`;
       }
     } else if (wc?.result?.error) {
       wCount = matchCell = 'FAIL';
     }
     if (typeof rCount === 'number' && typeof nCount === 'number') {
-      hermitVsCell = rCount === nCount ? '✓ exact' : `${rCount} (${rCount > nCount ? '+' : ''}${rCount - nCount})`;
+      hermitVsCell = rCount === nCount ? '✓ equal count' : `${rCount} (${rCount > nCount ? '+' : ''}${rCount - nCount})`;
     }
     console.log(`| ${c.name} | ${c.expressiveness} | ${nCount} | ${rCount} | ${wCount} | ${matchCell} | ${hermitVsCell} |`);
   }
@@ -433,7 +384,7 @@ async function main() {
 
   console.log('');
   console.log('**Capabilities notes:**');
-  console.log('⁵ TBox match and ABox rdf:type match are enforced by the integration test suite (assertExactMatch against golden fixtures). Same Konclude kernel; only the output serializer differs.');
+  console.log('⁵ The "equal count" cells compare counts only. Set-level equality is enforced by the integration suite for rdf:type (golden fixtures `roberts-native-abox.nt`, `lubm-native-tbox.nt`, `galen-native-tbox.nt`). Known representation variance between builds, which count-equality hides: Konclude chooses one representative per class of equivalent roles (e.g. `hasChild` vs `isParentOf`) and per class of equivalent classes (`rdfs:subClassOf owl:Thing` is emitted for the representative only). `tests/bench/equivalence.mjs` compares role assertions modulo equivalent/inverse roles declared in the input.');
   console.log('⁶ Role assertions = ObjectPropertyAssertion + DataPropertyAssertion. Konclude computes these internally via CRoleRealization (full transitive closure); its OWL/XML serializer never writes them. `GetObjectPropertyAssertions` OWLlink = "not supported"; wildcard SPARQL `?p ?o` returns empty with "unsupported axiom types". Roberts family role count is large because there are 405 individuals with dense property chains (hasAncestor, isDescendantOf, hasCousin, etc.).');
   console.log('⁷ owl:sameAs: produced by our FP/IFP workaround. For FunctionalProperty/InverseFunctionalProperty with multiple fillers, native Konclude v0.7.0 hangs (upstream tableau bug in ALIF+ extension). Our C++ workaround strips FP/IFP declarations, pre-computes owl:sameAs for identical-individual groups, and emits those pairs. For 1-filler cases the normal tableau path is used (no workaround needed).');
   console.log('⁸ "Native total" = what native CLI writes. For TBox: SubClassOf+EquivalentClasses. For ABox: ClassAssertion only.');
@@ -441,77 +392,31 @@ async function main() {
   console.log('- "WASM extra total" = WASM total minus the comparable (native-matchable) portion. "Delta" shows factor over native total.');
   console.log('- TBox classification: role assertions = 0 (no ABox individuals → no role fillers). sameAs = 0 (no individuals → no FP/IFP groups).');
 
-  // ── § 3  INCREMENTAL REASONING BENCHMARK ──────────────────────────────────
+  // ── § 3  WARM BEHAVIOUR ────────────────────────────────────────────────────
   //
-  // Native Konclude is a batch CLI — every invocation is a cold start:
-  //   Docker process spawn + OWL/XML parse + full pipeline.
-  //
-  // Our WASM port via the TS layer (RdfReasoner) keeps the Worker alive between
-  // calls.  Three scenarios:
-  //
-  //   Cold start:  first call on a fresh RdfReasoner instance.
-  //   Cache hit:   second call on unchanged store (content digest unchanged → skip).
-  //   Re-reason:   add 1 axiom → digest changes → full re-computation
-  //                but Worker stays alive, WASM module warm.
-  //
-  // "Native cold" = full Docker run per invocation (from §1 native total).
+  // One RdfReasoner (warm Worker) per run; absolute times only. The kernel's own counters (syncStats) are asserted
+  // for every scenario so a label can never describe something the kernel did not do.
 
   console.log('\n---\n');
-  console.log('### § 3 Incremental Reasoning Benchmark\n');
-  console.log('> Native Konclude is a batch CLI — every invocation is a full cold start.');
-  console.log('> Our TS layer keeps the Worker alive, enabling cache hits and warm re-reasoning.\n');
-
-  console.log('| Ontology | Exp. | Native cold ¹⁰ | TS cold ¹¹ | TS cache hit ¹² | TS re-reason ¹³ | Speedup (cache) | Speedup (re-reason) |');
-  console.log('|---|---|---|---|---|---|---|---|');
+  console.log('### § 3 Warm behaviour (one reasoner, repeated calls)\n');
+  console.log('| Ontology | Exp. | cold (first call) | unchanged content | identical content, new Store | one axiom added (full rebuild) |');
+  console.log('|---|---|---|---|---|---|');
 
   const incrByName = Object.fromEntries(incrResults.map(r => [r.name, r]));
-
-  for (const c of TS_CASES) {
-    const nc = nativeByName[c.name];
+  for (const c of tsCases) {
     const ic = incrByName[c.name];
-
-    // Native cold = full Docker invocation (parse + reason + output)
-    let nativeCold = '—';
-    if (nc?.result && !nc.result.error) {
-      nativeCold = fmtMs(nc.result.totalMs);
-    } else if (nc?.result?.error) {
-      nativeCold = 'N/A';
-    }
-
-    let tsCold = '—', tsCacheHit = '—', tsReReason = '—';
-    let cacheSpeedup = '—', reReasonSpeedup = '—';
-    if (ic?.result?.ok) {
-      tsCold     = fmtMs(ic.result.coldMs);
-      tsCacheHit = fmtMs(ic.result.cacheHitMs);
-      tsReReason = fmtMs(ic.result.reReasonMs);
-
-      if (nc?.result?.totalMs > 0) {
-        if (ic.result.cacheHitMs > 0) {
-          cacheSpeedup = `${Math.round(nc.result.totalMs / ic.result.cacheHitMs)}×`;
-        } else {
-          cacheSpeedup = '∞ (0 ms)';
-        }
-        if (ic.result.reReasonMs > 0) {
-          reReasonSpeedup = `${(nc.result.totalMs / ic.result.reReasonMs).toFixed(1)}×`;
-        }
-      }
-    } else if (ic?.result?.error === 'fixture missing') {
-      tsCold = tsReReason = tsCacheHit = 'SKIP';
-    } else if (ic?.result?.error) {
-      tsCold = tsReReason = tsCacheHit = 'FAIL';
-    }
-
-    console.log(`| ${c.name} | ${c.expressiveness} | ${nativeCold} | ${tsCold} | ${tsCacheHit} | ${tsReReason} | ${cacheSpeedup} | ${reReasonSpeedup} |`);
+    const f = (k) => (ic?.result?.ok ? fmtStat(ic.result.stats[k]) : ic?.result?.error === 'fixture missing' ? 'SKIP' : ic?.result?.error ? 'FAIL' : '—');
+    console.log(`| ${c.name} | ${c.expressiveness} | ${f('cold')} | ${f('unchanged')} | ${f('newStore')} | ${f('changed')} |`);
   }
 
   console.log('');
-  console.log('**Incremental notes:**');
-  console.log('¹⁰ "Native cold" = full Docker invocation: process spawn + OWL/XML parse + full reasoning pipeline + output serialization. From §1 native total. There is no warm/incremental path — native Konclude is a stateless CLI tool.');
-  console.log('¹¹ "TS cold" = first `classify()`/`materialize()` on a fresh `RdfReasoner` instance. Includes WASM init + binary encode + Worker RTT + full pipeline + decode + store.addQuad.');
-  console.log('¹² "TS cache hit" = second call on **unchanged** store. The TS layer encodes the store and sends `sync`; C++ compares its 128-bit content digest set with the last one and answers `changed=false`, so classify/realize are idempotent per generation and skipped. Cost = encode + one Worker round-trip.');
-  console.log('¹³ "TS re-reason" = call after adding 1 axiom (`rdfs:subClassOf owl:Thing`). Content digest changes (C++ `generation` bump) → ontology rebuilt lazily by `classification()`/`realization()`. But Worker stays alive: no WASM module init, no pthread pool startup. The WASM init (~850 ms) is amortized.');
-  console.log('- Native has no incremental reasoning. Every invocation pays the full cold-start cost. The WASM port\'s persistent Worker is a structural advantage for interactive/iterative use.');
-  console.log(`- Each scenario uses a single store on one Worker. Repeated changed-content calls (stability, memory) are measured separately with \`tests/bench/sequential-runner.mjs\`.`);
+  console.log('**Scenario definitions:**');
+  console.log('- *cold*: first public call on a fresh `RdfReasoner` (includes Worker and WASM start).');
+  console.log('- *unchanged content*: same Store again. The call still encodes the whole Store and sends `sync`; the kernel compares its 128-bit content digest set with the previous one, answers "unchanged" and skips the rebuild. Cost = encode + one Worker round-trip, so it scales with store size, not with reasoning effort.');
+  console.log('- *identical content, new Store*: a different Store instance with the same quads; the digest ignores Store identity, order and duplicates, so this is also a no-rebuild call.');
+  console.log('- *one axiom added*: `rdfs:subClassOf owl:Thing` for a new class; the digest changes, the generation bumps and the ontology is rebuilt (full recompute on a warm Worker).');
+  console.log('- Each scenario asserts the kernel counters (`syncStats` generation and rebuild count); the run aborts if the semantics differ.');
+  console.log('- Native Konclude is a stateless batch CLI; no warm figure exists, so no ratio is shown. For repeated changed-content calls (stability and memory) see `tests/bench/sequential-runner.mjs`.');
 }
 
 main().catch(e => { console.error(e); process.exit(1); });
