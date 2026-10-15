@@ -306,9 +306,23 @@ import { INFERRED_GRAPH_IRI } from "rdf-reasoner-konclude";
 
 The default named graph where inferred triples are written.
 
-### Deprecated overloads
+### Sequential calls on one instance
 
-`reason(quads)`, `classify(quads)`, `checkConsistency(quads)`, and `materialize(quads)` accept a raw `Iterable<Quad>` and return `Promise<Quad[]>` / `Promise<boolean>`. These overloads are deprecated — use the `Store`-based API instead.
+All operations — `classify`, `materialize`, `classifyProperties`, `checkConsistency` — can be called in any order on the same `RdfReasoner` instance. The C++ reasoning kernel detects ontology changes by fingerprint and resets internal state automatically between calls. No need to create a new reasoner per operation:
+
+```typescript
+const reasoner = new RdfReasoner();
+await reasoner.ready;
+
+// classify, check consistency, and materialize — all on the same instance
+await reasoner.classify(store);
+const consistent = await reasoner.checkConsistency(store);
+await reasoner.materialize(store);
+
+reasoner.terminate();
+```
+
+Each call re-runs the full reasoning pipeline. If the store contents have not changed, the fingerprint matches and the C++ layer skips redundant preprocessing — subsequent calls on the same unchanged store complete in milliseconds.
 
 ## Common workflows
 
@@ -409,8 +423,7 @@ if (!consistent) {
 
 ### Incremental ontology evolution
 
-The reasoner resets and re-loads the full store on every call. To reason over
-an evolving ontology, mutate the store and call again:
+Each call computes a fingerprint of the store's triples. If the store is unchanged since the last call, the C++ layer detects this and skips reloading — returning cached results in milliseconds. If the store has changed, the full reasoning pipeline reruns over the new triple set. To reason over an evolving ontology, mutate the store and call again:
 
 ```typescript
 await reasoner.classify(store);
@@ -621,17 +634,17 @@ Violation detection verified against native Konclude v0.7.0 ground truth:
 | 12  | `owl:NegativeObjectPropertyAssertion` contradiction       | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
 | 13  | `DataAllValuesFrom xsd:minInclusive` (consistent case)    | consistent ✓       | consistent ✓   | **PARITY**                         |
 | 14  | `DataAllValuesFrom xsd:minInclusive` (inconsistent case)  | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
-| 15  | `owl:hasSelf(p)` + `owl:hasSelf(q)` + `p owl:propertyDisjointWith q` | inconsistent ✓ | inconsistent ✓ | **PARITY** (patch-022)             |
-| 16  | `owl:ReflexiveProperty(p)` + `owl:hasSelf(q)` + `p owl:propertyDisjointWith q` | inconsistent ✓ | inconsistent ✓ | **PARITY** (patch-022)  |
-| 17  | `owl:AsymmetricProperty(r)` + `r(a, a)` self-loop                    | inconsistent ✓ | inconsistent ✓ | **PARITY (WASM surpasses native)** (patch-027) |
+| 15  | `owl:hasSelf(p)` + `owl:hasSelf(q)` + `p owl:propertyDisjointWith q` | inconsistent ✓ | inconsistent ✓ | **PARITY**             |
+| 16  | `owl:ReflexiveProperty(p)` + `owl:hasSelf(q)` + `p owl:propertyDisjointWith q` | inconsistent ✓ | inconsistent ✓ | **PARITY**  |
+| 17  | `owl:AsymmetricProperty(r)` + `r(a, a)` self-loop                    | inconsistent ✓ | inconsistent ✓ | **PARITY (WASM surpasses native)** |
 
 **PARITY (WASM surpasses native v0.7.0)** means native Konclude v0.7.0 has a kernel bug for this
-construct; this package fixes it via patch-027 (AsymmetricProperty self-loop saturation clash detection).
+construct; this package applies a saturation-phase clash check that the upstream kernel misses.
 
 `owl:AllDisjointClasses`, `owl:disjointUnionOf`, and `owl:NegativePropertyAssertion` all work in
 `materialize()` — the JS layer expands list axioms to pairwise form before handing off to WASM.
 `owl:FunctionalProperty` and `owl:InverseFunctionalProperty` (including 1-filler cases) work
-across all API paths — patches 020–021 fix the upstream ALIF+ precompute hang.
+across all API paths.
 
 ### Classification (`classify`)
 
@@ -726,7 +739,7 @@ module.exports = { experiments: { asyncWebAssembly: true } };
 
 ## Performance
 
-On complex OWL 2 DL reasoning (SROIQ, Roberts family), this package matches native Konclude at ~1.1×. On simpler ontologies a fixed ~230 ms pthread sync cost dominates (~2–8×). For repeat calls on an unchanged ontology, a store fingerprint skips reasoning entirely — **3–67× faster** than spawning desktop Konclude as a subprocess.
+On complex OWL 2 DL reasoning (SROIQ, Roberts family), this package matches native Konclude at ~1.2×. On simpler ontologies a fixed ~230 ms pthread sync cost dominates (~4–23×). For repeat calls on an unchanged store, a fingerprint check skips reasoning entirely — **3–59× faster** than spawning desktop Konclude as a subprocess (3× for LUBM+data, 59× for LUBM schema).
 
 Full benchmark — speed, output comparison vs native Konclude and HermiT, incremental reasoning, memory: [`docs/benchmark.md`](docs/benchmark.md).
 

@@ -231,7 +231,7 @@ async function main() {
   console.log('');
   console.log('⁰ "WASM init" = `createKoncludeModule()` + `new KoncludeReasoner()` — WASM compilation, memory allocation (1 GB linear memory), pthread pool startup. **Integration-specific overhead** with no native equivalent (native starts as a process). Excluded from the comparable ratio. Amortized in real use: the TS layer creates the module once and reuses it across calls.');
   console.log('');
-  console.log('¹ "Native parse" = OWL/XML parsing; "WASM load" = binary encode + `loadTripleBuffer()` (Raptor NTriples parsing + `mapTriples()`). Different input formats → **not comparable**.');
+  console.log('¹ "Native parse" = OWL/XML parsing; "WASM load" = binary encode + `syncTripleBuffer()` (content digest + store of the buffers; Raptor parsing + `mapTriples()` happen lazily inside the first `classification()`/`realization()`). Different input formats → **not comparable**.');
   console.log('');
   console.log('² **Comparable column.** Both run the same Konclude pipeline: triples-mapping → active-count → build → preprocess → consistency → precompute-saturation → class-classify → property-classify. "Native TBox" = preprocess + precompute + classify + propClassify (from Konclude verbose log, same pipeline steps). "WASM classify" = `classification()` wall-clock (same pipeline via `prepareOntology()`). For ABox cases, a **separate classification-only pass** is run so role-closure overhead does not inflate the number.');
   console.log('');
@@ -244,40 +244,18 @@ async function main() {
   console.log(`- Konclude native: 3 runs per ontology, median. WASM: 1 warm-up + median of 3 measured. TS: 2 warm-ups + median of 5 measured. HermiT: 3 runs median. Node.js ${process.version}, pthreads (PTHREAD_POOL_SIZE=8).`);
   console.log('- LUBM+data native input: NTriples merged to RDF/XML via rdflib (auto-generated, .gitignored).');
   console.log('');
-  console.log('**Overhead analysis:**');
+  console.log('**Overhead analysis (measured 2026-10-15):**');
   console.log('');
-  console.log('The WASM/native ratio varies by ontology because the overhead decomposes into two independent components:');
-  console.log('');
-  console.log('1. **Fixed pthread sync cost (~230 ms):** `classification()` runs 9 pipeline steps through `prepareOntology()` (triples-mapping → active-count → build → preprocess → consistency → precompute-saturation → class-classify → obj-property-classify → data-property-classify). Each step requires a thread coordination round-trip: submit work → manager thread wakes (`Atomics.notify`) → processes → signals completion (`Atomics.wait`). In WASM pthreads each round-trip crosses the WASM↔JS boundary (~25 ms); native POSIX threads do the same in ~3 ms. 9 steps × ~25 ms ≈ 230 ms fixed overhead. **Verification**: LUBM schema (307 triples, near-zero compute): predicted 34 + 230 = 264 ms, actual 265 ms.');
-  console.log('');
-  console.log('2. **Data-proportional preprocessing slowdown (~7× for data-heavy steps):** Steps that walk all loaded triples (build, preprocess, active-count) run slower in WASM due to Emscripten-compiled pointer-chasing through Konclude\'s linked data structures in WASM linear memory. Negligible for small ontologies (307 triples), significant for large inputs. **Verification**: LUBM+data (100k triples): native compute ≈ 124 ms, predicted 124 × 7.2 + 230 = 1123 ms, actual 1126 ms.');
-  console.log('');
-  console.log('3. **Convergence on compute-heavy tableau workloads:** Roberts (SROIQ, 2s native) shows ~1.1× because tight inner-loop tableau operations (consistency checking, saturation) dominate wall-clock time and JIT to near-native speed. The 230 ms sync overhead is <12% of total.');
-  console.log('');
-  console.log('**Scaling model** (predicts WASM classify time from native TBox time and triple count):');
-  console.log('```');
-  console.log('wasm_ms ≈ 230 + (native_ms - native_sync) × data_factor');
-  console.log('');
-  console.log('where:');
-  console.log('  230              = fixed pthread sync overhead (9 steps × ~25 ms)');
-  console.log('  native_sync      ≈ 30 ms (9 steps × ~3 ms native POSIX)');
-  console.log('  data_factor      = f(expressiveness, triple_count):');
-  console.log('    - SHI,  <1k triples:   ~7-8× (data-traversal dominated)');
-  console.log('    - SHIF, ~30k triples:  ~1.7× (mixed compute+data)');
-  console.log('    - SROIQ, any size:      ~1.0× (tableau-compute dominated)');
-  console.log('    - SHI,  100k+ triples:  ~7× (preprocessing dominated)');
-  console.log('');
-  console.log('Prediction for untested ontologies:');
-  console.log('  1M triples, SHI:   native ~1.5s → wasm ≈ 230 + 1470×7 = ~10.5s (~7×)');
-  console.log('  1M triples, SROIQ: native ~60s  → wasm ≈ 230 + 59970×1 = ~60s  (~1×)');
-  console.log('  100 triples, any:  native ~5ms  → wasm ≈ 230 + 0 = ~230ms (sync floor)');
-  console.log('```');
-  console.log('');
-  console.log('The ratio improves as ontology complexity grows (more tableau work = more time in JIT-optimized inner loops). It worsens with triple count for simple expressiveness (more time in data-structure construction). See `docs/solutions/performance-issues/wasm-preprocessing-overhead-2026-09-15.md` for full investigation and optimization opportunities.');
+  console.log('- **Fixed overhead:** `WASM init` (~0.9 s: module compile, 1 GB linear memory, pthread pool) is paid once per Worker and excluded from the comparable ratio. Small inputs (LUBM schema, 307 triples) are dominated by thread-coordination round-trips across the WASM↔JS boundary: 283 ms WASM vs 31 ms native (~9×).');
+  console.log('- **Data-heavy inputs are slowest relative to native:** GALEN (30k triples, SHIF) ~7× and LUBM+data (100k triples, SHI) ~17× native classification. Steps that walk all loaded triples (build, preprocess, active-count) run slower in WASM linear memory.');
+  console.log('- **Compute-heavy tableau workloads converge:** Roberts (SROIQ) classification is ~1.1× native (1858 ms vs 1707 ms).');
+  console.log('- **Realization with role closure is not comparable:** Roberts `realization()` takes ~26 s in WASM because it materializes ~349k role assertions; native realization (299 ms) never computes or writes them.');
+  console.log('- **No predictive model is published.** An earlier fixed-cost + per-expressiveness scaling model (230 ms + factor) was calibrated on 2026-09-18 numbers (GALEN 544 ms, LUBM+data 1169 ms) that do not reproduce: on 2026-10-15 main and this branch both measure GALEN at ~2.0 s end-to-end, so the model under-predicts. Treat any extrapolation to untested ontologies as unmeasured.');
+  console.log('- Investigation notes: `docs/solutions/performance-issues/wasm-preprocessing-overhead-2026-09-15.md`.');
   console.log('');
   console.log('**HermiT comparison context:**');
   console.log('');
-  console.log('HermiT (via ROBOT/ODK) is a Java-based OWL 2 DL tableau reasoner. On simple TBox ontologies (LUBM, SHI) it is comparable to Konclude. On medium-complexity ontologies (GALEN, SHIF) it is ~20× slower. On hard SROIQ ontologies with many individuals and property chains (Roberts family) HermiT does not complete within the timeout — it gets stuck on the consistency check phase. This matches published benchmarks: the ORE 2015 competition report notes Konclude "had the best performance on large and very large ontologies" while HermiT "for classification and realization tasks, was outperformed by the other reasoners" ([Parsia et al. 2017](https://link.springer.com/article/10.1007/s10817-017-9406-8)). The Konclude system description reports aggregate classification time of 3,893s vs HermiT 7,076s across 484 ontologies — but the gap is much larger on the hard SROIQ tail ([Steigmiller et al. 2014](https://www.uni-ulm.de/fileadmin/website_uni_ulm/iui.inst.090/Publikationen/2014/StLG14a.pdf)). A 2023 survey confirms HermiT is "slower than [other] reasoners" for classification, "although HermiT had much fewer timeouts" overall ([Abicht 2023](https://arxiv.org/pdf/2309.06888)).');
+  console.log('HermiT (via ROBOT/ODK) is a Java-based OWL 2 DL tableau reasoner. On simple TBox ontologies (LUBM, SHI) it is comparable to Konclude. On medium-complexity ontologies (GALEN, SHIF) it is ~20× slower. On hard SROIQ ontologies with many individuals and property chains (Roberts family) HermiT does not complete within the timeout — it fails with `java.lang.OutOfMemoryError: Java heap space`. This matches published benchmarks: the ORE 2015 competition report notes Konclude "had the best performance on large and very large ontologies" while HermiT "for classification and realization tasks, was outperformed by the other reasoners" ([Parsia et al. 2017](https://link.springer.com/article/10.1007/s10817-017-9406-8)). The Konclude system description reports aggregate classification time of 3,893s vs HermiT 7,076s across 484 ontologies — but the gap is much larger on the hard SROIQ tail ([Steigmiller et al. 2014](https://www.uni-ulm.de/fileadmin/website_uni_ulm/iui.inst.090/Publikationen/2014/StLG14a.pdf)). A 2023 survey confirms HermiT is "slower than [other] reasoners" for classification, "although HermiT had much fewer timeouts" overall ([Abicht 2023](https://arxiv.org/pdf/2309.06888)).');
 
   // ── § 2  CAPABILITIES BENCHMARK ───────────────────────────────────────────
   //
@@ -472,8 +450,8 @@ async function main() {
   // calls.  Three scenarios:
   //
   //   Cold start:  first call on a fresh RdfReasoner instance.
-  //   Cache hit:   second call on unchanged store (fingerprint match → skip).
-  //   Re-reason:   add 1 axiom → fingerprint changes → full re-computation
+  //   Cache hit:   second call on unchanged store (content digest unchanged → skip).
+  //   Re-reason:   add 1 axiom → digest changes → full re-computation
   //                but Worker stays alive, WASM module warm.
   //
   // "Native cold" = full Docker run per invocation (from §1 native total).
@@ -530,10 +508,10 @@ async function main() {
   console.log('**Incremental notes:**');
   console.log('¹⁰ "Native cold" = full Docker invocation: process spawn + OWL/XML parse + full reasoning pipeline + output serialization. From §1 native total. There is no warm/incremental path — native Konclude is a stateless CLI tool.');
   console.log('¹¹ "TS cold" = first `classify()`/`materialize()` on a fresh `RdfReasoner` instance. Includes WASM init + binary encode + Worker RTT + full pipeline + decode + store.addQuad.');
-  console.log('¹² "TS cache hit" = second call on **unchanged** store. The TS layer computes a store fingerprint; if it matches the previous call, reasoning is skipped entirely. Cost = fingerprint computation only (no WASM call).');
-  console.log('¹³ "TS re-reason" = call after adding 1 axiom (`rdfs:subClassOf owl:Thing`). Store fingerprint changes → full re-computation via `reset()` + `loadTripleBuffer()` + `classification()`/`realization()`. But Worker stays alive: no WASM module init, no pthread pool startup. The WASM init (~850 ms) is amortized.');
+  console.log('¹² "TS cache hit" = second call on **unchanged** store. The TS layer encodes the store and sends `sync`; C++ compares its 128-bit content digest set with the last one and answers `changed=false`, so classify/realize are idempotent per generation and skipped. Cost = encode + one Worker round-trip.');
+  console.log('¹³ "TS re-reason" = call after adding 1 axiom (`rdfs:subClassOf owl:Thing`). Content digest changes (C++ `generation` bump) → ontology rebuilt lazily by `classification()`/`realization()`. But Worker stays alive: no WASM module init, no pthread pool startup. The WASM init (~850 ms) is amortized.');
   console.log('- Native has no incremental reasoning. Every invocation pays the full cold-start cost. The WASM port\'s persistent Worker is a structural advantage for interactive/iterative use.');
-  console.log(`- Single run per scenario (1 GB WASM memory per Worker; multiple iterations cause OOM).`);
+  console.log(`- Each scenario uses a single store on one Worker. Repeated changed-content calls (stability, memory) are measured separately with \`tests/bench/sequential-runner.mjs\`.`);
 }
 
 main().catch(e => { console.error(e); process.exit(1); });

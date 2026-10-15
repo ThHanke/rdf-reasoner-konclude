@@ -30,9 +30,25 @@ sudo chown -R $USER dist/
 
 **Patch workflow (patch 001):** `scripts/generate-patches.sh` → `make patches` → verify → commit.
 
-**Patch workflow (vendor C++ patches 002+):** Use `scripts/new-vendor-patch.sh <number> <vendor-path> [python-script]` — it extracts the clean file, applies changes, generates the diff, and validates it. After adding a new patch: `make reset-patches` (resets vendor + re-applies all patches from scratch) before `make build-wasm`.
+**Patch numbering:** the former per-fix patches 000-041 are aggregated into 000-004 (`patches/README.md` maps old to new numbers; originals in `patches/archive/per-fix/`). New vendor patches start at 005.
 
-**Multi-file patches:** `new-vendor-patch.sh` handles one file at a time. For changes spanning many vendor files, write a Python script that: (1) calls `git -C vendor/konclude show HEAD:<path>` to get the clean original as bytes, (2) applies `bytes.replace()` substitutions, (3) writes orig and modified to temp files, (4) calls `diff -u orig mod` and fixes the `--- /tmp/...` headers to `--- a/<path>` / `+++ b/<path>`, (5) concatenates all per-file diffs into a single `patches/NNN-name.patch`. Use `diff -u` (not Python `difflib`) to avoid newline format issues.
+**Patch workflow (vendor C++ patches 005+):** Use `scripts/new-vendor-patch.py <NNN> <description> <mod_script.py>` — always multi-file capable. Write a mod script that defines `FILES = [...]` and `modify(path, content) -> str`. The framework fetches exact content via `git show HEAD:path`, calls `modify()`, diffs, and writes `patches/NNN-description.patch`. Indentation is handled automatically — content is the exact file text, so `str.replace()` matches without manual tab counting. After adding a new patch: `make reset-patches` before `make build-wasm`.
+
+**Mod script template:**
+
+```python
+FILES = [
+    "Source/Reasoner/Kernel/Cache/Foo.h",
+    "Source/Reasoner/Kernel/Cache/Foo.cpp",
+]
+
+def modify(path, content):
+    if path.endswith(".h"):
+        return content.replace("old_text", "new_text")
+    if path.endswith(".cpp"):
+        return content.replace("old_text", "new_text")
+    return content
+```
 
 ## Konclude Knowledge Graph (Graphify)
 
@@ -54,7 +70,14 @@ graphify export html --graph vendor/konclude/Source/Reasoner/graphify-out/graph.
 graphify export callflow-html vendor/konclude/Source/Reasoner --output vendor/konclude/Source/Reasoner/graphify-out/callflow.html
 ```
 
-**Before patching any Konclude C++ file:** use graphify to trace call chains — ask "show me callers of X" or "what does Y call" using the graph.json. This prevents wrong-assumption bugs from patching call sites that are in invalid state.
+**MANDATORY — all C++ work:** Before reading, patching, or analyzing any Konclude C++ file, you MUST use graphify to trace call chains and understand the code topology. This is not optional. Do not write, edit, or propose any C++ patch without first running `graphify path` or `graphify explain` to verify your assumptions about callers, callees, and class relationships. Skipping this step has caused deadlocks and wrong-assumption bugs.
+
+**Graphify over grep:** For any code exploration in `vendor/konclude/` — locating symbols, tracing call chains, finding class relationships — prefer `graphify explain` and `graphify path` over `grep`. Use grep only when graphify cannot answer the question (e.g. literal string search in non-indexed files). Never use grep as the first tool for C++ symbol lookup.
+
+**Before patching any Konclude C++ file:**
+1. Run `graphify explain "<ClassName>"` to understand the node and its neighbors.
+2. Run `graphify path "<Source>" "<Target>"` to trace the call chain you intend to modify.
+3. Only then read the source file and write the patch.
 
 **Before writing any saturation clash patch** (`CCalculationTableauApproximationSaturationTaskHandleAlgorithm`): use graphify to determine if data is precomputed or requires runtime ABox traversal. Rule: role flags (`isAsymmetric()`, `isIrreflexive()`, `getIndirectSuperRoleList()`) are set during the generator/preprocessing layer — safe to read during saturation. Never call `getAssertionRoleLinker()` inside saturation role-assertion processing — this causes deadlocks for all ontologies. Clash checks that only read precomputed role flags go BEFORE the `othIndiNode = getIndividualNodeForIndividual(...)` call (feedback pattern).
 
@@ -139,13 +162,13 @@ Excluded entirely: `Source/Network/` (HTTP/OWLlink server), `Source/Control/Load
 
 ### JS↔WASM bridge
 
-NTriples string is the wire format across the JS/WASM boundary:
+Binary wire format (see `ts/intern.ts`, `src/KoncludeReasoner.h`): string table + `u32` triple ids (top 2 bits = term type). Self-invalidating contract (plan `docs/plans/2026-10-10-001-*`, doc `docs/solutions/architecture-patterns/self-invalidating-reasoner-api-2026-10-10.md`):
 
-- JS serializes `Quad[]` → NTriples (via `n3` Writer)
-- WASM: Raptor parses NTriples from memory buffer → librdf model → `mapTriples()` → tableau → `getInferredNTriples()` returns NTriples
-- JS parses NTriples → `Quad[]` (via `n3` Parser)
-
-Named graphs are dropped at serialization (NTriples is triple-only). v1 reasons over the union of all graphs.
+- Every public `RdfReasoner` call encodes the store (default inferred/explanation/hypothetical graphs and a custom `inferredGraph` excluded) and sends worker message `sync`. C++ hashes each triple (type tag + term string, 128 bit), compares the digest set with the last synced one and answers `{changed, added, removed, generation}`. Order, duplicates, Store identity and interned ids do not matter. Blank-node labels count as content.
+- Changed content bumps `generation` and hides cached results; the ontology is rebuilt lazily by the next `classification()` / `realization()` / `consistency()`. These verbs are idempotent per generation. Load variant (realization vs classification/consistency, differing in FP/IFP pre-scan) is part of the validity: switching variant rebuilds once.
+- TS keeps per-Store result caches keyed on `{store, generation}` only to skip re-injection; C++ stays authoritative. The Worker is recycled (heap > `recycleHeapBytes`) only when changed content arrives.
+- Wasm32 pointers above 2 GiB come back negative from Embind `int`: always `>>> 0` before indexing `HEAPU8`.
+- Named graphs are dropped at serialization; v1 reasons over the union of all graphs.
 
 ### TypeScript layer (`ts/`)
 
@@ -157,7 +180,7 @@ No Comlink — custom typed dispatch over raw `postMessage`. `KoncludeReasoner` 
 
 ### Emscripten flags
 
-`ENVIRONMENT=node,worker`, `MODULARIZE=1`, `EXPORT_ES6=1`, `EXPORT_NAME=createKoncludeModule`, `NO_EXIT_RUNTIME=1`, `--bind`, `USE_PTHREADS=1`, `PTHREAD_POOL_SIZE=8`, `PTHREAD_POOL_SIZE_STRICT=2`, `MALLOC=mimalloc`, `INITIAL_MEMORY=1073741824`, `NO_DISABLE_EXCEPTION_CATCHING`, `ALLOW_BLOCKING_ON_MAIN_THREAD=1`, `-flto`. `ASSERTIONS=0` and `DEMANGLE_SUPPORT=0` (both are now the explicit default — removed from the flag list). Pthreads are required — the KPSet classifier spins waiting for parallel test results; cooperative single-thread dispatch deadlocks (see `docs/solutions/architecture-patterns/wasm-pthread-concurrency-architecture-2026-05-08.md`). `PROXY_TO_PTHREAD` is not used — the current build works correctly without it.
+`ENVIRONMENT=node,worker`, `MODULARIZE=1`, `EXPORT_ES6=1`, `EXPORT_NAME=createKoncludeModule`, `NO_EXIT_RUNTIME=1`, `--bind`, `USE_PTHREADS=1`, `PTHREAD_POOL_SIZE=32`, `PTHREAD_POOL_SIZE_STRICT=2`, `MALLOC=mimalloc`, `INITIAL_MEMORY=1073741824`, `NO_DISABLE_EXCEPTION_CATCHING`, `ALLOW_BLOCKING_ON_MAIN_THREAD=1`, `-flto`. `ASSERTIONS=0` and `DEMANGLE_SUPPORT=0` (both are now the explicit default — removed from the flag list). Pthreads are required — the KPSet classifier spins waiting for parallel test results; cooperative single-thread dispatch deadlocks (see `docs/solutions/architecture-patterns/wasm-pthread-concurrency-architecture-2026-05-08.md`). `PROXY_TO_PTHREAD` is not used — the current build works correctly without it.
 
 ## Key Constraints
 

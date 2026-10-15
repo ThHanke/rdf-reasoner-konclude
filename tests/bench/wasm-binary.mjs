@@ -1,6 +1,6 @@
 // tests/bench/wasm-binary.mjs
 // Binary encode/decode helpers for direct WASM use in bench and smoke scripts.
-// Mirrors the loadTripleBuffer / getInferredTripleBuffer path in ts/worker.ts.
+// Mirrors the syncTripleBuffer / getInferredTripleBuffer path in ts/worker.ts.
 
 import { Parser } from 'n3';
 import { encodeToBuffers, decodeBuffers } from '../../dist/intern.js';
@@ -13,7 +13,7 @@ export function parseNTriples(ntriplesString) {
 }
 
 /**
- * Encode pre-parsed Quads into WASM heap buffers ready for loadTripleBuffer().
+ * Encode pre-parsed Quads into WASM heap buffers ready for syncTripleBuffer().
  * Returns { triplePtr, tripleCount, strTablePtr, strBytes }.
  * Caller MUST call mod._free(triplePtr) and mod._free(strTablePtr) after use.
  * Use this instead of encodeTriplesForWasm to exclude NTriples parsing from timing.
@@ -31,7 +31,7 @@ export function encodeQuadsForWasm(mod, quads) {
 }
 
 /**
- * Encode an NTriples string into WASM heap buffers ready for loadTripleBuffer().
+ * Encode an NTriples string into WASM heap buffers ready for syncTripleBuffer().
  * Includes NTriples parsing in the call — use encodeQuadsForWasm to exclude it.
  */
 export function encodeTriplesForWasm(mod, ntriplesString) {

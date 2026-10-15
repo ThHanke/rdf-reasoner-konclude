@@ -41,7 +41,7 @@ async function benchOne(createModule, quads, abox) {
     const tLoad0 = performance.now();
     const { triplePtr, tripleCount, strTablePtr, strBytes } = encodeQuadsForWasm(Module, quads);
     try {
-      reasoner.loadTripleBuffer(triplePtr, tripleCount, strTablePtr, strBytes, abox);
+      if (reasoner.syncTripleBuffer(triplePtr, tripleCount, strTablePtr, strBytes) < 0) throw new Error("syncTripleBuffer rejected buffers");
     } finally {
       Module._free(triplePtr);
       Module._free(strTablePtr);
