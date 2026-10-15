@@ -1,0 +1,85 @@
+{
+ "buckets": {
+  "http://example.org/family#brotherOf": {
+   "count": 7,
+   "sha256": "73724c3eb820af3ca6b59cd91c038710c0a4e78862b2676c6c27f8ac742a420c"
+  },
+  "http://example.org/family#directSiblingOf": {
+   "count": 14,
+   "sha256": "177cc2b5f4c67d65a8b3ac76e579eb7344ec9a4d9b8af3d044300f8a9c2ffd07"
+  },
+  "http://example.org/family#hasChild": {
+   "count": 0,
+   "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "http://example.org/family#hasFather": {
+   "count": 8,
+   "sha256": "da560b9bebe549e194e98f0821dc2d6603139960db45325709cbf9a67d88d44d"
+  },
+  "http://example.org/family#hasForeFather": {
+   "count": 13,
+   "sha256": "8e82d1cf2aaca724d1ce6193d608470543e3f078a698142b5714ecbfeecbfc35"
+  },
+  "http://example.org/family#hasForeMother": {
+   "count": 8,
+   "sha256": "cee3efc08dbaf9770ef303c3bdf10c92a02340f3408161f0cc8bc1a4c5ba14cb"
+  },
+  "http://example.org/family#hasHusband": {
+   "count": 0,
+   "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "http://example.org/family#hasMother": {
+   "count": 8,
+   "sha256": "cee3efc08dbaf9770ef303c3bdf10c92a02340f3408161f0cc8bc1a4c5ba14cb"
+  },
+  "http://example.org/family#hasParent": {
+   "count": 16,
+   "sha256": "c4acf9f1eb0cc2defb2048457de6b4412f78911b2881422b1533b7ce15401535"
+  },
+  "http://example.org/family#hasSister": {
+   "count": 7,
+   "sha256": "ec21e50b217030c54b35deb27dc106a09f75d89230e67c57a61ddadfcbca52f5"
+  },
+  "http://example.org/family#hasWife": {
+   "count": 3,
+   "sha256": "89530b70bb2f8f1b9d7c62f4b266b28aa11ee171e814649a455c0430d046b081"
+  },
+  "http://example.org/family#isBloodRelationOf": {
+   "count": 144,
+   "sha256": "dcd3ae3c28c91a23aa7e61e3ed00457172b514fb12cea98513d2720aa583bdb2"
+  },
+  "http://example.org/family#isFirstCousinOf": {
+   "count": 12,
+   "sha256": "7c6f71a9e660b44cbe7cb1c446a25f9491b2037f91e86bd5fbbeacc73240dd0c"
+  },
+  "http://example.org/family#isInLawOf": {
+   "count": 14,
+   "sha256": "fdf2e43ba10c7af8c20252ad6a2b6512d70377aaa2c8b9a649ce86a607cc4ca8"
+  },
+  "http://example.org/family#isParentInLawOf": {
+   "count": 4,
+   "sha256": "728a499c7674ff37b21e647dc8f9e7c5c25b5c71b683a331910afd1a47334729"
+  },
+  "http://example.org/family#isRelationOf": {
+   "count": 144,
+   "sha256": "dcd3ae3c28c91a23aa7e61e3ed00457172b514fb12cea98513d2720aa583bdb2"
+  },
+  "http://example.org/family#isSiblingOf": {
+   "count": 14,
+   "sha256": "177cc2b5f4c67d65a8b3ac76e579eb7344ec9a4d9b8af3d044300f8a9c2ffd07"
+  },
+  "http://example.org/family#isSpouseOf": {
+   "count": 6,
+   "sha256": "78a00860c0f528da90f107a33ecba517312a9d9e94baa97bf7b78ad651b7af74"
+  },
+  "http://example.org/family#hasAncestor": {
+   "count": 21,
+   "sha256": "506dc2cca8ad0fd38c3547f858f03a43517d51ee532151c25db6cd16d60008e4"
+  }
+ },
+ "fixture": "mini-family.nt",
+ "repeats": 5,
+ "unstable": {},
+ "upstream": "/home/hanke/konclude-orig/b/Debug/Konclude",
+ "note": "hasAncestor is upstream-unstable (16 or 21); 21 is the complete value, pinned from the fixed port (patch 021). __types__ omitted: upstream ClassAssertion list is not comparable with the port readout on this fixture."
+}

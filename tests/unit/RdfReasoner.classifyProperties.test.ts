@@ -1,5 +1,5 @@
 /**
- * Unit tests for RdfReasoner.classifyProperties() — Quad[] and Store overloads.
+ * Unit tests for RdfReasoner.classifyProperties() — Store overload.
  *
  * Follows the same vi.hoisted / vi.stubGlobal("Worker") scaffolding used in
  * RdfReasoner.test.ts and RdfReasoner.materialize.test.ts.
@@ -55,6 +55,9 @@ vi.stubGlobal("Worker", mocks.WorkerMock);
 // Step 3: Import module under test
 // ---------------------------------------------------------------------------
 import { RdfReasoner, INFERRED_GRAPH_IRI } from "../../ts/index.js";
+import { createFakeSync } from "./helpers/fakeSync.js";
+
+const fakeSync = createFakeSync();
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -96,8 +99,8 @@ function mockPropertySequence(inferredQuads: Quad[]) {
   const buf = buildCombinedBuffer(inferredQuads);
   mocks.workerPostMessage.mockImplementation((msg: unknown) => {
     const req = msg as { id: number; method: string };
-    if (req.method === "loadTripleBuffer") {
-      simulateWorkerMessage({ id: req.id, result: true });
+    if (req.method === "sync") {
+      simulateWorkerMessage({ id: req.id, result: fakeSync(req) });
     } else if (req.method === "classification") {
       simulateWorkerMessage({ id: req.id, result: true });
     } else if (req.method === "getPropertyTripleBuffer") {
@@ -118,64 +121,65 @@ describe("RdfReasoner.classifyProperties()", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Quad[] overload — happy paths
+  // Store overload — core behavior
   // -------------------------------------------------------------------------
 
-  describe("Quad[] overload", () => {
-    it("happy path: worker call sequence is [loadTripleBuffer, classification, getPropertyTripleBuffer]", async () => {
+  describe("Store overload — core behavior", () => {
+    it("happy path: worker call sequence is [sync, classification, getPropertyTripleBuffer]", async () => {
       const reasoner = await makeReadyReasoner();
 
       mockPropertySequence([quad(P, subPropertyOf, R, defaultGraph())]);
 
-      await reasoner.classifyProperties([
+      await reasoner.classifyProperties(new Store([
         quad(P, subPropertyOf, Q, defaultGraph()),
         quad(Q, subPropertyOf, R, defaultGraph()),
-      ]);
+      ]));
 
       const methods = mocks.workerPostMessage.mock.calls.map(
         (c) => (c[0] as { method: string }).method,
       );
-      expect(methods).toEqual(["loadTripleBuffer", "classification", "getPropertyTripleBuffer"]);
+      expect(methods).toEqual(["sync", "classification", "getPropertyTripleBuffer"]);
     });
 
-    it("happy path: mock returns rdfs:subPropertyOf quads; they are returned", async () => {
+    it("happy path: inferred rdfs:subPropertyOf quad written to inferred graph", async () => {
       const reasoner = await makeReadyReasoner();
 
       mockPropertySequence([quad(P, subPropertyOf, R, defaultGraph())]);
 
-      const result = await reasoner.classifyProperties([
+      const store = new Store([
         quad(P, subPropertyOf, Q, defaultGraph()),
         quad(Q, subPropertyOf, R, defaultGraph()),
       ]);
+      await reasoner.classifyProperties(store);
 
-      expect(result).toHaveLength(1);
-      expect(result[0].subject.value).toBe("http://example.org/P");
-      expect(result[0].predicate.value).toBe("http://www.w3.org/2000/01/rdf-schema#subPropertyOf");
-      expect(result[0].object.value).toBe("http://example.org/R");
-      expect(result[0].graph.termType).toBe("DefaultGraph");
+      const inferred = store.getQuads(null, null, null, namedNode(INFERRED_GRAPH_IRI));
+      expect(inferred).toHaveLength(1);
+      expect(inferred[0].subject.value).toBe("http://example.org/P");
+      expect(inferred[0].predicate.value).toBe("http://www.w3.org/2000/01/rdf-schema#subPropertyOf");
+      expect(inferred[0].object.value).toBe("http://example.org/R");
+      expect(inferred[0].graph.value).toBe(INFERRED_GRAPH_IRI);
     });
 
-    it("edge case: ontology with no user-defined properties → empty result, no throw", async () => {
+    it("edge case: empty worker result → inferred graph empty", async () => {
       const reasoner = await makeReadyReasoner();
-
       mockPropertySequence([]);
-
-      const result = await reasoner.classifyProperties([]);
-      expect(result).toEqual([]);
+      const store = new Store();
+      await reasoner.classifyProperties(store);
+      expect(store.getQuads(null, null, null, namedNode(INFERRED_GRAPH_IRI))).toHaveLength(0);
     });
 
-    it("edge case: worker error → promise rejects correctly", async () => {
+    it("edge case: worker error → promise rejects", async () => {
       const reasoner = await makeReadyReasoner();
 
       mocks.workerPostMessage.mockImplementation((msg: unknown) => {
         const req = msg as { id: number; method: string };
-        if (req.method === "loadTripleBuffer") {
+        if (req.method === "sync") {
           simulateWorkerMessage({ id: req.id, error: "binary decode error" });
         }
       });
 
       await expect(
-        reasoner.classifyProperties([quad(P, subPropertyOf, Q, defaultGraph())]),
+        reasoner.classifyProperties(new Store([quad(P, subPropertyOf, Q, defaultGraph())])),
       ).rejects.toThrow("binary decode error");
     });
   });
@@ -249,7 +253,7 @@ describe("RdfReasoner.classifyProperties()", () => {
       const methods = mocks.workerPostMessage.mock.calls.map(
         (c) => (c[0] as { method: string }).method,
       );
-      expect(methods).toEqual(["loadTripleBuffer", "classification", "getPropertyTripleBuffer"]);
+      expect(methods).toEqual(["sync", "classification", "getPropertyTripleBuffer"]);
       expect(methods).not.toContain("realization");
       expect(methods).not.toContain("getInferredTripleBuffer");
     });
@@ -263,7 +267,7 @@ describe("RdfReasoner.classifyProperties()", () => {
 
       mocks.workerPostMessage.mockImplementation((msg: unknown) => {
         const req = msg as { id: number; method: string };
-        if (req.method === "loadTripleBuffer") {
+        if (req.method === "sync") {
           simulateWorkerMessage({ id: req.id, error: "binary decode error" });
         }
       });
@@ -286,8 +290,8 @@ describe("RdfReasoner.classifyProperties()", () => {
       let callCount = 0;
       mocks.workerPostMessage.mockImplementation((msg: unknown) => {
         const req = msg as { id: number; method: string };
-        if (req.method === "loadTripleBuffer") {
-          simulateWorkerMessage({ id: req.id, result: true });
+        if (req.method === "sync") {
+          simulateWorkerMessage({ id: req.id, result: fakeSync(req) });
         } else if (req.method === "classification") {
           simulateWorkerMessage({ id: req.id, result: true });
         } else if (req.method === "getPropertyTripleBuffer") {
@@ -299,15 +303,22 @@ describe("RdfReasoner.classifyProperties()", () => {
         }
       });
 
-      const [result1, result2] = await Promise.all([
-        reasoner.classifyProperties([quad(P, subPropertyOf, Q, defaultGraph())]),
-        reasoner.classifyProperties([quad(Q, subPropertyOf, R, defaultGraph())]),
+      // store1: P→Q (direct) + worker infers P→R (transitive)
+      // store2: Q→P (direct) + worker infers Q→R (transitive, different from Q→P)
+      const store1 = new Store([quad(P, subPropertyOf, Q, defaultGraph())]);
+      const store2 = new Store([quad(Q, subPropertyOf, P, defaultGraph())]);
+      await Promise.all([
+        reasoner.classifyProperties(store1),
+        reasoner.classifyProperties(store2),
       ]);
 
-      expect(result1).toHaveLength(1);
-      expect(result1[0].subject.value).toBe("http://example.org/P");
-      expect(result2).toHaveLength(1);
-      expect(result2[0].subject.value).toBe("http://example.org/Q");
+      const g = namedNode(INFERRED_GRAPH_IRI);
+      const inferred1 = store1.getQuads(null, null, null, g);
+      const inferred2 = store2.getQuads(null, null, null, g);
+      expect(inferred1).toHaveLength(1);
+      expect(inferred1[0].subject.value).toBe("http://example.org/P");
+      expect(inferred2).toHaveLength(1);
+      expect(inferred2[0].subject.value).toBe("http://example.org/Q");
     });
   });
 });

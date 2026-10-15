@@ -54,6 +54,9 @@ vi.stubGlobal("Worker", mocks.WorkerMock);
 // Step 3: Import module under test
 // ---------------------------------------------------------------------------
 import { RdfReasoner } from "../../ts/index.js";
+import { createFakeSync } from "./helpers/fakeSync.js";
+
+const fakeSync = createFakeSync();
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -85,8 +88,8 @@ async function makeReadyReasoner(): Promise<RdfReasoner> {
 function mockAlwaysConsistent() {
   mocks.workerPostMessage.mockImplementation((msg: unknown) => {
     const req = msg as { id: number; method: string };
-    if (req.method === "loadTripleBuffer") {
-      simulateWorkerMessage({ id: req.id, result: true });
+    if (req.method === "sync") {
+      simulateWorkerMessage({ id: req.id, result: fakeSync(req) });
     } else if (req.method === "classification") {
       simulateWorkerMessage({ id: req.id, result: true });
     } else if (req.method === "consistency") {
@@ -105,7 +108,7 @@ function mockInconsistentWhenAtLeast(minTriples: number) {
   let lastTripleCount = 0;
   mocks.workerPostMessage.mockImplementation((msg: unknown) => {
     const req = msg as { id: number; method: string; args: unknown[] };
-    if (req.method === "loadTripleBuffer") {
+    if (req.method === "sync") {
       lastTripleCount = Math.floor((req.args[0] as ArrayBuffer).byteLength / 12);
       simulateWorkerMessage({ id: req.id, result: true });
     } else if (req.method === "classification") {

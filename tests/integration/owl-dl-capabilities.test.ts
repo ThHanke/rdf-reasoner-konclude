@@ -20,10 +20,10 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { existsSync } from "node:fs";
-import { Parser, Store } from "n3";
+import { Parser, Store, DataFactory } from "n3";
 import type { Quad } from "@rdfjs/types";
 
-import { RdfReasoner } from "../../ts/index.js";
+import { RdfReasoner, INFERRED_GRAPH_IRI } from "../../ts/index.js";
 
 const wasmPath = new URL("../../dist/konclude.wasm", import.meta.url).pathname;
 const wasmExists = existsSync(wasmPath);
@@ -82,17 +82,23 @@ function hasSub(quads: Quad[], sub: string, sup: string): boolean {
 // Suite
 // ---------------------------------------------------------------------------
 
+const INFERRED_GRAPH_IRI = "urn:konclude:inferred";
+
 describe.skipIf(!wasmExists)("OWL 2 DL capabilities — classify()", () => {
   let reasoner: RdfReasoner;
+  let store: Store;
   let inferred: Quad[];
+  let allSubClassOf: Quad[];
 
   beforeAll(async () => {
     reasoner = new RdfReasoner();
     await reasoner.ready;
 
     const parser = new Parser({ format: "Turtle" });
-    const quads = parser.parse(DL_TURTLE) as Quad[];
-    inferred = await reasoner.classify(quads);
+    store = new Store(parser.parse(DL_TURTLE) as Quad[]);
+    await reasoner.classify(store);
+    inferred = store.getQuads(null, null, null, DataFactory.namedNode(INFERRED_GRAPH_IRI));
+    allSubClassOf = store.getQuads(null, DataFactory.namedNode(SUB), null, null);
   }, 30000);
 
   afterAll(() => reasoner?.terminate());
@@ -105,20 +111,22 @@ describe.skipIf(!wasmExists)("OWL 2 DL capabilities — classify()", () => {
     expect(hasSub(inferred, EX("Father"), EX("Parent"))).toBe(true);
   });
 
-  it("Male rdfs:subClassOf Person + Father ⊑ Male form the chain Father → Male → Person (Hasse diagram, no redundant transitive edge)", () => {
-    // Konclude emits direct (Hasse) edges only — Father ⊑ Person is NOT emitted
-    // because it is subsumed by the direct path Father ⊑ Male ⊑ Person.
+  it("Male ⊑ Person + Father ⊑ Male form the chain Father → Male → Person (Hasse, no redundant transitive edge)", () => {
+    // Father → Male is newly inferred (not stated) — must appear in inferred graph.
     expect(hasSub(inferred, EX("Father"), EX("Male"))).toBe(true);
-    expect(hasSub(inferred, EX("Male"),   EX("Person"))).toBe(true);
-    expect(hasSub(inferred, EX("Father"), EX("Person"))).toBe(false);
+    // Male → Person is a stated TBox axiom — lives in the default graph, not the inferred graph.
+    expect(hasSub(allSubClassOf, EX("Male"), EX("Person"))).toBe(true);
+    // Father → Person must not be materialised anywhere (Hasse reduction).
+    expect(hasSub(allSubClassOf, EX("Father"), EX("Person"))).toBe(false);
   });
 
   it("Parent rdfs:subClassOf Person (via equivalentClass: Parent ≡ Person ⊓ ≥1 hasChild)", () => {
     expect(hasSub(inferred, EX("Parent"), EX("Person"))).toBe(true);
   });
 
-  it("Male rdfs:subClassOf Person (direct TBox assertion)", () => {
-    expect(hasSub(inferred, EX("Male"), EX("Person"))).toBe(true);
+  it("Male rdfs:subClassOf Person (direct TBox assertion — present in stated store, not re-emitted to inferred graph)", () => {
+    expect(hasSub(allSubClassOf, EX("Male"), EX("Person"))).toBe(true);
+    expect(hasSub(inferred,      EX("Male"), EX("Person"))).toBe(false);
   });
 
   it("no rdf:type triples in classify() output (TBox only)", () => {
@@ -183,19 +191,21 @@ function hasType(quads: Quad[], ind: string, cls: string): boolean {
 
 describe.skipIf(!wasmExists)("OWL 2 DL — owl:someValuesFrom", () => {
   let reasoner: RdfReasoner;
-  let svfQuads: Quad[];
+  let svfStore: Store;
 
   beforeAll(async () => {
     reasoner = new RdfReasoner();
     await reasoner.ready;
     const parser = new Parser({ format: "Turtle" });
-    svfQuads = parser.parse(SVF_TURTLE) as Quad[];
+    svfStore = new Store(parser.parse(SVF_TURTLE) as Quad[]);
   }, 30000);
 
   afterAll(() => reasoner?.terminate());
 
   it("TBox: DogOwner ⊑ PetOwner (∃hasAnimal.Dog ⊑ ∃hasAnimal.Animal because Dog ⊑ Animal)", async () => {
-    const inferred = await reasoner.classify(svfQuads);
+    const store = new Store(svfStore.getQuads(null, null, null, null));
+    await reasoner.classify(store);
+    const inferred = store.getQuads(null, null, null, DataFactory.namedNode(INFERRED_GRAPH_IRI));
     expect(
       hasSub(inferred, SVF("DogOwner"), SVF("PetOwner")),
       "DogOwner must be a subclass of PetOwner via someValuesFrom range subsumption",
@@ -203,7 +213,9 @@ describe.skipIf(!wasmExists)("OWL 2 DL — owl:someValuesFrom", () => {
   });
 
   it("ABox: Alice rdf:type DogOwner (hasAnimal Fido, Fido rdf:type Dog → ∃hasAnimal.Dog)", async () => {
-    const inferred = await reasoner.materialize(svfQuads);
+    const store = new Store(svfStore.getQuads(null, null, null, null));
+    await reasoner.materialize(store);
+    const inferred = store.getQuads(null, null, null, DataFactory.namedNode(INFERRED_GRAPH_IRI));
     expect(
       hasType(inferred, SVF("Alice"), SVF("DogOwner")),
       "Alice must be inferred as DogOwner via someValuesFrom",
@@ -211,7 +223,9 @@ describe.skipIf(!wasmExists)("OWL 2 DL — owl:someValuesFrom", () => {
   });
 
   it("ABox: Alice rdf:type PetOwner (via DogOwner ⊑ PetOwner)", async () => {
-    const inferred = await reasoner.materialize(svfQuads);
+    const store = new Store(svfStore.getQuads(null, null, null, null));
+    await reasoner.materialize(store);
+    const inferred = store.getQuads(null, null, null, DataFactory.namedNode(INFERRED_GRAPH_IRI));
     expect(
       hasType(inferred, SVF("Alice"), SVF("PetOwner")),
       "Alice must be inferred as PetOwner via DogOwner ⊑ PetOwner",
@@ -346,7 +360,9 @@ describe.skipIf(!wasmExists)("Skolemized blank-node restrictions (urn:vg:bnode: 
   afterAll(() => reasoner?.terminate());
 
   it("TBox: no spurious ClassA ≡ ClassB equivalence (different someValuesFrom fillers)", async () => {
-    const inferred = await reasoner.classify(quads);
+    const classifyStore = new Store(quads);
+    await reasoner.classify(classifyStore);
+    const inferred = classifyStore.getQuads(null, null, null, DataFactory.namedNode(INFERRED_GRAPH_IRI));
     const OWL_EQUIV = OWL("equivalentClass");
     const spurious =
       inferred.some(
@@ -365,7 +381,9 @@ describe.skipIf(!wasmExists)("Skolemized blank-node restrictions (urn:vg:bnode: 
   }, 360000);
 
   it("ABox: ind1 rdf:type ClassA inferred (hasPart p1, p1 rdf:type FillerA → ∃hasPart.FillerA)", async () => {
-    const inferred = await reasoner.materialize(quads);
+    const materializeStore1 = new Store(quads);
+    await reasoner.materialize(materializeStore1);
+    const inferred = materializeStore1.getQuads(null, null, null, DataFactory.namedNode(INFERRED_GRAPH_IRI));
     expect(
       hasType(inferred, SKOLEM("ind1"), SKOLEM("ClassA")),
       "ind1 must be inferred as ClassA",
@@ -373,7 +391,9 @@ describe.skipIf(!wasmExists)("Skolemized blank-node restrictions (urn:vg:bnode: 
   }, 360000);
 
   it("ABox: ind1 NOT rdf:type ClassB (p1 only satisfies FillerA, not FillerB)", async () => {
-    const inferred = await reasoner.materialize(quads);
+    const materializeStore2 = new Store(quads);
+    await reasoner.materialize(materializeStore2);
+    const inferred = materializeStore2.getQuads(null, null, null, DataFactory.namedNode(INFERRED_GRAPH_IRI));
     expect(
       hasType(inferred, SKOLEM("ind1"), SKOLEM("ClassB")),
       "ind1 must NOT be inferred as ClassB",

@@ -48,7 +48,7 @@ ex:AtMostOneSpouse a owl:Class ;
     rdfs:subClassOf ex:Person .
 
 # ---------------------------------------------------------------------------
-# Unqualified exactCardinality: ExactlyOneParent ≡ =1 hasParent
+# Unqualified exact cardinality (OWL 2 RDF term is owl:cardinality; owl:exactCardinality does not exist): ExactlyOneParent ≡ =1 hasParent
 # An explicit rdfs:subClassOf ex:Parent ensures a direct edge in the Hasse
 # diagram that classify() can emit and materialize() can propagate.
 # ---------------------------------------------------------------------------
@@ -57,7 +57,7 @@ ex:ExactlyOneParent a owl:Class ;
     owl:equivalentClass [
         a owl:Restriction ;
         owl:onProperty ex:hasParent ;
-        owl:exactCardinality 1
+        owl:cardinality 1
     ] ;
     rdfs:subClassOf ex:Parent .
 

@@ -23,7 +23,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { Parser } from "n3";
+import { Parser, Store } from "n3";
 import type { Quad } from "@rdfjs/types";
 
 import { RdfReasoner } from "../../ts/index.js";
@@ -70,13 +70,7 @@ function nativeVerdict(caseNum: number): NativeVerdict {
 // ---------------------------------------------------------------------------
 
 function parseTurtle(turtle: string): Quad[] {
-  const parser = new Parser({ format: "Turtle" });
-  const quads: Quad[] = [];
-  parser.parse(turtle, (err, quad) => {
-    if (err) throw err;
-    if (quad) quads.push(quad as Quad);
-  });
-  return quads;
+  return new Parser({ format: "Turtle" }).parse(turtle) as Quad[];
 }
 
 // ---------------------------------------------------------------------------
@@ -287,7 +281,7 @@ describe.skipIf(!wasmExists)(
       async () => {
         const native = nativeVerdict(1);
         const quads = parseTurtle(ONTOLOGIES[1]);
-        const consistent = await reasoner.checkConsistency(quads);
+        const consistent = await reasoner.checkConsistency(new Store(quads));
         expect(consistent, `WASM disagrees with native verdict "${native.verdict}"`).toBe(
           native.verdict === "consistent"
         );
@@ -301,7 +295,7 @@ describe.skipIf(!wasmExists)(
       async () => {
         const native = nativeVerdict(2);
         const quads = parseTurtle(ONTOLOGIES[2]);
-        const consistent = await reasoner.checkConsistency(quads);
+        const consistent = await reasoner.checkConsistency(new Store(quads));
         expect(consistent, `WASM disagrees with native verdict "${native.verdict}"`).toBe(
           native.verdict === "consistent"
         );
@@ -317,7 +311,7 @@ describe.skipIf(!wasmExists)(
       async () => {
         const native = nativeVerdict(3);
         const quads = parseTurtle(ONTOLOGIES[3]);
-        const consistent = await reasoner.checkConsistency(quads);
+        const consistent = await reasoner.checkConsistency(new Store(quads));
         expect(consistent, `WASM disagrees with expected verdict "${native.verdict}"`).toBe(
           native.verdict === "consistent"
         );
@@ -333,7 +327,7 @@ describe.skipIf(!wasmExists)(
       async () => {
         const native = nativeVerdict(4);
         const quads = parseTurtle(ONTOLOGIES[4]);
-        const consistent = await reasoner.checkConsistency(quads);
+        const consistent = await reasoner.checkConsistency(new Store(quads));
         expect(consistent, `WASM disagrees with expected verdict "${native.verdict}"`).toBe(
           native.verdict === "consistent"
         );
@@ -349,7 +343,7 @@ describe.skipIf(!wasmExists)(
       async () => {
         const native = nativeVerdict(5);
         const quads = parseTurtle(ONTOLOGIES[5]);
-        const consistent = await reasoner.checkConsistency(quads);
+        const consistent = await reasoner.checkConsistency(new Store(quads));
         expect(consistent, `WASM disagrees with native verdict "${native.verdict}"`).toBe(
           native.verdict === "consistent"
         );
@@ -363,7 +357,7 @@ describe.skipIf(!wasmExists)(
       async () => {
         const native = nativeVerdict(6);
         const quads = parseTurtle(ONTOLOGIES[6]);
-        const consistent = await reasoner.checkConsistency(quads);
+        const consistent = await reasoner.checkConsistency(new Store(quads));
         expect(consistent, `WASM disagrees with native verdict "${native.verdict}"`).toBe(
           native.verdict === "consistent"
         );
@@ -377,7 +371,7 @@ describe.skipIf(!wasmExists)(
       async () => {
         const native = nativeVerdict(7);
         const quads = parseTurtle(ONTOLOGIES[7]);
-        const consistent = await reasoner.checkConsistency(quads);
+        const consistent = await reasoner.checkConsistency(new Store(quads));
         expect(consistent, `WASM disagrees with native verdict "${native.verdict}"`).toBe(
           native.verdict === "consistent"
         );
@@ -391,7 +385,7 @@ describe.skipIf(!wasmExists)(
       async () => {
         const native = nativeVerdict(8);
         const quads = parseTurtle(ONTOLOGIES[8]);
-        const consistent = await reasoner.checkConsistency(quads);
+        const consistent = await reasoner.checkConsistency(new Store(quads));
         expect(consistent, `WASM disagrees with native verdict "${native.verdict}"`).toBe(
           native.verdict === "consistent"
         );
@@ -405,7 +399,7 @@ describe.skipIf(!wasmExists)(
       async () => {
         const native = nativeVerdict(9);
         const quads = parseTurtle(ONTOLOGIES[9]);
-        const consistent = await reasoner.checkConsistency(quads);
+        const consistent = await reasoner.checkConsistency(new Store(quads));
         expect(consistent, `WASM disagrees with native verdict "${native.verdict}"`).toBe(
           native.verdict === "consistent"
         );
@@ -421,7 +415,7 @@ describe.skipIf(!wasmExists)(
       async () => {
         const native = nativeVerdict(10);
         const quads = parseTurtle(ONTOLOGIES[10]);
-        const consistent = await reasoner.checkConsistency(quads);
+        const consistent = await reasoner.checkConsistency(new Store(quads));
         expect(consistent, `WASM disagrees with expected verdict "${native.verdict}"`).toBe(
           native.verdict === "consistent"
         );
@@ -435,7 +429,7 @@ describe.skipIf(!wasmExists)(
       async () => {
         const native = nativeVerdict(11);
         const quads = parseTurtle(ONTOLOGIES[11]);
-        const consistent = await reasoner.checkConsistency(quads);
+        const consistent = await reasoner.checkConsistency(new Store(quads));
         expect(consistent, `WASM disagrees with native verdict "${native.verdict}"`).toBe(
           native.verdict === "consistent"
         );
@@ -454,7 +448,7 @@ describe.skipIf(!wasmExists)(
       async () => {
         const native = nativeVerdict(12);
         const quads = parseTurtle(ONTOLOGIES[12]);
-        const consistent = await reasoner.checkConsistency(quads);
+        const consistent = await reasoner.checkConsistency(new Store(quads));
         expect(consistent, `WASM disagrees with native verdict "${native.verdict}"`).toBe(
           native.verdict === "consistent"
         );
@@ -469,7 +463,7 @@ describe.skipIf(!wasmExists)(
       async () => {
         const native = nativeVerdict(13);
         const quads = parseTurtle(ONTOLOGIES[13]);
-        const consistent = await reasoner.checkConsistency(quads);
+        const consistent = await reasoner.checkConsistency(new Store(quads));
         expect(consistent, `WASM disagrees with native verdict "${native.verdict}"`).toBe(
           native.verdict === "consistent"
         );
@@ -484,7 +478,7 @@ describe.skipIf(!wasmExists)(
       async () => {
         const native = nativeVerdict(14);
         const quads = parseTurtle(ONTOLOGIES[14]);
-        const consistent = await reasoner.checkConsistency(quads);
+        const consistent = await reasoner.checkConsistency(new Store(quads));
         expect(consistent, `WASM disagrees with native verdict "${native.verdict}"`).toBe(
           native.verdict === "consistent"
         );
@@ -495,9 +489,8 @@ describe.skipIf(!wasmExists)(
     // Case 17 — AsymmetricProperty self-loop: r(a,a) with r asymmetric → inconsistent.
     // OWL 2 DL: AsymmetricProperty(r) means ∀x,y: r(x,y)→¬r(y,x); setting x=y=a
     // gives r(a,a)→¬r(a,a), which is a contradiction.
-    // Fixed by patch-027 (2026-09-18): added isAsymmetric() to the existing self-loop
-    // branch in initializeRoleAssertions that already checked isIrreflexive().
-    // Reads only precomputed role flags — no ABox iteration, safe in saturation.
+    // Detected by Konclude ABox tableau reasoning (old saturation shortcut patch-027 was dropped;
+    // the number 027 now names the realizer queued-flag patch).
     it(
       "case 17: AsymmetricProperty self-loop r(a,a) — WASM detects inconsistency",
       async () => {
@@ -507,7 +500,7 @@ describe.skipIf(!wasmExists)(
           :parentOf a owl:ObjectProperty , owl:AsymmetricProperty .
           :alice a owl:NamedIndividual ; :parentOf :alice .
         `);
-        const consistent = await reasoner.checkConsistency(quads);
+        const consistent = await reasoner.checkConsistency(new Store(quads));
         expect(consistent).toBe(false);
       },
       30000
@@ -530,7 +523,7 @@ describe.skipIf(!wasmExists)(
             owl:equivalentClass [ a owl:Restriction ; owl:onProperty :q ; owl:hasSelf true ] .
           :a a owl:NamedIndividual , :HasSelfP , :HasSelfQ .
         `);
-        const consistent = await reasoner.checkConsistency(quads);
+        const consistent = await reasoner.checkConsistency(new Store(quads));
         expect(consistent).toBe(false);
       },
       30000
@@ -549,7 +542,7 @@ describe.skipIf(!wasmExists)(
             owl:equivalentClass [ a owl:Restriction ; owl:onProperty :q ; owl:hasSelf true ] .
           :a a owl:NamedIndividual , :HasSelfQ .
         `);
-        const consistent = await reasoner.checkConsistency(quads);
+        const consistent = await reasoner.checkConsistency(new Store(quads));
         expect(consistent).toBe(false);
       },
       30000

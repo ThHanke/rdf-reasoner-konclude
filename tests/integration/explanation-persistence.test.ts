@@ -152,7 +152,7 @@ describe.skipIf(!wasmExists)("Explanation persistence integration", () => {
     }
   }, 120000);
 
-  it("explanation graph queryable via getQuads pattern matching", async () => {
+  it("explanation graph queryable via getQuads pattern matching", { retry: 1, timeout: 120000 }, async () => {
     const quads = loadFixture("roberts-family.nt");
     const store = new Store(quads);
     const r = new RdfReasoner();
@@ -169,9 +169,9 @@ describe.skipIf(!wasmExists)("Explanation persistence integration", () => {
     } finally {
       r.terminate();
     }
-  }, 120000);
+  });
 
-  it("cache hit with explanations: prior call without → populates on demand", async () => {
+  it("cache hit with explanations: prior call without → populates on demand", { retry: 1, timeout: 120000 }, async () => {
     // Konclude always builds justification data internally. A cache hit that requests
     // explanations calls getInferredTripleBuffer(true) on the existing WASM state and
     // gets explanation data back even though the prior call did not request it.

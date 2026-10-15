@@ -11,10 +11,10 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { existsSync } from "node:fs";
-import { Parser } from "n3";
+import { Parser, Store, DataFactory } from "n3";
 import type { Quad } from "@rdfjs/types";
 
-import { RdfReasoner } from "../../ts/index.js";
+import { RdfReasoner, INFERRED_GRAPH_IRI } from "../../ts/index.js";
 
 // ---------------------------------------------------------------------------
 // WASM availability guard
@@ -28,13 +28,7 @@ const wasmExists = existsSync(wasmPath);
 // ---------------------------------------------------------------------------
 
 function parseNTriples(ntriplesStr: string): Quad[] {
-  const parser = new Parser({ format: "N-Triples" });
-  const quads: Quad[] = [];
-  parser.parse(ntriplesStr, (err, quad) => {
-    if (err) throw err;
-    if (quad) quads.push(quad as Quad);
-  });
-  return quads;
+  return new Parser({ format: "N-Triples" }).parse(ntriplesStr) as Quad[];
 }
 
 // ---------------------------------------------------------------------------
@@ -74,8 +68,7 @@ describe.skipIf(!wasmExists)("ALIF+ precomputing deadlock — regression test", 
   });
 
   it("warmup: non-FP ontology → checkConsistency() completes", async () => {
-    const quads = parseNTriples(WARMUP_NT);
-    const consistent = await reasoner.checkConsistency(quads);
+    const consistent = await reasoner.checkConsistency(new Store(parseNTriples(WARMUP_NT)));
     expect(typeof consistent).toBe("boolean");
   });
 
@@ -83,8 +76,9 @@ describe.skipIf(!wasmExists)("ALIF+ precomputing deadlock — regression test", 
     "Fixture A: FP 1-filler → materialize() completes after warmup (regression for patch 034)",
     { timeout: 3000 },
     async () => {
-      const quads = parseNTriples(FIXTURE_A_NT);
-      const result = await reasoner.materialize(quads);
+      const aStore = new Store(parseNTriples(FIXTURE_A_NT));
+      await reasoner.materialize(aStore);
+      const result = aStore.getQuads(null, null, null, DataFactory.namedNode(INFERRED_GRAPH_IRI));
       expect(result).toBeDefined();
       // 1 filler → functional property does not force a merge → no sameAs needed
       expect(

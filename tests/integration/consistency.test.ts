@@ -15,8 +15,9 @@ import { existsSync } from "node:fs";
 import { Parser, Store } from "n3";
 import type { Quad } from "@rdfjs/types";
 
-import { RdfReasoner } from "../../ts/index.js";
+import { RdfReasoner, INFERRED_GRAPH_IRI } from "../../ts/index.js";
 import { loadFixture } from "../helpers/fixture.js";
+import { DataFactory } from "n3";
 
 // ---------------------------------------------------------------------------
 // WASM availability guard
@@ -30,13 +31,7 @@ const wasmExists = existsSync(wasmPath);
 // ---------------------------------------------------------------------------
 
 function parseNTriples(ntriplesStr: string): Quad[] {
-  const parser = new Parser({ format: "N-Triples" });
-  const quads: Quad[] = [];
-  parser.parse(ntriplesStr, (err, quad) => {
-    if (err) throw err;
-    if (quad) quads.push(quad as Quad);
-  });
-  return quads;
+  return new Parser({ format: "N-Triples" }).parse(ntriplesStr) as Quad[];
 }
 
 // ---------------------------------------------------------------------------
@@ -56,8 +51,7 @@ describe.skipIf(!wasmExists)("Consistency checking integration", () => {
   });
 
   it("inconsistent ontology (ex:a rdf:type owl:Nothing) → checkConsistency() returns false", async () => {
-    const quads = loadFixture("inconsistent.nt");
-    const consistent = await reasoner.checkConsistency(quads);
+    const consistent = await reasoner.checkConsistency(new Store(loadFixture("inconsistent.nt")));
 
     expect(consistent).toBe(false);
   });
@@ -71,8 +65,7 @@ describe.skipIf(!wasmExists)("Consistency checking integration", () => {
 <http://example.org/Dog> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/Animal> .
 `.trim();
 
-    const quads = parseNTriples(ntriplesStr);
-    const consistent = await reasoner.checkConsistency(quads);
+    const consistent = await reasoner.checkConsistency(new Store(parseNTriples(ntriplesStr)));
 
     expect(consistent).toBe(true);
   });
@@ -81,15 +74,13 @@ describe.skipIf(!wasmExists)("Consistency checking integration", () => {
     const ntriplesStr =
       "<http://example.org/empty> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .";
 
-    const quads = parseNTriples(ntriplesStr);
-    const consistent = await reasoner.checkConsistency(quads);
+    const consistent = await reasoner.checkConsistency(new Store(parseNTriples(ntriplesStr)));
 
     expect(consistent).toBe(true);
   });
 
   it("roberts-family (complex OWL-DL, 405 individuals) → checkConsistency() returns true", async () => {
-    const quads = loadFixture("roberts-family.nt");
-    const consistent = await reasoner.checkConsistency(quads);
+    const consistent = await reasoner.checkConsistency(new Store(loadFixture("roberts-family.nt")));
 
     expect(consistent).toBe(true);
   }, 360000);
@@ -121,6 +112,56 @@ ex:EmptyClass a owl:Class ; rdfs:subClassOf owl:Nothing .
     expect(warnIRIs).toContain("http://example.org/v#EmptyClass");
   }, 360000);
 
+  it("fingerprint reuse: classify + checkConsistency + classify on same Store reuses WASM state", async () => {
+    // Same Store object → same fingerprint → 2nd+ calls skip reset()+reload in WASM.
+    // Correctness: all three operations must return valid results.
+    // Performance: 2nd classify() must be a TS-cache hit (<50 ms) because the
+    // _classifyCache is still valid after checkConsistency on the same fingerprint.
+    const store = new Store(loadFixture("pizza.nt"));
+    const ig = DataFactory.namedNode(INFERRED_GRAPH_IRI);
+
+    // 1st classify — loads WASM, runs classification
+    await reasoner.classify(store);
+    const inferred1 = store.getQuads(null, null, null, ig);
+    expect(inferred1.length).toBeGreaterThan(0);
+
+    // checkConsistency on same Store — must reuse WASM state (fingerprint match)
+    const consistent = await reasoner.checkConsistency(store);
+    expect(consistent).toBe(true);
+
+    // Verify classify cache was NOT cleared (same fingerprint → kept)
+    const t0 = performance.now();
+    await reasoner.classify(store);
+    const elapsed = performance.now() - t0;
+    const inferred2 = store.getQuads(null, null, null, ig);
+
+    // Results must be identical
+    expect(inferred2.length).toBe(inferred1.length);
+    // 2nd classify is a TS-cache hit — no WASM round-trip (<50 ms even on slow CI)
+    expect(elapsed).toBeLessThan(50);
+  }, 120000);
+
+  it("fingerprint reuse: different stores clear caches correctly", async () => {
+    // After checkConsistency(storeB), classify cache for storeA must be gone.
+    const storeA = new Store(loadFixture("pizza.nt"));
+    const storeB = new Store(loadFixture("inconsistent.nt"));
+    const ig = DataFactory.namedNode(INFERRED_GRAPH_IRI);
+
+    await reasoner.classify(storeA);
+    const inferredA = storeA.getQuads(null, null, null, ig);
+    expect(inferredA.length).toBeGreaterThan(0);
+
+    // checkConsistency with different store → WASM reset, different fingerprint
+    const consistentB = await reasoner.checkConsistency(storeB);
+    expect(consistentB).toBe(false);
+
+    // classify(storeA) again — cache was cleared (different fingerprint), must re-run WASM
+    // and return the same correct results
+    await reasoner.classify(storeA);
+    const inferredA2 = storeA.getQuads(null, null, null, ig);
+    expect(inferredA2.length).toBe(inferredA.length);
+  }, 120000);
+
   it("concurrent classify() and checkConsistency() calls are serialized", async () => {
     // Fire both calls simultaneously — they must not interleave their
     // loadTripleBuffer → realization sequences inside the Worker.
@@ -131,13 +172,10 @@ ex:EmptyClass a owl:Class ; rdfs:subClassOf owl:Nothing .
 <http://example.org/X> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/Y> .
 `.trim();
 
-    const quadsA = parseNTriples(consistentNt);
-    const inconsistentQuads = loadFixture("inconsistent.nt");
-
     // Fire concurrently; the internal queue must serialize them.
     const [consistentResult, inconsistentResult] = await Promise.all([
-      reasoner.checkConsistency(quadsA),
-      reasoner.checkConsistency(inconsistentQuads),
+      reasoner.checkConsistency(new Store(parseNTriples(consistentNt))),
+      reasoner.checkConsistency(new Store(loadFixture("inconsistent.nt"))),
     ]);
 
     expect(consistentResult).toBe(true);

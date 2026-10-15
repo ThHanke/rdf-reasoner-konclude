@@ -1,5 +1,5 @@
 /**
- * Unit tests for RdfReasoner.materialize() — Quad[] and Store overloads.
+ * Unit tests for RdfReasoner.materialize() — Store overload.
  *
  * Follows the same vi.hoisted / vi.stubGlobal("Worker") scaffolding used in
  * RdfReasoner.test.ts and RdfReasoner.store.test.ts.
@@ -55,6 +55,9 @@ vi.stubGlobal("Worker", mocks.WorkerMock);
 // Step 3: Import module under test
 // ---------------------------------------------------------------------------
 import { RdfReasoner, INFERRED_GRAPH_IRI } from "../../ts/index.js";
+import { createFakeSync } from "./helpers/fakeSync.js";
+
+const fakeSync = createFakeSync();
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -104,8 +107,8 @@ function mockRealizationSequence(inferredQuads: Quad[]) {
   const buf = buildCombinedBuffer(inferredQuads);
   mocks.workerPostMessage.mockImplementation((msg: unknown) => {
     const req = msg as { id: number; method: string };
-    if (req.method === "loadTripleBuffer") {
-      simulateWorkerMessage({ id: req.id, result: true });
+    if (req.method === "sync") {
+      simulateWorkerMessage({ id: req.id, result: fakeSync(req) });
     } else if (req.method === "realization") {
       simulateWorkerMessage({ id: req.id, result: true });
     } else if (req.method === "getInferredTripleBuffer") {
@@ -126,34 +129,31 @@ describe("RdfReasoner.materialize()", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Quad[] overload — happy paths
+  // Store overload — filter behavior
   // -------------------------------------------------------------------------
 
-  describe("Quad[] overload", () => {
-    it("happy path: returns rdf:type triples when ABox individuals are present", async () => {
+  describe("Store overload — filter behavior", () => {
+    it("happy path: rdf:type written to inferred graph; rdfs:subClassOf filtered out", async () => {
       const reasoner = await makeReadyReasoner();
 
-      // Worker returns one rdf:type and one rdfs:subClassOf triple
       mockRealizationSequence([
         quad(alice, rdfType, A, defaultGraph()),
         quad(A, subClassOf, B, defaultGraph()),
       ]);
 
-      const result = await reasoner.materialize([
-        quad(alice, rdfType, A, defaultGraph()),
-        quad(A, subClassOf, B, defaultGraph()),
-      ]);
+      const store = new Store();
+      await reasoner.materialize(store);
 
-      // Default: only rdf:type returned; subClassOf filtered out
-      expect(result).toHaveLength(1);
-      expect(result[0].subject.value).toBe("http://example.org/alice");
-      expect(result[0].predicate.value).toBe(
+      const inferred = store.getQuads(null, null, null, namedNode(INFERRED_GRAPH_IRI));
+      expect(inferred).toHaveLength(1);
+      expect(inferred[0].subject.value).toBe("http://example.org/alice");
+      expect(inferred[0].predicate.value).toBe(
         "http://www.w3.org/1999/02/22-rdf-syntax-ns#type",
       );
-      expect(result[0].object.value).toBe("http://example.org/A");
+      expect(inferred[0].object.value).toBe("http://example.org/A");
     });
 
-    it("happy path: includeClassHierarchy:true returns both rdf:type and rdfs:subClassOf", async () => {
+    it("happy path: includeClassHierarchy:true writes rdf:type, subClassOf, and equivalentClass", async () => {
       const reasoner = await makeReadyReasoner();
 
       mockRealizationSequence([
@@ -162,29 +162,29 @@ describe("RdfReasoner.materialize()", () => {
         quad(A, equivalentClass, C, defaultGraph()),
       ]);
 
-      const result = await reasoner.materialize(
-        [quad(alice, rdfType, A, defaultGraph())],
-        { includeClassHierarchy: true },
-      );
+      const store = new Store();
+      await reasoner.materialize(store, { includeClassHierarchy: true });
 
-      expect(result).toHaveLength(3);
-      const predicates = result.map((q) => q.predicate.value);
+      const inferred = store.getQuads(null, null, null, namedNode(INFERRED_GRAPH_IRI));
+      // includes missingRootThingEdges so count may be ≥3
+      expect(inferred.length).toBeGreaterThanOrEqual(3);
+      const predicates = inferred.map((q) => q.predicate.value);
       expect(predicates).toContain("http://www.w3.org/1999/02/22-rdf-syntax-ns#type");
       expect(predicates).toContain("http://www.w3.org/2000/01/rdf-schema#subClassOf");
       expect(predicates).toContain("http://www.w3.org/2002/07/owl#equivalentClass");
     });
 
-    it("happy path: worker call sequence is [loadTripleBuffer, realization, getInferredTripleBuffer]", async () => {
+    it("happy path: worker call sequence is [sync, realization, getInferredTripleBuffer]", async () => {
       const reasoner = await makeReadyReasoner();
 
       mockRealizationSequence([quad(alice, rdfType, A, defaultGraph())]);
 
-      await reasoner.materialize([quad(alice, rdfType, A, defaultGraph())]);
+      await reasoner.materialize(new Store());
 
       const methods = mocks.workerPostMessage.mock.calls.map(
         (c) => (c[0] as { method: string }).method,
       );
-      expect(methods).toEqual(["loadTripleBuffer", "realization", "getInferredTripleBuffer"]);
+      expect(methods).toEqual(["sync", "realization", "getInferredTripleBuffer"]);
     });
 
     it("edge case: default options → rdfs:subClassOf filtered out", async () => {
@@ -195,102 +195,92 @@ describe("RdfReasoner.materialize()", () => {
         quad(A, subClassOf, C, defaultGraph()),
       ]);
 
-      const result = await reasoner.materialize([quad(A, subClassOf, B, defaultGraph())]);
+      const store = new Store();
+      await reasoner.materialize(store);
 
-      // Both subClassOf triples filtered; result is empty
-      expect(result).toHaveLength(0);
+      expect(store.getQuads(null, null, null, namedNode(INFERRED_GRAPH_IRI))).toHaveLength(0);
     });
 
     it("edge case: default options → owl:equivalentClass filtered out", async () => {
       const reasoner = await makeReadyReasoner();
 
-      mockRealizationSequence([
-        quad(A, equivalentClass, B, defaultGraph()),
-      ]);
+      mockRealizationSequence([quad(A, equivalentClass, B, defaultGraph())]);
 
-      const result = await reasoner.materialize([]);
+      const store = new Store();
+      await reasoner.materialize(store);
 
-      expect(result).toHaveLength(0);
+      expect(store.getQuads(null, null, null, namedNode(INFERRED_GRAPH_IRI))).toHaveLength(0);
     });
 
-    it("edge case: TBox-only ontology (no rdf:type in result) → returns empty array, no throw", async () => {
+    it("edge case: TBox-only result → inferred graph empty", async () => {
       const reasoner = await makeReadyReasoner();
 
-      // Only TBox triples returned; all filtered
       mockRealizationSequence([
         quad(A, subClassOf, B, defaultGraph()),
         quad(B, subClassOf, C, defaultGraph()),
       ]);
 
-      const result = await reasoner.materialize([
-        quad(A, subClassOf, B, defaultGraph()),
-        quad(B, subClassOf, C, defaultGraph()),
-      ]);
+      const store = new Store();
+      await reasoner.materialize(store);
 
-      expect(result).toEqual([]);
+      expect(store.getQuads(null, null, null, namedNode(INFERRED_GRAPH_IRI))).toHaveLength(0);
     });
 
-    it("edge case: empty input → returns empty array", async () => {
+    it("edge case: empty worker result → inferred graph empty", async () => {
       const reasoner = await makeReadyReasoner();
-
       mockRealizationSequence([]);
-
-      const result = await reasoner.materialize([]);
-
-      expect(result).toEqual([]);
+      const store = new Store();
+      await reasoner.materialize(store);
+      expect(store.getQuads(null, null, null, namedNode(INFERRED_GRAPH_IRI))).toHaveLength(0);
     });
 
-    it("happy path: owl:sameAs pair passes through default filter unchanged", async () => {
+    it("happy path: owl:sameAs pair passes through default filter", async () => {
       const reasoner = await makeReadyReasoner();
 
-      mockRealizationSequence([
-        quad(alice, owlSameAs, bob, defaultGraph()),
-      ]);
+      mockRealizationSequence([quad(alice, owlSameAs, bob, defaultGraph())]);
 
-      const result = await reasoner.materialize([
-        quad(alice, owlSameAs, bob, defaultGraph()),
-      ]);
+      const store = new Store();
+      await reasoner.materialize(store);
 
-      expect(result).toHaveLength(1);
-      expect(result[0].predicate.value).toBe("http://www.w3.org/2002/07/owl#sameAs");
-      expect(result[0].subject.value).toBe("http://example.org/alice");
-      expect(result[0].object.value).toBe("http://example.org/bob");
+      const inferred = store.getQuads(null, null, null, namedNode(INFERRED_GRAPH_IRI));
+      expect(inferred).toHaveLength(1);
+      expect(inferred[0].predicate.value).toBe("http://www.w3.org/2002/07/owl#sameAs");
+      expect(inferred[0].subject.value).toBe("http://example.org/alice");
+      expect(inferred[0].object.value).toBe("http://example.org/bob");
     });
 
-    it("happy path: data property literal triple passes through default filter unchanged", async () => {
+    it("happy path: data property literal triple passes through default filter", async () => {
       const reasoner = await makeReadyReasoner();
 
       const ageLiteral = literal("30", xsdInteger);
-      mockRealizationSequence([
-        quad(alice, age, ageLiteral, defaultGraph()),
-      ]);
+      mockRealizationSequence([quad(alice, age, ageLiteral, defaultGraph())]);
 
-      const result = await reasoner.materialize([
-        quad(alice, age, ageLiteral, defaultGraph()),
-      ]);
+      const store = new Store();
+      await reasoner.materialize(store);
 
-      expect(result).toHaveLength(1);
-      expect(result[0].subject.value).toBe("http://example.org/alice");
-      expect(result[0].predicate.value).toBe("http://example.org/age");
-      expect(result[0].object.termType).toBe("Literal");
-      expect(result[0].object.value).toBe("30");
-      expect((result[0].object as RdfLiteral).datatype.value).toBe(
+      const inferred = store.getQuads(null, null, null, namedNode(INFERRED_GRAPH_IRI));
+      expect(inferred).toHaveLength(1);
+      expect(inferred[0].subject.value).toBe("http://example.org/alice");
+      expect(inferred[0].predicate.value).toBe("http://example.org/age");
+      expect(inferred[0].object.termType).toBe("Literal");
+      expect(inferred[0].object.value).toBe("30");
+      expect((inferred[0].object as RdfLiteral).datatype.value).toBe(
         "http://www.w3.org/2001/XMLSchema#integer",
       );
     });
 
-    it("error path: Worker error → materialize(quads) rejects", async () => {
+    it("error path: Worker error → materialize(store) rejects", async () => {
       const reasoner = await makeReadyReasoner();
 
       mocks.workerPostMessage.mockImplementation((msg: unknown) => {
         const req = msg as { id: number; method: string };
-        if (req.method === "loadTripleBuffer") {
+        if (req.method === "sync") {
           simulateWorkerMessage({ id: req.id, error: "binary decode error" });
         }
       });
 
       await expect(
-        reasoner.materialize([quad(alice, rdfType, A, defaultGraph())]),
+        reasoner.materialize(new Store()),
       ).rejects.toThrow("binary decode error");
     });
   });
@@ -394,7 +384,7 @@ describe("RdfReasoner.materialize()", () => {
       const methods = mocks.workerPostMessage.mock.calls.map(
         (c) => (c[0] as { method: string }).method,
       );
-      expect(methods).toEqual(["loadTripleBuffer", "realization", "getInferredTripleBuffer"]);
+      expect(methods).toEqual(["sync", "realization", "getInferredTripleBuffer"]);
       expect(methods).not.toContain("classification");
     });
 
@@ -408,7 +398,7 @@ describe("RdfReasoner.materialize()", () => {
 
       mocks.workerPostMessage.mockImplementation((msg: unknown) => {
         const req = msg as { id: number; method: string };
-        if (req.method === "loadTripleBuffer") {
+        if (req.method === "sync") {
           simulateWorkerMessage({ id: req.id, error: "binary decode error" });
         }
       });
@@ -433,8 +423,8 @@ describe("RdfReasoner.materialize()", () => {
       let callCount = 0;
       mocks.workerPostMessage.mockImplementation((msg: unknown) => {
         const req = msg as { id: number; method: string };
-        if (req.method === "loadTripleBuffer") {
-          simulateWorkerMessage({ id: req.id, result: true });
+        if (req.method === "sync") {
+          simulateWorkerMessage({ id: req.id, result: fakeSync(req) });
         } else if (req.method === "realization") {
           simulateWorkerMessage({ id: req.id, result: true });
         } else if (req.method === "getInferredTripleBuffer") {

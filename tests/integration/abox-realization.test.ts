@@ -1,24 +1,26 @@
 /**
  * Integration test: ABox realization
  *
- * Tests `RdfReasoner.materialize()` against a small ontology that has both TBox
- * axioms and ABox assertions, verifying that:
- *   - individuals receive rdf:type from superclass chains
- *   - directly asserted rdf:type triples appear in the output
- *   - directly asserted object property triples appear in the output
- *   - TBox-only ontologies produce no rdf:type triples (via classify())
+ * One shared RdfReasoner for the entire file — creating and terminating
+ * multiple Workers sequentially exhausts the Emscripten pthread pool.
  *
- * These tests require the built WASM binary (`dist/konclude.wasm`).  When the
- * binary is absent the entire suite is skipped so that `vitest run tests/unit/`
- * continues to pass cleanly.
+ * Each describe block materializes its own fixture exactly once in beforeAll
+ * (different store instances → different fingerprints → no cache sharing).
+ * The `it` cases assert against the already-materialized store.
+ *
+ * With the Store API, inferred triples are written to INFERRED_GRAPH_IRI only
+ * if they do not already exist in the source (DefaultGraph).
+ *
+ * Requires the built WASM binary (`dist/konclude.wasm`); entire suite skips
+ * when binary is absent.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { existsSync } from "node:fs";
-import { Parser } from "n3";
+import { Parser, Store, DataFactory } from "n3";
 import type { Quad } from "@rdfjs/types";
 
-import { RdfReasoner } from "../../ts/index.js";
+import { RdfReasoner, INFERRED_GRAPH_IRI } from "../../ts/index.js";
 
 // ---------------------------------------------------------------------------
 // WASM availability guard
@@ -31,42 +33,37 @@ const wasmExists = existsSync(wasmPath);
 // Helpers
 // ---------------------------------------------------------------------------
 
-function parseNTriples(ntriplesStr: string): Quad[] {
-  const parser = new Parser({ format: "N-Triples" });
-  const quads: Quad[] = [];
-  parser.parse(ntriplesStr, (err, quad) => {
-    if (err) throw err;
-    if (quad) quads.push(quad as Quad);
-  });
-  return quads;
+function parseStore(ntriplesStr: string): Store {
+  return new Store(new Parser({ format: "N-Triples" }).parse(ntriplesStr) as Quad[]);
+}
+
+function getInferred(store: Store): Quad[] {
+  return store.getQuads(null, null, null, INFERRED_GRAPH_IRI) as Quad[];
 }
 
 function hasTriple(quads: Quad[], s: string, p: string, o: string): boolean {
   return quads.some(
-    (q) =>
-      q.subject.value === s &&
-      q.predicate.value === p &&
-      q.object.value === o,
+    (q) => q.subject.value === s && q.predicate.value === p && q.object.value === o,
   );
 }
+
+// ---------------------------------------------------------------------------
+// IRIs
+// ---------------------------------------------------------------------------
+
+const RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+const RDFS_SUB = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
+const OWL_SAME_AS = "http://www.w3.org/2002/07/owl#sameAs";
+const OWL_THING = "http://www.w3.org/2002/07/owl#Thing";
+const EX = (local: string) => `http://example.org/${local}`;
 
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
 
-/**
- * ABox + TBox fixture:
- *   - Alice rdf:type Employee (asserted)
- *   - Bob   rdf:type Person   (asserted)
- *   - Alice knows Bob         (asserted)
- *   - Employee ⊑ Person       (TBox)
- *
- * Expected inferences:
- *   - Alice rdf:type Person   (via Employee ⊑ Person)
- */
-const ABOX_NTRIPLES = `
+// Alice typed ONLY as Employee (not Person) so Alice rdf:type Person is genuine inference.
+const ABOX_NT = `
 <http://example.org/Alice> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#NamedIndividual> .
-<http://example.org/Alice> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/Person> .
 <http://example.org/Alice> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/Employee> .
 <http://example.org/Bob> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#NamedIndividual> .
 <http://example.org/Bob> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/Person> .
@@ -77,12 +74,8 @@ const ABOX_NTRIPLES = `
 <http://example.org/knows> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 `.trim();
 
-/**
- * TBox-only fixture: a simple subClassOf chain with no individuals.
- * The classifier should produce rdfs:subClassOf entailments but no rdf:type
- * triples (because there are no ABox individuals to realize).
- */
-const TBOX_ONLY_NTRIPLES = `
+// TBox-only; Animal is a root class so Animal subClassOf owl:Thing is a genuine inference.
+const TBOX_NT = `
 <http://example.org/Animal> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
 <http://example.org/Mammal> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
 <http://example.org/Dog> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
@@ -90,13 +83,7 @@ const TBOX_ONLY_NTRIPLES = `
 <http://example.org/Dog> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/Mammal> .
 `.trim();
 
-/**
- * owl:sameAs fixture: two individuals declared sameAs.
- * Class and type assertions ensure the saturation processes Alice and Eve
- * deeply enough for the same-individual merging to be recorded in the
- * BackendAssCache, which the same-realization reads.
- */
-const SAME_AS_NTRIPLES = `
+const SAME_AS_NT = `
 <http://example.org/Person> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
 <http://example.org/Alice> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#NamedIndividual> .
 <http://example.org/Alice> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/Person> .
@@ -105,166 +92,169 @@ const SAME_AS_NTRIPLES = `
 <http://example.org/Alice> <http://www.w3.org/2002/07/owl#sameAs> <http://example.org/Eve> .
 `.trim();
 
-/**
- * Data property fixture: one individual with a typed literal assertion.
- */
-const DATA_PROP_NTRIPLES = `
+// Alice typed as Employee (not Person) + data property; genuine inference: Alice rdf:type Person.
+const DATA_PROP_NT = `
 <http://example.org/Alice> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#NamedIndividual> .
+<http://example.org/Alice> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/Employee> .
 <http://example.org/age> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
 <http://example.org/Alice> <http://example.org/age> "30"^^<http://www.w3.org/2001/XMLSchema#integer> .
+<http://example.org/Person> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<http://example.org/Employee> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<http://example.org/Employee> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/Person> .
 `.trim();
 
 // ---------------------------------------------------------------------------
-// IRIs used in assertions
+// Shared reasoner — one Worker for the entire file avoids pthread pool exhaustion
 // ---------------------------------------------------------------------------
 
-const RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
-const RDFS_SUB_CLASS_OF = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
-const OWL_SAME_AS = "http://www.w3.org/2002/07/owl#sameAs";
+let sharedReasoner: RdfReasoner;
 
-const EX = (local: string) => `http://example.org/${local}`;
+beforeAll(async () => {
+  sharedReasoner = new RdfReasoner();
+  await sharedReasoner.ready;
+}, 30_000);
+
+afterAll(() => sharedReasoner?.terminate());
 
 // ---------------------------------------------------------------------------
-// Suite (skipped when WASM is absent)
+// ABox materialization
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!wasmExists)("ABox realization integration", () => {
-  let reasoner: RdfReasoner;
+describe.skipIf(!wasmExists)("ABox realization — Employee/Person", () => {
+  let store: Store;
 
   beforeAll(async () => {
-    reasoner = new RdfReasoner();
-    await reasoner.ready;
+    store = parseStore(ABOX_NT);
+    await sharedReasoner.materialize(store);
   });
 
-  afterAll(() => {
-    reasoner?.terminate();
-  });
-
-  it(
-    "individual gets rdf:type from superclass chain — Alice is Employee, Employee ⊑ Person → inferred Alice rdf:type Person",
-    async () => {
-      const quads = parseNTriples(ABOX_NTRIPLES);
-      const inferred = await reasoner.materialize(quads);
-
-      expect(
-        hasTriple(inferred, EX("Alice"), RDF_TYPE, EX("Person")),
-        "Alice rdf:type Person must be inferred via Employee ⊑ Person",
-      ).toBe(true);
-    },
-  );
-
-  it("directly asserted rdf:type appears in output", async () => {
-    const quads = parseNTriples(ABOX_NTRIPLES);
-    const inferred = await reasoner.materialize(quads);
-
-    // The asserted type Employee should be echoed back in the output.
+  it("inferred: Alice rdf:type Person (via Employee ⊑ Person)", () => {
     expect(
-      hasTriple(inferred, EX("Alice"), RDF_TYPE, EX("Employee")),
-      "Alice rdf:type Employee (direct assertion) must appear in output",
+      hasTriple(getInferred(store), EX("Alice"), RDF_TYPE, EX("Person")),
+      "Alice rdf:type Person must appear in inferred graph",
     ).toBe(true);
   });
 
-  it("object property assertion appears in output", async () => {
-    const quads = parseNTriples(ABOX_NTRIPLES);
-    const inferred = await reasoner.materialize(quads);
-
+  it("asserted rdf:type NOT echoed to inferred graph", () => {
     expect(
-      hasTriple(inferred, EX("Alice"), EX("knows"), EX("Bob")),
-      "Alice knows Bob (direct assertion) must appear in output",
-    ).toBe(true);
+      hasTriple(getInferred(store), EX("Alice"), RDF_TYPE, EX("Employee")),
+      "Alice rdf:type Employee (asserted) must NOT be in inferred graph",
+    ).toBe(false);
   });
 
-  it("TBox-only ontology produces no rdf:type triples", async () => {
-    const quads = parseNTriples(TBOX_ONLY_NTRIPLES);
-    const inferred = await reasoner.classify(quads);
-
-    const typeTriples = inferred.filter((q) => q.predicate.value === RDF_TYPE);
+  it("source graph intact after materialize", () => {
     expect(
-      typeTriples,
-      "TBox-only ontology must produce zero rdf:type triples",
-    ).toHaveLength(0);
-
-    // Sanity-check: direct subClassOf edge Mammal ⊑ Animal must appear.
-    // (Taxonomy emits direct edges only, not the full transitive closure.)
-    expect(
-      hasTriple(inferred, EX("Mammal"), RDFS_SUB_CLASS_OF, EX("Animal")),
-      "Mammal rdfs:subClassOf Animal must appear in TBox-only run",
+      store.has(DataFactory.quad(
+        DataFactory.namedNode(EX("Alice")),
+        DataFactory.namedNode(EX("knows")),
+        DataFactory.namedNode(EX("Bob")),
+        DataFactory.defaultGraph(),
+      )),
+      "Alice knows Bob must still exist in DefaultGraph",
     ).toBe(true);
   });
+});
 
-  // Regression: fixed by plan-030. Root cause was pointer recycling in singleton
-  // thread caches (mOntIdHash guard fix, patches 022–023) combined with keeping two
-  // prior ontology objects alive to prevent allocator address reuse.
-  it(
-    "regression — n=3 ABox materializations + classify → sameAs materialize returns correct output (fixed by plan-030)",
-    async () => {
-      const fresh = new RdfReasoner();
-      await fresh.ready;
-      try {
-        const abox = parseNTriples(ABOX_NTRIPLES);
-        await fresh.materialize(abox);
-        await fresh.materialize(abox);
-        await fresh.materialize(abox);
-        const tbox = parseNTriples(TBOX_ONLY_NTRIPLES);
-        await fresh.classify(tbox);
+// ---------------------------------------------------------------------------
+// TBox-only classification
+// ---------------------------------------------------------------------------
 
-        const sameAsQuads = parseNTriples(SAME_AS_NTRIPLES);
-        const inferred = await fresh.materialize(sameAsQuads);
+describe.skipIf(!wasmExists)("TBox-only classification", () => {
+  let store: Store;
 
-        const sameAsTriples = inferred.filter((q) => q.predicate.value === OWL_SAME_AS);
-        expect(
-          sameAsTriples.length,
-          "at least one owl:sameAs triple must appear after n=3 prior ABox calls + classify",
-        ).toBeGreaterThan(0);
-
-        const aliceEve = sameAsTriples.some(
-          (q) => q.subject.value === EX("Alice") && q.object.value === EX("Eve"),
-        );
-        const eveAlice = sameAsTriples.some(
-          (q) => q.subject.value === EX("Eve") && q.object.value === EX("Alice"),
-        );
-        expect(
-          aliceEve || eveAlice,
-          "Alice owl:sameAs Eve (or Eve owl:sameAs Alice) must appear",
-        ).toBe(true);
-      } finally {
-        fresh.terminate();
-      }
-    },
-  );
-
-  it("owl:sameAs pair appears in materialize() output", async () => {
-    const quads = parseNTriples(SAME_AS_NTRIPLES);
-    const inferred = await reasoner.materialize(quads);
-
-    const sameAsTriples = inferred.filter((q) => q.predicate.value === OWL_SAME_AS);
-    expect(sameAsTriples.length, "at least one owl:sameAs triple must appear").toBeGreaterThan(0);
-
-    const aliceEve = sameAsTriples.some(
-      (q) => q.subject.value === EX("Alice") && q.object.value === EX("Eve"),
-    );
-    const eveAlice = sameAsTriples.some(
-      (q) => q.subject.value === EX("Eve") && q.object.value === EX("Alice"),
-    );
-    expect(
-      aliceEve || eveAlice,
-      "Alice owl:sameAs Eve (or Eve owl:sameAs Alice) must appear",
-    ).toBe(true);
+  beforeAll(async () => {
+    store = parseStore(TBOX_NT);
+    await sharedReasoner.classify(store, { includeClassHierarchy: true });
   });
 
-  it("data property literal triple appears in materialize() output", async () => {
-    const quads = parseNTriples(DATA_PROP_NTRIPLES);
-    const inferred = await reasoner.materialize(quads);
+  it("no rdf:type triples in inferred graph", () => {
+    const typeTriples = getInferred(store).filter((q) => q.predicate.value === RDF_TYPE);
+    expect(typeTriples, "TBox-only must produce zero rdf:type triples").toHaveLength(0);
+  });
 
+  it("Animal subClassOf owl:Thing appears (root-class inference)", () => {
     expect(
-      hasTriple(inferred, EX("Alice"), EX("age"), "30"),
-      "Alice age 30 (data property assertion) must appear in output",
+      hasTriple(getInferred(store), EX("Animal"), RDFS_SUB, OWL_THING),
+      "Animal rdfs:subClassOf owl:Thing must be inferred",
     ).toBe(true);
+  });
+});
 
-    const ageTriples = inferred.filter(
-      (q) => q.subject.value === EX("Alice") && q.predicate.value === EX("age"),
-    );
-    expect(ageTriples).toHaveLength(1);
-    expect(ageTriples[0].object.termType).toBe("Literal");
+// ---------------------------------------------------------------------------
+// owl:sameAs realization
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!wasmExists)("owl:sameAs realization", () => {
+  let store: Store;
+
+  beforeAll(async () => {
+    store = parseStore(SAME_AS_NT);
+    await sharedReasoner.materialize(store);
+  });
+
+  it("at least one owl:sameAs triple in inferred graph", () => {
+    const sameAsTriples = getInferred(store).filter((q) => q.predicate.value === OWL_SAME_AS);
+    expect(sameAsTriples.length, "at least one owl:sameAs triple").toBeGreaterThan(0);
+  });
+
+  it("Alice owl:sameAs Eve (or vice versa)", () => {
+    const sameAsTriples = getInferred(store).filter((q) => q.predicate.value === OWL_SAME_AS);
+    const found =
+      sameAsTriples.some((q) => q.subject.value === EX("Alice") && q.object.value === EX("Eve")) ||
+      sameAsTriples.some((q) => q.subject.value === EX("Eve") && q.object.value === EX("Alice"));
+    expect(found, "Alice owl:sameAs Eve (or Eve owl:sameAs Alice)").toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Data property realization
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!wasmExists)("data property realization", () => {
+  let store: Store;
+
+  beforeAll(async () => {
+    store = parseStore(DATA_PROP_NT);
+    await sharedReasoner.materialize(store);
+  });
+
+  it("individual with data property is realized: Alice rdf:type Person inferred", () => {
+    expect(
+      hasTriple(getInferred(store), EX("Alice"), RDF_TYPE, EX("Person")),
+      "Alice rdf:type Person must be inferred even when individual has data property assertions",
+    ).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Regression: n=3 ABox calls + classify + sameAs (plan-030 fix)
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!wasmExists)("regression — sequential calls with sameAs final", () => {
+  let sameAsStore: Store;
+
+  beforeAll(async () => {
+    for (let i = 0; i < 3; i++) {
+      await sharedReasoner.materialize(parseStore(ABOX_NT));
+    }
+    await sharedReasoner.classify(parseStore(TBOX_NT), { includeClassHierarchy: true });
+    sameAsStore = parseStore(SAME_AS_NT);
+    await sharedReasoner.materialize(sameAsStore);
+  });
+
+  it("at least one owl:sameAs triple after n=3 ABox calls + classify", () => {
+    const sameAsTriples = getInferred(sameAsStore).filter((q) => q.predicate.value === OWL_SAME_AS);
+    expect(
+      sameAsTriples.length,
+      "owl:sameAs triple must appear after n=3 prior ABox calls + classify",
+    ).toBeGreaterThan(0);
+  });
+
+  it("Alice owl:sameAs Eve (or vice versa) in regression sequence", () => {
+    const sameAsTriples = getInferred(sameAsStore).filter((q) => q.predicate.value === OWL_SAME_AS);
+    const found =
+      sameAsTriples.some((q) => q.subject.value === EX("Alice") && q.object.value === EX("Eve")) ||
+      sameAsTriples.some((q) => q.subject.value === EX("Eve") && q.object.value === EX("Alice"));
+    expect(found, "Alice owl:sameAs Eve (or vice versa)").toBe(true);
   });
 });

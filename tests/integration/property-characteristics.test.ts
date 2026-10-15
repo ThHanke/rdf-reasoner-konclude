@@ -21,10 +21,10 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { existsSync } from "node:fs";
-import { Parser } from "n3";
+import { Parser, Store, DataFactory } from "n3";
 import type { Quad } from "@rdfjs/types";
 
-import { RdfReasoner } from "../../ts/index.js";
+import { RdfReasoner, INFERRED_GRAPH_IRI } from "../../ts/index.js";
 
 // ---------------------------------------------------------------------------
 // WASM availability guard
@@ -38,23 +38,7 @@ const wasmExists = existsSync(wasmPath);
 // ---------------------------------------------------------------------------
 
 function parseNTriples(ntriplesStr: string): Quad[] {
-  const parser = new Parser({ format: "N-Triples" });
-  const quads: Quad[] = [];
-  parser.parse(ntriplesStr, (err, quad) => {
-    if (err) throw err;
-    if (quad) quads.push(quad as Quad);
-  });
-  return quads;
-}
-
-async function withFreshReasoner<T>(fn: (r: RdfReasoner) => Promise<T>): Promise<T> {
-  const fresh = new RdfReasoner();
-  await fresh.ready;
-  try {
-    return await fn(fresh);
-  } finally {
-    fresh.terminate();
-  }
+  return new Parser({ format: "N-Triples" }).parse(ntriplesStr) as Quad[];
 }
 
 function hasTriple(quads: Quad[], s: string, p: string, o: string): boolean {
@@ -235,8 +219,9 @@ describe.skipIf(!wasmExists)("Property characteristics ABox inference", () => {
   it(
     "SymmetricProperty: Alice directSiblingOf Bob → Bob directSiblingOf Alice",
     async () => {
-      const quads = parseNTriples(SYMMETRIC_NTRIPLES);
-      const inferred = await reasoner.materialize(quads);
+      const store = new Store(parseNTriples(SYMMETRIC_NTRIPLES));
+      await reasoner.materialize(store);
+      const inferred = store.getQuads(null, null, null, DataFactory.namedNode(INFERRED_GRAPH_IRI));
 
       expect(
         hasTriple(inferred, EX("Bob"), EX("directSiblingOf"), EX("Alice")),
@@ -249,16 +234,14 @@ describe.skipIf(!wasmExists)("Property characteristics ABox inference", () => {
   // FunctionalProperty
   // -------------------------------------------------------------------------
 
-  // JS workaround for ALIF+ hang: FunctionalProperty declarations are stripped
-  // before WASM, and sameAs pairs are computed in JS.
-  // See ts/index.ts _materializeOnQuads for implementation details.
+  // FP/IFP sameAs is handled in C++ (loadTripleBuffer / buildInferredTripleBuffer).
+  // No TS pre-processing needed.
   it(
     "FunctionalProperty: two hasMother assertions → Eve owl:sameAs Carol",
-    // Fresh reasoner required: BackendAssCache accumulates state across calls;
-    // after n≥3 prior calls the sameAs result can silently disappear.
-    () => withFreshReasoner(async (fresh) => {
-      const quads = parseNTriples(FUNCTIONAL_NTRIPLES);
-      const inferred = await fresh.materialize(quads);
+    async () => {
+      const store = new Store(parseNTriples(FUNCTIONAL_NTRIPLES));
+      await reasoner.materialize(store);
+      const inferred = store.getQuads(null, null, null, DataFactory.namedNode(INFERRED_GRAPH_IRI));
 
       const sameAsTriples = inferred.filter((q) => q.predicate.value === OWL_SAME_AS);
       const eveCarol = sameAsTriples.some(
@@ -270,7 +253,7 @@ describe.skipIf(!wasmExists)("Property characteristics ABox inference", () => {
 
       expect(eveCarol, "Eve owl:sameAs Carol must be in result").toBe(true);
       expect(carolEve, "Carol owl:sameAs Eve must be in result").toBe(true);
-    }),
+    },
     30_000,
   );
 
@@ -281,8 +264,9 @@ describe.skipIf(!wasmExists)("Property characteristics ABox inference", () => {
   it(
     "owl:inverseOf: Alice hasChild Bob → Bob hasParent Alice",
     async () => {
-      const quads = parseNTriples(INVERSE_OF_NTRIPLES);
-      const inferred = await reasoner.materialize(quads);
+      const store = new Store(parseNTriples(INVERSE_OF_NTRIPLES));
+      await reasoner.materialize(store);
+      const inferred = store.getQuads(null, null, null, DataFactory.namedNode(INFERRED_GRAPH_IRI));
 
       expect(
         hasTriple(inferred, EX("Bob"), EX("hasParent"), EX("Alice")),
@@ -298,8 +282,9 @@ describe.skipIf(!wasmExists)("Property characteristics ABox inference", () => {
   it(
     "regression (commit 0c86d54) — owl:hasValue: Bob rdf:type C, C ≡ ∃hasFriend.{Alice} → Bob hasFriend Alice",
     async () => {
-      const quads = parseNTriples(HAS_VALUE_NTRIPLES);
-      const inferred = await reasoner.materialize(quads);
+      const store = new Store(parseNTriples(HAS_VALUE_NTRIPLES));
+      await reasoner.materialize(store);
+      const inferred = store.getQuads(null, null, null, DataFactory.namedNode(INFERRED_GRAPH_IRI));
 
       expect(
         hasTriple(inferred, EX("Bob"), EX("hasFriend"), EX("Alice")),
@@ -315,14 +300,16 @@ describe.skipIf(!wasmExists)("Property characteristics ABox inference", () => {
   it(
     "rdfs:domain: Alice teaches Math + domain Professor → Alice rdf:type Professor",
     async () => {
-      const quads = parseNTriples(DOMAIN_RANGE_NTRIPLES);
-      const inferred = await reasoner.materialize(quads);
+      const store = new Store(parseNTriples(DOMAIN_RANGE_NTRIPLES));
+      await reasoner.materialize(store);
+      const inferred = store.getQuads(null, null, null, DataFactory.namedNode(INFERRED_GRAPH_IRI));
 
       expect(
         hasTriple(inferred, EX("Alice"), RDF_TYPE, EX("Professor")),
         "Alice rdf:type Professor must be inferred via rdfs:domain of teaches",
       ).toBe(true);
     },
+    30_000,
   );
 
   // -------------------------------------------------------------------------
@@ -332,14 +319,16 @@ describe.skipIf(!wasmExists)("Property characteristics ABox inference", () => {
   it(
     "rdfs:range: Alice teaches Math + range Course → Math rdf:type Course",
     async () => {
-      const quads = parseNTriples(DOMAIN_RANGE_NTRIPLES);
-      const inferred = await reasoner.materialize(quads);
+      const store = new Store(parseNTriples(DOMAIN_RANGE_NTRIPLES));
+      await reasoner.materialize(store);
+      const inferred = store.getQuads(null, null, null, DataFactory.namedNode(INFERRED_GRAPH_IRI));
 
       expect(
         hasTriple(inferred, EX("Math"), RDF_TYPE, EX("Course")),
         "Math rdf:type Course must be inferred via rdfs:range of teaches",
       ).toBe(true);
     },
+    30_000,
   );
 
   // -------------------------------------------------------------------------
@@ -350,16 +339,16 @@ describe.skipIf(!wasmExists)("Property characteristics ABox inference", () => {
   // (NTriples path hangs on owl:members list axioms).
   it(
     "AllDisjointClasses: x rdf:type A, AllDisjointClasses(A,B) → x rdf:type B must NOT appear",
-    // Fresh reasoner required: BackendAssCache stale state causes realizer hang.
-    () => withFreshReasoner(async (fresh) => {
-      const quads = parseNTriples(ALL_DISJOINT_CLASSES_NEGATIVE_NTRIPLES);
-      const inferred = await fresh.materialize(quads);
+    async () => {
+      const store = new Store(parseNTriples(ALL_DISJOINT_CLASSES_NEGATIVE_NTRIPLES));
+      await reasoner.materialize(store);
+      const inferred = store.getQuads(null, null, null, DataFactory.namedNode(INFERRED_GRAPH_IRI));
 
       expect(
         hasTriple(inferred, EX("x"), RDF_TYPE, EX("B")),
         "x rdf:type B must NOT be spuriously inferred when AllDisjointClasses(A,B) + x rdf:type A",
       ).toBe(false);
-    }),
+    },
     30_000,
   );
 
@@ -370,17 +359,17 @@ describe.skipIf(!wasmExists)("Property characteristics ABox inference", () => {
   // JS layer expands disjointUnionOf(C,A,B) to A,B rdfs:subClassOf C + pairwise disjointWith.
   it(
     "disjointUnionOf: x rdf:type A, C disjointUnionOf(A,B) — document whether x rdf:type C is emitted",
-    // Fresh reasoner required: same BackendAssCache isolation as AllDisjointClasses.
-    () => withFreshReasoner(async (fresh) => {
-      const quads = parseNTriples(DISJOINT_UNION_OF_ENTAILMENT_NTRIPLES);
-      const inferred = await fresh.materialize(quads);
+    async () => {
+      const store = new Store(parseNTriples(DISJOINT_UNION_OF_ENTAILMENT_NTRIPLES));
+      await reasoner.materialize(store);
+      const inferred = store.getQuads(null, null, null, DataFactory.namedNode(INFERRED_GRAPH_IRI));
 
       const emitsSuper = hasTriple(inferred, EX("x"), RDF_TYPE, EX("C"));
 
       // disjointUnionOf(C, A, B) implies C ≡ A ⊔ B, so x rdf:type A entails x rdf:type C.
       // JS expansion emits A rdfs:subClassOf C so Konclude infers x rdf:type C.
       expect(emitsSuper, "x rdf:type C must be inferred via disjointUnionOf(C,A,B) + x:A").toBe(true);
-    }),
+    },
     30_000,
   );
 
@@ -391,16 +380,16 @@ describe.skipIf(!wasmExists)("Property characteristics ABox inference", () => {
   // NegativePropertyAssertion in consistent ontology must not emit negated triple as positive.
   it(
     "NegativePropertyAssertion: consistent ontology must NOT produce negated triple as positive assertion",
-    // Fresh reasoner required: BackendAssCache isolation (same pattern as FunctionalProperty).
-    () => withFreshReasoner(async (fresh) => {
-      const quads = parseNTriples(NEGATIVE_PROPERTY_ASSERTION_CONSISTENT_NTRIPLES);
-      const inferred = await fresh.materialize(quads);
+    async () => {
+      const store = new Store(parseNTriples(NEGATIVE_PROPERTY_ASSERTION_CONSISTENT_NTRIPLES));
+      await reasoner.materialize(store);
+      const inferred = store.getQuads(null, null, null, DataFactory.namedNode(INFERRED_GRAPH_IRI));
 
       expect(
         hasTriple(inferred, EX("alice"), EX("knows"), EX("bob")),
         "alice knows bob must NOT be materialised — NegativePropertyAssertion carries no positive entailment",
       ).toBe(false);
-    }),
+    },
     30_000,
   );
 });

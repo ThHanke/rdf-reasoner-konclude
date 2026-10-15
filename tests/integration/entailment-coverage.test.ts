@@ -210,13 +210,38 @@ describe.skipIf(!wasmExists)("Entailment coverage: owl2dl fixtures", () => {
     }, 60000);
   });
 
-  // ── 10. owl:sameAs (FP/IFP) — Synthesized ──────────────────────────
-  // SKIPPED: FunctionalProperty + ABox triggers ALIF+ hang (known limitation).
-  // The synthesis code is validated by unit tests; this test would need the
-  // ALIF+ fix (plan-053 open question) to run against real WASM.
+  // ── 10. owl:sameAs (FP/IFP) ─────────────────────────────────────────
 
-  describe("FP/IFP → owl:sameAs (synthesis path validated by unit tests)", () => {
-    it.skip("alice sameAs bob via FunctionalProperty — ALIF+ hang", () => {});
+  describe("FP/IFP → owl:sameAs", () => {
+    it("alice sameAs bob via InverseFunctionalProperty", async () => {
+      // Fresh reasoner: IFP materialize must not block the shared-reasoner queue
+      const fresh = new RdfReasoner();
+      await fresh.ready;
+      try {
+        const quads = parseTurtle(`
+          @prefix owl: <http://www.w3.org/2002/07/owl#> .
+          @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+          @prefix ex: <http://example.org/> .
+
+          ex:onto a owl:Ontology .
+          ex:hasDNA a owl:ObjectProperty, owl:InverseFunctionalProperty .
+          ex:alice a owl:NamedIndividual .
+          ex:bob   a owl:NamedIndividual .
+          ex:seq1  a owl:NamedIndividual .
+          ex:alice ex:hasDNA ex:seq1 .
+          ex:bob   ex:hasDNA ex:seq1 .
+        `);
+        const fpStore = new Store(quads);
+        await fresh.materialize(fpStore);
+        const result = await fresh.explainEntailment(
+          fpStore, EX("alice"), OWL_SAME_AS, EX("bob"),
+        );
+        expect(result.isEntailed).toBe(true);
+        expect(result.justifications.length).toBeGreaterThanOrEqual(1);
+      } finally {
+        fresh.terminate();
+      }
+    }, 60000);
   });
 
   // ── 14. disjointUnionOf → subClassOf — Synthesized ─────────────────

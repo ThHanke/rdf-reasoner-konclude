@@ -1,0 +1,209 @@
+{
+ "buckets": {
+  "http://www.co-ode.org/roberts/family-tree.owl#brotherOf": {
+   "count": 224,
+   "sha256": "f71614691609f32e1569b2f9ab483097c23633cf4d09fabb65d8f004ed8e1cf0"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#directSiblingOf": {
+   "count": 801,
+   "sha256": "5f14d17fc46fd2f9ef151d11a3f452375912f7cc598d39f929b5803189ca5c40"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#grandParentOf": {
+   "count": 733,
+   "sha256": "5b0544c0048ad0ccdf8c6785de6f84995a3e88a4b6b827f1a10083435d7e1cce"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#hasAncestor": {
+   "count": 4594,
+   "sha256": "31b511e6c13a505e8aefd5188d2d010e9ddaf1af72d8cb7400fa246e848396f6"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#hasAunt": {
+   "count": 322,
+   "sha256": "9b8de2472b643f4a69dc85f5f860f9c4e56c2119b763dd3e579606b54b75ea2f"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#hasAuntInLaw": {
+   "count": 0,
+   "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#hasBrotherInLaw": {
+   "count": 0,
+   "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#hasChild": {
+   "count": 620,
+   "sha256": "a04f490ce2387a4e009f114822ac47d1a31f818cee4d86147bd7edda18c84641"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#hasDaughter": {
+   "count": 0,
+   "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#hasFather": {
+   "count": 314,
+   "sha256": "8c2eeca89fb50228f48a5d32041f914d2eba22842e509c901a6a21fd8ebf5771"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#hasFatherInLaw": {
+   "count": 5,
+   "sha256": "14b981ce210a19218c3daced4674117741e28508dbc2323a70f9d8f71fea0f80"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#hasFemalePartner": {
+   "count": 4,
+   "sha256": "16a3b232bc780787d81605c374d943e3c732b79e9abba6ea9b9f67f4a2ab656a"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#hasForeFather": {
+   "count": 799,
+   "sha256": "dfbf7425345246eefb24a11121fff49899e422447b7506c2c181cafc04e59e91"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#hasForeMother": {
+   "count": 642,
+   "sha256": "7f9c11eda5898d815fb359dcecdcab09b57e16c6facd9e7ed01a81c14b1a9b15"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#hasGender": {
+   "count": 0,
+   "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#hasGrandfather": {
+   "count": 360,
+   "sha256": "bd10dd988c9d671769cc8acfb0ea2f02a1be2a4ea825f95d0188f1032770d080"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#hasGrandmother": {
+   "count": 373,
+   "sha256": "cdaa0cfaeca9f4311fbf9f77dc78aa1d15322b2d2211025a30b54fbd5357a71e"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#hasGreatAunt": {
+   "count": 274,
+   "sha256": "b8803002cec52412ebc31e055d4f514ef7e307e0980b7570103ee7a8f6f2ee78"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#hasGreatGrandParent": {
+   "count": 703,
+   "sha256": "446e5623e1458e200db8085d78c8e8ef13e7cdac0c4cb746524aa446feb101b3"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#hasGreatGrandfather": {
+   "count": 346,
+   "sha256": "67740c22f89f21d9064eb2ceb8de7b1ae15135cc9d0c5bccb8c7dd23d191eb6f"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#hasGreatGrandmother": {
+   "count": 357,
+   "sha256": "7ed41406575c9e178798434a18dcc8846dd00a8a917a74616a34bfca0c6f97f8"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#hasGreatUncle": {
+   "count": 281,
+   "sha256": "91a4810f3e7b23c2d6f05e314cdcc2981c84dac5b49b3d8ddc6f2e7d6afe97e9"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#hasHusband": {
+   "count": 4,
+   "sha256": "796577b40478659635bda0976cbf96acc6b29001819f4a877882107f1062b551"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#hasMalePartner": {
+   "count": 4,
+   "sha256": "54faad2f7697e94f0357eed9d66f20f28af7ff3fdb94fc8cfa4a5bfc142091a7"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#hasMother": {
+   "count": 306,
+   "sha256": "bf1516bd3fbed9df0915158f1ee6b80b51d402ecd55b3c2a03926b1af82b3048"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#hasMotherInLaw": {
+   "count": 5,
+   "sha256": "3dd1950f3258fd1625b9a1fe108cef0ceddd3d119ebbb6d5b99ac78ef8cd2bc7"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#hasParentInLaw": {
+   "count": 10,
+   "sha256": "6ac947db1bafe706a0a22bbe290c5a286badf5e1a1d35ae99350eb277bf567e1"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#hasPartner": {
+   "count": 8,
+   "sha256": "3404538fa34e091ec50774fd66e806a27b1621e74bdb75c2eeffdb8872c38ecf"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#hasSister": {
+   "count": 234,
+   "sha256": "cd1685a8ed112e3b94eef120dcc3a12b8b5123f6ecd049cffbcb901a0658e961"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#hasSisterInLaw": {
+   "count": 0,
+   "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#hasSon": {
+   "count": 0,
+   "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#hasUncle": {
+   "count": 331,
+   "sha256": "ae277e3166e83a89a87fae8f41eb2612d9d316673e256c6d196445cf3718f9f3"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#hasUncleInLaw": {
+   "count": 2,
+   "sha256": "f2385e1b81fec273e7b0c6c32123151e88b4d1dce3d72dd799893be50865a972"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#hasWife": {
+   "count": 4,
+   "sha256": "92eb09e94e95bfe6dfbd33abbd898cf8fc14c21df595e227eacff74ff1597603"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#isAuntInLawOf": {
+   "count": 19,
+   "sha256": "5a847a7f96091bc3e00bbec73635d5a87e924359a4cb17d87fa117e128047330"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#isBloodRelationOf": {
+   "count": 157610,
+   "sha256": "8243e365b92ec44952c76af6d6249b1a01d402fb1a9fba87ddf379c31cec0b31"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#isFirstCousinOf": {
+   "count": 1775,
+   "sha256": "b56cbd252e6957d07719cf41e030b2c1a88bb0bf145ad627ce584403a07ac555"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#isFirstCousinOnceRemovedOf": {
+   "count": 2684,
+   "sha256": "9fdfc31c49e6b2fb542c3c65e411f90bac7b0d1ed7e0d520dc772e4189d8eea7"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#isInLawOf": {
+   "count": 86,
+   "sha256": "e56174f8baeaafefac76a939ae16677278c7409c01f684a1e330aa0792588156"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#isNephewOf": {
+   "count": 0,
+   "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#isNieceOf": {
+   "count": 0,
+   "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#isRelationOf": {
+   "count": 157610,
+   "sha256": "8243e365b92ec44952c76af6d6249b1a01d402fb1a9fba87ddf379c31cec0b31"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#isSecondCousinOf": {
+   "count": 1317,
+   "sha256": "6972e4aeb2fec0ace1fedfeb4efd5d2e29f4a3bb737ce86e8e0838bffe345f8b"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#isSiblingInLawOf": {
+   "count": 24,
+   "sha256": "a070832040e89033dad5772b0f21a7956e39de7403d64f331c70e630adc40b3d"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#isSiblingOf": {
+   "count": 1785,
+   "sha256": "409c1216a0e6849bda32ddc5a26cf9c9a8679a4708c5c5bfb08144ed88c6420f"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#isSpouseOf": {
+   "count": 8,
+   "sha256": "4ee6eac20fab9f9349bed54e0ee456716885cca3aa015ec006183d542d787dc8"
+  },
+  "http://www.co-ode.org/roberts/family-tree.owl#isThirdCousinOf": {
+   "count": 1127,
+   "sha256": "1c660af122fe1ce51b365b6a2e059d411df20c8386b7ff93ea52a7e41cb28405"
+  }
+ },
+ "fixture": "roberts-family.nt",
+ "known_deltas": {
+  "counts": {
+   "http://www.co-ode.org/roberts/family-tree.owl#isBloodRelationOf": -1,
+   "http://www.co-ode.org/roberts/family-tree.owl#isRelationOf": -1
+  },
+  "note": "Deterministic port-vs-upstream deltas observed on baseline fa79bd4 (all 5 samples). Reflexive pair john_william_folland isRelationOf/isBloodRelationOf itself is emitted by upstream SPARQL but not by the port readout. Remove when fixed."
+ },
+ "repeats": 3,
+ "unstable": {
+  "__types__": [
+   4958,
+   4957,
+   4957
+  ]
+ },
+ "upstream": "/home/hanke/konclude-orig/b/Debug/Konclude"
+}

@@ -33,7 +33,10 @@ const mocks = vi.hoisted(() => {
   (globalThis as Record<string, unknown>).self = globalThis;
 
   // --- WASM module mock state ---
-  const loadTripleBuffer = vi.fn<[number, number, number, number, boolean], void>();
+  const syncTripleBuffer = vi.fn<[number, number, number, number], number>().mockReturnValue(1);
+  const generation = vi.fn<[], number>().mockReturnValue(1);
+  const lastSyncAdded = vi.fn<[], number>().mockReturnValue(3);
+  const lastSyncRemoved = vi.fn<[], number>().mockReturnValue(0);
   const classification = vi.fn<[], boolean>().mockReturnValue(true);
   const realization = vi.fn<[], boolean>().mockReturnValue(true);
   const consistency = vi.fn<[], boolean>().mockReturnValue(true);
@@ -45,7 +48,10 @@ const mocks = vi.hoisted(() => {
   // Must use a regular function (not arrow) so it can be called with `new`.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const KoncludeReasoner = vi.fn(function (this: any) {
-    this.loadTripleBuffer = loadTripleBuffer;
+    this.syncTripleBuffer = syncTripleBuffer;
+    this.generation = generation;
+    this.lastSyncAdded = lastSyncAdded;
+    this.lastSyncRemoved = lastSyncRemoved;
     this.classification = classification;
     this.realization = realization;
     this.consistency = consistency;
@@ -69,7 +75,10 @@ const mocks = vi.hoisted(() => {
 
   return {
     postMessage,
-    loadTripleBuffer,
+    syncTripleBuffer,
+    generation,
+    lastSyncAdded,
+    lastSyncRemoved,
     classification,
     realization,
     consistency,
@@ -125,7 +134,8 @@ function makeEvent(
 describe("worker handleMessage", () => {
   beforeEach(() => {
     mocks.postMessage.mockClear();
-    mocks.loadTripleBuffer.mockClear();
+    mocks.syncTripleBuffer.mockClear();
+    mocks.syncTripleBuffer.mockReturnValue(1);
     mocks.classification.mockClear();
     mocks.realization.mockClear();
     mocks.consistency.mockClear();
@@ -137,21 +147,37 @@ describe("worker handleMessage", () => {
     mocks.free.mockClear();
   });
 
-  it("happy path: loadTripleBuffer → calls C++ loadTripleBuffer with ptr/count", async () => {
+  it("happy path: sync → calls C++ syncTripleBuffer with ptr/count, returns change stats, no reset", async () => {
     const tripleBuffer = new ArrayBuffer(36); // 3 triples × 12 bytes each
     const strTableBuffer = new ArrayBuffer(8);
     await handleMessage(makeEvent(10, "loadTripleBuffer", [tripleBuffer, strTableBuffer]));
 
-    expect(mocks.loadTripleBuffer).toHaveBeenCalledWith(
+    expect(mocks.syncTripleBuffer).toHaveBeenCalledWith(
       expect.any(Number), // triplePtr
       3,                  // tripleCount = 36 / 12
       expect.any(Number), // strTablePtr
       8,                  // strTableLen
-      false,              // forRealization
     );
+    expect(mocks.reset).not.toHaveBeenCalled();
     expect(mocks.malloc).toHaveBeenCalledTimes(2);
     expect(mocks.free).toHaveBeenCalledTimes(2);
-    expect(mocks.postMessage).toHaveBeenCalledWith({ id: 10, result: true });
+    expect(mocks.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 10, result: { changed: true, added: 3, removed: 0, generation: 1 } }),
+    );
+  });
+
+  it("sync: unchanged content reports changed:false", async () => {
+    mocks.syncTripleBuffer.mockReturnValueOnce(0);
+    await handleMessage(makeEvent(12, "sync", [new ArrayBuffer(12), new ArrayBuffer(8)]));
+    expect(mocks.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 12, result: expect.objectContaining({ changed: false, added: 0, removed: 0 }) }),
+    );
+  });
+
+  it("sync: invalid buffers -> error response", async () => {
+    mocks.syncTripleBuffer.mockReturnValueOnce(-1);
+    await handleMessage(makeEvent(13, "sync", [new ArrayBuffer(12), new ArrayBuffer(8)]));
+    expect(mocks.postMessage).toHaveBeenCalledWith(expect.objectContaining({ id: 13, error: expect.stringContaining("invalid") }));
   });
 
   it("happy path: classification → posts {id, result: true}", async () => {
@@ -159,7 +185,7 @@ describe("worker handleMessage", () => {
     await handleMessage(makeEvent(2, "classification"));
 
     expect(mocks.classification).toHaveBeenCalledOnce();
-    expect(mocks.postMessage).toHaveBeenCalledWith({ id: 2, result: true });
+    expect(mocks.postMessage).toHaveBeenCalledWith(expect.objectContaining({ id: 2, result: true }));
   });
 
   it("happy path: realization → posts {id, result: true}", async () => {
@@ -167,7 +193,7 @@ describe("worker handleMessage", () => {
     await handleMessage(makeEvent(3, "realization"));
 
     expect(mocks.realization).toHaveBeenCalledOnce();
-    expect(mocks.postMessage).toHaveBeenCalledWith({ id: 3, result: true });
+    expect(mocks.postMessage).toHaveBeenCalledWith(expect.objectContaining({ id: 3, result: true }));
   });
 
   it("happy path: consistency → posts {id, result: true}", async () => {
@@ -175,7 +201,7 @@ describe("worker handleMessage", () => {
     await handleMessage(makeEvent(4, "consistency"));
 
     expect(mocks.consistency).toHaveBeenCalledOnce();
-    expect(mocks.postMessage).toHaveBeenCalledWith({ id: 4, result: true });
+    expect(mocks.postMessage).toHaveBeenCalledWith(expect.objectContaining({ id: 4, result: true }));
   });
 
   it("happy path: getInferredTripleBuffer → calls build/ptr, posts {id, result: ArrayBuffer}", async () => {
@@ -220,7 +246,7 @@ describe("worker handleMessage", () => {
     mocks.realization.mockReturnValueOnce(false);
     await handleMessage(makeEvent(6, "realization"));
 
-    expect(mocks.postMessage).toHaveBeenCalledWith({ id: 6, result: false });
+    expect(mocks.postMessage).toHaveBeenCalledWith(expect.objectContaining({ id: 6, result: false }));
   });
 
 });

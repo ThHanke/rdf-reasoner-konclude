@@ -12,9 +12,10 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { existsSync } from "node:fs";
+import { DataFactory, Store } from "n3";
 import type { Quad } from "@rdfjs/types";
 
-import { RdfReasoner } from "../../ts/index.js";
+import { RdfReasoner, INFERRED_GRAPH_IRI } from "../../ts/index.js";
 import { loadFixture } from "../helpers/fixture.js";
 
 const wasmPath = new URL("../../dist/konclude.wasm", import.meta.url).pathname;
@@ -67,6 +68,7 @@ describe.skipIf(!wasmExists)(
   "Roberts minimal realization (3 individuals)",
   () => {
     let reasoner: RdfReasoner;
+    let store: Store;
     let inferred: Quad[];
 
     beforeAll(async () => {
@@ -75,28 +77,17 @@ describe.skipIf(!wasmExists)(
 
       const allQuads = loadFixture("roberts-family.nt");
       const filtered = stripABox(allQuads, KEEP);
-      inferred = await reasoner.materialize(filtered, { includeClassHierarchy: true });
+      store = new Store(filtered);
+      await reasoner.materialize(store, { includeClassHierarchy: true });
+      inferred = store.getQuads(null, null, null, DataFactory.namedNode(INFERRED_GRAPH_IRI));
     }, 30000);
 
     afterAll(() => {
       reasoner?.terminate();
     });
 
-    it("materialize() returns inferred quads without crashing", () => {
-      expect(Array.isArray(inferred)).toBe(true);
+    it("materialize() writes inferred quads to store without crashing", () => {
       expect(inferred.length).toBeGreaterThan(0);
-    });
-
-    it("directly asserted rdf:type Person echoed back for john_william_folland", () => {
-      const hasType = inferred.some(
-        (q) =>
-          q.subject.value === NS + "john_william_folland" &&
-          q.predicate.value === RDF_TYPE &&
-          q.object.value === NS + "Person",
-      );
-      expect(hasType, "john_william_folland rdf:type Person must appear").toBe(
-        true,
-      );
     });
 
     it("robert_david_bright_1965 appears in output (NamedIndividual)", () => {

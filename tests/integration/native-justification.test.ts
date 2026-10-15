@@ -9,6 +9,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { existsSync } from "node:fs";
+import { Store } from "n3";
 
 import { RdfReasoner } from "../../ts/index.js";
 import { loadFixture } from "../helpers/fixture.js";
@@ -24,7 +25,7 @@ describe.skipIf(!wasmExists)("Native justification integration", () => {
   beforeAll(async () => {
     reasoner = new RdfReasoner();
     await reasoner.ready;
-    await reasoner.classify(loadFixture("roberts-family.nt"));
+    await reasoner.classify(new Store(loadFixture("roberts-family.nt")));
   }, 360000);
 
   afterAll(() => {

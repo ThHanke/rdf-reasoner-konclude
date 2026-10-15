@@ -2,20 +2,19 @@
 //
 // Regression test: inferred class hierarchy must be deterministic across calls.
 //
-// Measured by ontosphere (fix/reasoner-determinism-and-memory): ten cold sessions
-// on PMDco @3b98aad + Fe-Si record returned 380-389 inferred triples; all 59
-// differing statements were rdfs:subClassOf between named classes, while the
-// transitive closure was always identical (8246 statements). Root cause: the
-// Hasse diagram computation in buildInferredTripleBuffer walks unordered_maps
-// whose iteration order varies with thread scheduling / hash seeds.
+// Root cause (patch 008): sortSubsumingConceptItemList() used qSort (unstable)
+// with a comparator that only keyed on subsumer count. When two sibling classes
+// have equal count, their relative sort order depended on insertion order into
+// mSubsumingConceptItemList, which in WASM is thread-completion order —
+// nondeterministic. The transitive reduction loop picks the "first parent" by
+// position in this list, so different orderings produce different direct edges.
 //
-// This test uses PMDco alone (TBox-only, no ABox) — the nondeterminism is in
-// the class hierarchy, not instance data. Runs materialize() N times with fresh
-// stores and asserts the inferred subClassOf count is identical every time.
+// Fix: tie-break by getConceptTag() (stable sequential integer) + std::stable_sort.
 //
-// A C++ fix would sort subClassOf edges by (subject IRI, object IRI) before
-// emitting in buildInferredTripleBuffer. Until then, ontosphere's
-// canonicalInferredHierarchy() TS post-processor is the workaround.
+// This test runs materialize() N times with fresh stores and asserts both the
+// inferred subClassOf count AND the exact set of subClassOf triples are identical
+// every time. Count-only was the pre-fix assertion; exact-triple comparison is
+// the stronger post-fix regression guard.
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
@@ -43,6 +42,14 @@ function loadStore(): Store {
   return store;
 }
 
+function inferredSubClassOfKey(store: Store): string {
+  return store
+    .getQuads(null, namedNode(RDFS_SUB_CLASS_OF), null, namedNode(INFERRED))
+    .map((q) => `${q.subject.value} ${q.object.value}`)
+    .sort()
+    .join("\n");
+}
+
 function countInferredSubClassOf(store: Store): number {
   return store.getQuads(null, namedNode(RDFS_SUB_CLASS_OF), null, namedNode(INFERRED)).length;
 }
@@ -61,7 +68,7 @@ describe("class hierarchy: inferred subClassOf count is deterministic across cal
   });
 
   it(
-    "all 3 runs on PMDco produce identical inferred subClassOf edge count (KPSet path)",
+    "all 3 runs on PMDco produce identical inferred subClassOf edges (KPSet path, patch 008)",
     async () => {
       if (!wasmExists) {
         console.warn("[SKIP] WASM not built — skipping hierarchy determinism test");
@@ -70,6 +77,7 @@ describe("class hierarchy: inferred subClassOf count is deterministic across cal
 
       const N = 3;
       const counts: number[] = [];
+      const keys: string[] = [];
 
       for (let i = 0; i < N; i++) {
         const store = loadStore();
@@ -78,31 +86,82 @@ describe("class hierarchy: inferred subClassOf count is deterministic across cal
           inferredGraph: INFERRED,
         });
         counts.push(countInferredSubClassOf(store));
+        keys.push(inferredSubClassOfKey(store));
       }
 
-      console.info(`[determinism] subClassOf counts across ${N} runs: ${counts.join(", ")} (fixture: PMDco, KPSet path)`);
+      console.info(
+        `[determinism] subClassOf counts across ${N} runs: ${counts.join(", ")} (fixture: PMDco, KPSet path)`
+      );
 
-      const allSame = counts.every((c) => c === counts[0]);
-      if (!allSame) {
-        const min = Math.min(...counts);
-        const max = Math.max(...counts);
-        console.warn(
-          `[determinism] NONDETERMINISM DETECTED: range ${min}–${max} ` +
-            `(${max - min} edge variance). ` +
-            "Apply canonicalInferredHierarchy() post-processing or fix Hasse sort in C++."
-        );
-      }
-
-      // Assert all counts are identical.
-      // If this fails, the variance tells you how many redundant edges vary between runs.
+      // Count check (pre-fix regression)
       for (let i = 1; i < N; i++) {
         expect(
           counts[i],
           `Run ${i + 1} produced ${counts[i]} subClassOf edges, run 1 produced ${counts[0]}. ` +
-            "Hasse diagram is nondeterministic."
+            "Hasse nondeterminism detected — patch 008 (concept-tag tie-breaker) may not be active."
         ).toBe(counts[0]);
+      }
+
+      // Exact-triple check (post-fix regression — catches ordering bugs that preserve count)
+      for (let i = 1; i < N; i++) {
+        expect(
+          keys[i],
+          `Run ${i + 1} subClassOf set differs from run 1 despite equal count. ` +
+            "Some edges changed identity — Hasse tie-breaking is still nondeterministic."
+        ).toBe(keys[0]);
       }
     },
     300_000
+  );
+});
+
+describe("class hierarchy: diagnostic — fresh reasoner per run (isolates state-accumulation from ordering nondeterminism)", () => {
+  it(
+    "3 independent WASM instances produce identical subClassOf counts",
+    async () => {
+      if (!wasmExists) {
+        console.warn("[SKIP] WASM not built — skipping fresh-reasoner diagnostic test");
+        return;
+      }
+
+      const N = 3;
+      const counts: number[] = [];
+      const keys: string[] = [];
+
+      for (let i = 0; i < N; i++) {
+        const r = new RdfReasoner();
+        await r.ready;
+        try {
+          const store = loadStore();
+          await r.materialize(store, {
+            includeClassHierarchy: true,
+            inferredGraph: INFERRED,
+          });
+          counts.push(countInferredSubClassOf(store));
+          keys.push(inferredSubClassOfKey(store));
+        } finally {
+          r.terminate();
+        }
+      }
+
+      console.info(
+        `[fresh-reasoner] subClassOf counts across ${N} independent instances: ${counts.join(", ")}`
+      );
+
+      for (let i = 1; i < N; i++) {
+        expect(
+          counts[i],
+          `Fresh instance ${i + 1} produced ${counts[i]} edges vs instance 1 with ${counts[0]}. ` +
+            "Nondeterminism present even without state accumulation — within-run ordering issue."
+        ).toBe(counts[0]);
+      }
+
+      for (let i = 1; i < N; i++) {
+        expect(keys[i], `Fresh instance ${i + 1} subClassOf set differs from instance 1.`).toBe(
+          keys[0]
+        );
+      }
+    },
+    600_000
   );
 });

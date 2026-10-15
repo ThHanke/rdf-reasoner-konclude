@@ -11,8 +11,10 @@
 
 import { describe, it, expect, afterEach } from "vitest";
 import { existsSync } from "node:fs";
-import { Parser } from "n3";
+import { DataFactory, Parser, Store } from "n3";
 import type { Quad } from "@rdfjs/types";
+
+import { INFERRED_GRAPH_IRI } from "../../ts/index.js";
 
 import { RdfReasoner } from "../../ts/index.js";
 
@@ -20,13 +22,7 @@ const wasmPath = new URL("../../dist/konclude.wasm", import.meta.url).pathname;
 const wasmExists = existsSync(wasmPath);
 
 function parseNT(nt: string): Quad[] {
-  const parser = new Parser({ format: "N-Triples" });
-  const quads: Quad[] = [];
-  parser.parse(nt, (err, quad) => {
-    if (err) throw err;
-    if (quad) quads.push(quad as Quad);
-  });
-  return quads;
+  return new Parser({ format: "N-Triples" }).parse(nt) as Quad[];
 }
 
 // ── Minimal fixtures (NTriples) ──────────────────────────────────────────────
@@ -37,7 +33,7 @@ const FP_1FILLER = `\
 <http://ex.org/p> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#FunctionalProperty> .
 <http://ex.org/a> <http://ex.org/p> <http://ex.org/b> .`;
 
-// 4 triples: FP + 2 fillers → merge needed (JS workaround handles this)
+// 4 triples: FP + 2 fillers → merge needed (handled in C++ buildInferredTripleBuffer)
 const FP_2FILLER = `\
 <http://ex.org/p> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <http://ex.org/p> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#FunctionalProperty> .
@@ -50,7 +46,7 @@ const IFP_1SUBJ = `\
 <http://ex.org/q> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#InverseFunctionalProperty> .
 <http://ex.org/a> <http://ex.org/q> <http://ex.org/x> .`;
 
-// 4 triples: IFP + 2 subjects → merge needed (JS workaround handles this)
+// 4 triples: IFP + 2 subjects → merge needed (handled in C++ buildInferredTripleBuffer)
 const IFP_2SUBJ = `\
 <http://ex.org/q> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
 <http://ex.org/q> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#InverseFunctionalProperty> .
@@ -91,22 +87,26 @@ describe.skipIf(!wasmExists)("ALIF+ hang — minimal reproducer matrix", () => {
   it("CONTROL: FP-TBox-only / materialize → PASS (no ABox)", { timeout: 5000 }, async () => {
     reasoner = new RdfReasoner();
     await reasoner.ready;
-    const result = await reasoner.materialize(parseNT(FP_TBOX_ONLY));
-    expect(result).toBeDefined();
+    const store = new Store(parseNT(FP_TBOX_ONLY));
+    await reasoner.materialize(store);
+    // materialize() returns void; verify it completed without throwing
+    expect(store.size).toBeGreaterThanOrEqual(0);
   });
 
   it("CONTROL: FP-2filler / materialize → PASS (C++ strips FP decl for multi-filler)", { timeout: 5000 }, async () => {
     reasoner = new RdfReasoner();
     await reasoner.ready;
-    const result = await reasoner.materialize(parseNT(FP_2FILLER));
-    expect(result).toBeDefined();
+    const store = new Store(parseNT(FP_2FILLER));
+    await reasoner.materialize(store);
+    expect(store.size).toBeGreaterThanOrEqual(0);
   });
 
   it("CONTROL: IFP-2subj / materialize → PASS (C++ strips IFP decl for multi-subject)", { timeout: 5000 }, async () => {
     reasoner = new RdfReasoner();
     await reasoner.ready;
-    const result = await reasoner.materialize(parseNT(IFP_2SUBJ));
-    expect(result).toBeDefined();
+    const store = new Store(parseNT(IFP_2SUBJ));
+    await reasoner.materialize(store);
+    expect(store.size).toBeGreaterThanOrEqual(0);
   });
 
   // =========================================================================
@@ -117,43 +117,48 @@ describe.skipIf(!wasmExists)("ALIF+ hang — minimal reproducer matrix", () => {
   it("HANG: COLD / FP-1filler / checkConsistency (3 triples)", { timeout: 5000 }, async () => {
     reasoner = new RdfReasoner();
     await reasoner.ready;
-    const ok = await reasoner.checkConsistency(parseNT(FP_1FILLER));
+    const ok = await reasoner.checkConsistency(new Store(parseNT(FP_1FILLER)));
     expect(typeof ok).toBe("boolean");
   });
 
   it("HANG: COLD / FP-1filler / classify (3 triples)", { timeout: 5000 }, async () => {
     reasoner = new RdfReasoner();
     await reasoner.ready;
-    const result = await reasoner.classify(parseNT(FP_1FILLER));
-    expect(result).toBeDefined();
+    const store = new Store(parseNT(FP_1FILLER));
+    await reasoner.classify(store);
+    expect(store.size).toBeGreaterThanOrEqual(0);
   });
 
   it("HANG: COLD / FP-1filler / materialize (3 triples)", { timeout: 5000 }, async () => {
     reasoner = new RdfReasoner();
     await reasoner.ready;
-    const result = await reasoner.materialize(parseNT(FP_1FILLER));
-    expect(result).toBeDefined();
+    const store = new Store(parseNT(FP_1FILLER));
+    await reasoner.materialize(store);
+    expect(store.size).toBeGreaterThanOrEqual(0);
   });
 
   it("HANG: COLD / IFP-1subj / materialize (3 triples)", { timeout: 5000 }, async () => {
     reasoner = new RdfReasoner();
     await reasoner.ready;
-    const result = await reasoner.materialize(parseNT(IFP_1SUBJ));
-    expect(result).toBeDefined();
+    const store = new Store(parseNT(IFP_1SUBJ));
+    await reasoner.materialize(store);
+    expect(store.size).toBeGreaterThanOrEqual(0);
   });
 
   it("HANG: COLD / FP+IFP-1filler / materialize (4 triples)", { timeout: 5000 }, async () => {
     reasoner = new RdfReasoner();
     await reasoner.ready;
-    const result = await reasoner.materialize(parseNT(FP_IFP_1FILLER));
-    expect(result).toBeDefined();
+    const store = new Store(parseNT(FP_IFP_1FILLER));
+    await reasoner.materialize(store);
+    expect(store.size).toBeGreaterThanOrEqual(0);
   });
 
   it("HANG: WARM / FP-1filler / materialize (warmup irrelevant — same result)", { timeout: 5000 }, async () => {
     reasoner = new RdfReasoner();
     await reasoner.ready;
-    await reasoner.checkConsistency(parseNT(WARMUP));
-    const result = await reasoner.materialize(parseNT(FP_1FILLER));
-    expect(result).toBeDefined();
+    await reasoner.checkConsistency(new Store(parseNT(WARMUP)));
+    const store = new Store(parseNT(FP_1FILLER));
+    await reasoner.materialize(store);
+    expect(store.size).toBeGreaterThanOrEqual(0);
   });
 });

@@ -55,6 +55,9 @@ vi.stubGlobal("Worker", mocks.WorkerMock);
 // Step 3: Import module under test
 // ---------------------------------------------------------------------------
 import { RdfReasoner } from "../../ts/index.js";
+import { createFakeSync } from "./helpers/fakeSync.js";
+
+const fakeSync = createFakeSync();
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -106,8 +109,8 @@ function mockValidateSequence(opts: {
   const { consistent, unsatIris = "", unsatInSubset = unsatIris } = opts;
   mocks.workerPostMessage.mockImplementation((msg: unknown) => {
     const req = msg as { id: number; method: string };
-    if (req.method === "loadTripleBuffer") {
-      simulateWorkerMessage({ id: req.id, result: true });
+    if (req.method === "sync") {
+      simulateWorkerMessage({ id: req.id, result: fakeSync(req) });
     } else if (req.method === "classification") {
       simulateWorkerMessage({ id: req.id, result: true });
     } else if (req.method === "consistency") {
@@ -151,7 +154,7 @@ describe("RdfReasoner — validate()", () => {
     // Mock: always inconsistent, no unsat classes in unsat buffer (BlackBox will run)
     mocks.workerPostMessage.mockImplementation((msg: unknown) => {
       const req = msg as { id: number; method: string };
-      if (req.method === "loadTripleBuffer") simulateWorkerMessage({ id: req.id, result: true });
+      if (req.method === "sync") simulateWorkerMessage({ id: req.id, result: fakeSync(req) });
       else if (req.method === "classification") simulateWorkerMessage({ id: req.id, result: true });
       else if (req.method === "consistency") simulateWorkerMessage({ id: req.id, result: false });
       else if (req.method === "getInferredTripleBuffer") simulateWorkerMessage({ id: req.id, result: EMPTY_BUF });
@@ -217,7 +220,7 @@ describe("RdfReasoner — validate()", () => {
     const inferredBuf = buildCombinedBuffer([quad(A, subClassOf, C, defaultGraph())]);
     mocks.workerPostMessage.mockImplementation((msg: unknown) => {
       const req = msg as { id: number; method: string };
-      if (req.method === "loadTripleBuffer") simulateWorkerMessage({ id: req.id, result: true });
+      if (req.method === "sync") simulateWorkerMessage({ id: req.id, result: fakeSync(req) });
       else if (req.method === "classification") simulateWorkerMessage({ id: req.id, result: true });
       else if (req.method === "getInferredTripleBuffer") simulateWorkerMessage({ id: req.id, result: inferredBuf });
     });

@@ -9,7 +9,6 @@ import { Store, DataFactory } from "n3";
 import {
   fromN3EntityKey,
   encodeStoreToBuffers,
-  computeStoreFingerprintDirect,
 } from "../../ts/n3Inject.js";
 import {
   encodeToBuffers,
@@ -132,51 +131,6 @@ describe("encodeStoreToBuffers", () => {
   });
 });
 
-describe("computeStoreFingerprintDirect", () => {
-  it("produces identical hash to computeStoreFingerprint", () => {
-    const store = new Store();
-    store.addQuad(quad(namedNode("ex:Alice"), namedNode("ex:knows"), namedNode("ex:Bob")));
-    store.addQuad(quad(namedNode("ex:Bob"), namedNode("ex:age"), literal("30", namedNode("http://www.w3.org/2001/XMLSchema#integer"))));
-    store.addQuad(quad(blankNode("b0"), namedNode("ex:label"), literal("hello", "en")));
-
-    const allQuads = store.getQuads(null, null, null, null);
-    const refHash = computeStoreFingerprint(allQuads);
-    const testHash = computeStoreFingerprintDirect(store);
-
-    expect(testHash).toBe(refHash);
-  });
-
-  it("excludes inferred/hypothetical/explanation graphs (same as computeStoreFingerprint)", () => {
-    const store = new Store();
-    store.addQuad(quad(namedNode("ex:A"), namedNode("ex:B"), namedNode("ex:C")));
-    store.addQuad(quad(namedNode("ex:X"), namedNode("ex:Y"), namedNode("ex:Z"), namedNode(INFERRED_GRAPH_IRI)));
-    store.addQuad(quad(namedNode("ex:J"), namedNode("ex:K"), namedNode("ex:L"), namedNode(EXPLANATION_GRAPH_IRI)));
-
-    const allQuads = store.getQuads(null, null, null, null);
-    const refHash = computeStoreFingerprint(allQuads);
-    const testHash = computeStoreFingerprintDirect(store);
-
-    expect(testHash).toBe(refHash);
-  });
-
-  it("empty store", () => {
-    const store = new Store();
-    const allQuads = store.getQuads(null, null, null, null);
-    expect(computeStoreFingerprintDirect(store)).toBe(computeStoreFingerprint(allQuads));
-  });
-
-  it("handles literals with special characters in fingerprint", () => {
-    const store = new Store();
-    store.addQuad(quad(
-      namedNode("ex:A"),
-      namedNode("ex:desc"),
-      literal('line1\nline2\r"quoted"\\slash'),
-    ));
-
-    const allQuads = store.getQuads(null, null, null, null);
-    expect(computeStoreFingerprintDirect(store)).toBe(computeStoreFingerprint(allQuads));
-  });
-});
 
 function combineBufs(bufs: { tripleBuffer: ArrayBuffer; strTableBuffer: ArrayBuffer }): ArrayBuffer {
   const strLen = bufs.strTableBuffer.byteLength;

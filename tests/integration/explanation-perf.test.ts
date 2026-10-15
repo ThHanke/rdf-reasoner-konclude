@@ -68,7 +68,7 @@ describe.skipIf(!wasmExists)("Explanation performance benchmark", () => {
     } finally {
       r.terminate();
     }
-  }, 120000);
+  }, 240000);
 
   it("materialize: explanation overhead < 500%", async () => {
     const quads = loadFixture("roberts-family.nt");

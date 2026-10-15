@@ -1,0 +1,7 @@
+<http://example.org/knows> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+<http://example.org/alice> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#NamedIndividual> .
+<http://example.org/bob> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#NamedIndividual> .
+_:neg <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#NegativePropertyAssertion> .
+_:neg <http://www.w3.org/2002/07/owl#sourceIndividual> <http://example.org/alice> .
+_:neg <http://www.w3.org/2002/07/owl#assertionProperty> <http://example.org/knows> .
+_:neg <http://www.w3.org/2002/07/owl#targetIndividual> <http://example.org/bob> .

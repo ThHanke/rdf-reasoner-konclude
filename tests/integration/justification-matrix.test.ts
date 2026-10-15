@@ -176,9 +176,9 @@ describe.skipIf(!wasmExists)("Justification coverage audit", () => {
     reasoner?.terminate();
   });
 
-  it("roberts-family: every inferred triple has justification", async () => {
-    const results = await auditOntology("roberts-family.nt", reasoner);
-    printSummary("roberts-family", results);
+  it("class-collections (unionOf, intersectionOf, oneOf): every inferred triple has justification", async () => {
+    const results = await auditOntology("owl2dl/class-collections.ttl", reasoner);
+    printSummary("class-collections", results);
 
     const nonThing = results.filter(r => !r.triple.endsWith(`${OWL}Thing`));
     const missing = nonThing.filter(r => r.status === "MISSING");
@@ -186,17 +186,6 @@ describe.skipIf(!wasmExists)("Justification coverage audit", () => {
     expect(missing.length, `${missing.length} triples not detected as entailed`).toBe(0);
     expect(partial.length, `${partial.length} triples entailed but missing justification axioms:\n${partial.map(p => `  [PARTIAL] ${p.triple}`).join("\n")}`).toBe(0);
   }, 120000);
-
-  it("pizza: every inferred triple has justification", async () => {
-    const results = await auditOntology("pizza.nt", reasoner);
-    printSummary("pizza", results);
-
-    const nonThing = results.filter(r => !r.triple.endsWith(`${OWL}Thing`));
-    const missing = nonThing.filter(r => r.status === "MISSING");
-    const partial = nonThing.filter(r => r.status === "PARTIAL");
-    expect(missing.length, `${missing.length} triples not detected as entailed`).toBe(0);
-    expect(partial.length, `${partial.length} triples entailed but missing justification axioms:\n${partial.map(p => `  [PARTIAL] ${p.triple}`).join("\n")}`).toBe(0);
-  }, 300000);
 
   it("abox (sameAs, type propagation): every inferred triple has justification", async () => {
     const results = await auditOntology("owl2dl/abox.ttl", reasoner);
@@ -243,10 +232,20 @@ describe.skipIf(!wasmExists)("Justification coverage audit", () => {
     expect(partial.length, `${partial.length} type triples entailed but missing justification axioms:\n${partial.map(p => `  [PARTIAL] ${p.triple}`).join("\n")}`).toBe(0);
   }, 120000);
 
-  // class-collections skipped: ALIF+ hang on unionOf causes timeout
-  it.skip("class-collections (unionOf, intersectionOf, oneOf): every inferred triple has justification", async () => {
-    const results = await auditOntology("owl2dl/class-collections.ttl", reasoner);
-    printSummary("class-collections", results);
+  it("roberts-family: every inferred triple has justification", async () => {
+    const results = await auditOntology("roberts-family.nt", reasoner);
+    printSummary("roberts-family", results);
+
+    const nonThing = results.filter(r => !r.triple.endsWith(`${OWL}Thing`));
+    const missing = nonThing.filter(r => r.status === "MISSING");
+    const partial = nonThing.filter(r => r.status === "PARTIAL");
+    expect(missing.length, `${missing.length} triples not detected as entailed`).toBe(0);
+    expect(partial.length, `${partial.length} triples entailed but missing justification axioms:\n${partial.map(p => `  [PARTIAL] ${p.triple}`).join("\n")}`).toBe(0);
+  }, 120000);
+
+  it("pizza: every inferred triple has justification", async () => {
+    const results = await auditOntology("pizza.nt", reasoner);
+    printSummary("pizza", results);
 
     const nonThing = results.filter(r => !r.triple.endsWith(`${OWL}Thing`));
     const missing = nonThing.filter(r => r.status === "MISSING");

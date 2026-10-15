@@ -55,6 +55,9 @@ vi.stubGlobal("Worker", mocks.WorkerMock);
 // Step 3: Import module under test
 // ---------------------------------------------------------------------------
 import { RdfReasoner, INFERRED_GRAPH_IRI } from "../../ts/index.js";
+import { createFakeSync } from "./helpers/fakeSync.js";
+
+const fakeSync = createFakeSync();
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -109,8 +112,8 @@ function buildCombinedBuffer(quads: Iterable<Quad>): ArrayBuffer {
 function mockAlwaysConsistent() {
   mocks.workerPostMessage.mockImplementation((msg: unknown) => {
     const req = msg as { id: number; method: string };
-    if (req.method === "loadTripleBuffer") {
-      simulateWorkerMessage({ id: req.id, result: true });
+    if (req.method === "sync") {
+      simulateWorkerMessage({ id: req.id, result: fakeSync(req) });
     } else if (req.method === "classification") {
       simulateWorkerMessage({ id: req.id, result: true });
     } else if (req.method === "consistency") {
@@ -133,8 +136,8 @@ function mockAlwaysConsistent() {
 function mockAlwaysInconsistent() {
   mocks.workerPostMessage.mockImplementation((msg: unknown) => {
     const req = msg as { id: number; method: string };
-    if (req.method === "loadTripleBuffer") {
-      simulateWorkerMessage({ id: req.id, result: true });
+    if (req.method === "sync") {
+      simulateWorkerMessage({ id: req.id, result: fakeSync(req) });
     } else if (req.method === "classification") {
       simulateWorkerMessage({ id: req.id, result: true });
     } else if (req.method === "consistency") {
@@ -161,7 +164,7 @@ function mockEntailmentViaProbe(consistencyThreshold: number, isSatisfiableClass
   let lastTripleCount = 0;
   mocks.workerPostMessage.mockImplementation((msg: unknown) => {
     const req = msg as { id: number; method: string; args: unknown[] };
-    if (req.method === "loadTripleBuffer") {
+    if (req.method === "sync") {
       lastTripleCount = Math.floor((req.args[0] as ArrayBuffer).byteLength / 12);
       simulateWorkerMessage({ id: req.id, result: true });
     } else if (req.method === "classification") {
@@ -414,8 +417,8 @@ describe("RdfReasoner — explainEntailment", () => {
     const inferredBuf = buildCombinedBuffer([quad(A, subClassOf, C, defaultGraph())]);
     mocks.workerPostMessage.mockImplementation((msg: unknown) => {
       const req = msg as { id: number; method: string };
-      if (req.method === "loadTripleBuffer") {
-        simulateWorkerMessage({ id: req.id, result: true });
+      if (req.method === "sync") {
+        simulateWorkerMessage({ id: req.id, result: fakeSync(req) });
       } else if (req.method === "classification") {
         simulateWorkerMessage({ id: req.id, result: true });
       } else if (req.method === "getInferredTripleBuffer") {
@@ -997,8 +1000,8 @@ describe("RdfReasoner — explainEntailment", () => {
 
     mocks.workerPostMessage.mockImplementation((msg: unknown) => {
       const req = msg as { id: number; method: string; args?: unknown[] };
-      if (req.method === "loadTripleBuffer") {
-        simulateWorkerMessage({ id: req.id, result: true });
+      if (req.method === "sync") {
+        simulateWorkerMessage({ id: req.id, result: fakeSync(req) });
       } else if (req.method === "classification") {
         simulateWorkerMessage({ id: req.id, result: true });
       } else if (req.method === "getInferredTripleBuffer") {

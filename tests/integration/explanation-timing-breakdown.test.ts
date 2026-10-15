@@ -12,7 +12,7 @@ import { Store, DataFactory } from "n3";
 import { RdfReasoner, INFERRED_GRAPH_IRI, EXPLANATION_GRAPH_IRI } from "../../ts/index.js";
 import { encodeToBuffers, decodeBuffers, computeStoreFingerprint } from "../../ts/intern.js";
 import { serializeExplanations } from "../../ts/explanationSerializer.js";
-import { injectExplanationsFromBuffer, injectInferredFromBuffer, encodeStoreToBuffers, computeStoreFingerprintDirect } from "../../ts/n3Inject.js";
+import { injectExplanationsFromBuffer, injectInferredFromBuffer, encodeStoreToBuffers } from "../../ts/n3Inject.js";
 import { loadFixture } from "../helpers/fixture.js";
 
 const wasmPath = new URL("../../dist/konclude.wasm", import.meta.url).pathname;
@@ -60,15 +60,10 @@ describe.skipIf(!wasmExists)("Full pipeline timing breakdown (roberts-family)", 
       encodeStoreToBuffers(store);
     }));
 
-    // === INPUT: new fingerprint (no getQuads) ===
-    record("IN_new_fingerprint", timeIt(() => {
-      computeStoreFingerprintDirect(store);
-    }));
-
     // === WASM: load + realize ===
     record("WASM_load+realize", await timeItAsync(async () => {
-      await (r as any)._call("loadTripleBuffer",
-        [encoded.tripleBuffer, encoded.strTableBuffer, true],
+      await (r as any)._call("sync",
+        [encoded.tripleBuffer, encoded.strTableBuffer],
         [encoded.tripleBuffer, encoded.strTableBuffer]);
       await (r as any)._call("realization", []);
     }));
@@ -122,7 +117,7 @@ describe.skipIf(!wasmExists)("Full pipeline timing breakdown (roberts-family)", 
 
     const wasmTime = t["WASM_load+realize"];
     const oldInputCost = t["IN_old_getQuads+encode"] + t["IN_old_getQuads+fingerprint"];
-    const newInputCost = t["IN_new_encode"] + t["IN_new_fingerprint"];
+    const newInputCost = t["IN_new_encode"];
     const oldOutputCost = t["OUT_getBuffer_expl"] + t["OUT_old_decode"] + t["OUT_old_addQuad_inferred"] + t["OUT_old_serializeExpl"];
     const newOutputCost = t["OUT_getBuffer_expl"] + t["OUT_new_injectInferred"] + t["OUT_new_injectExpl"];
     const oldTotal = oldInputCost + wasmTime + oldOutputCost;
