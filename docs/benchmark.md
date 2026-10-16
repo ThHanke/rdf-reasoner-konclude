@@ -2,11 +2,11 @@
 
 ```
 Date:      2026-10-16
-Package:   rdf-reasoner-konclude 0.8.0  (git 13fcca9, dirty tree; vendor/konclude 056334ad)
+Package:   rdf-reasoner-konclude 0.8.0  (git b928e4c; vendor/konclude 056334ad)
 WASM:      dist/konclude.wasm sha256 a8e8134d27e1; pthread pool 32; Konclude processors 8
 Native:    Konclude v0.7.0-1138 - 500e11d9 (image 49374483e311); threads 8 (-w AUTO)
 HermiT:    1.9.10 (image 731aaa3c781f)
-Host:      Intel(R) Xeon(R) Silver 4216 CPU @ 2.10GHz, 8 cores, 41 GB; load average at start 6.59
+Host:      Intel(R) Xeon(R) Silver 4216 CPU @ 2.10GHz, 8 cores, 41 GB; load average at start 5.35
 Runtime:   Node v25.1.0
 ```
 
@@ -20,8 +20,8 @@ Markers: † spread (max−min)/median above 10%; ‡ fewer than 5 samples (indi
 
 | Ontology | Exp. | Triples | Konclude total | HermiT reason ⁴ | WASM ingest→result | WASM / Konclude |
 |---|---|---|---|---|---|---|
-| LUBM schema | SHI | 307 | 60 ms [59–69]†‡ | 56 ms | 311 ms [309–332] | ~5.2× |
-| GALEN | SHIF | 30817 | 321 ms [315–326]‡ | 4661 ms | 1589 ms [1570–1643] | ~5.0× |
+| LUBM schema | SHI | 307 | 67 ms [63–72]†‡ | 55 ms | 297 ms [279–330]† | ~4.4× |
+| GALEN | SHIF | 30817 | 322 ms [306–325]‡ | 4750 ms | 1594 ms [1575–1627] | ~5.0× |
 
 #### §1b ABox ontologies (realization) — classification path, and full role-closure realization
 
@@ -29,17 +29,17 @@ Upstream Konclude's `realization` computes only concept realization by default a
 
 | Ontology | Exp. | Triples | Konclude realization (types only) | Konclude excl. realization ⁷ | WASM classification path (ingest→result) | WASM / Konclude (classification path) | Konclude realization + role instances ⁸ | WASM full realization (ingest→result, incl. role closure) | WASM / Konclude (full) |
 |---|---|---|---|---|---|---|---|---|---|
-| Roberts family | SROIQ | 3866 | 2134 ms [2082–2169]‡ | 1841 ms | 1867 ms [1831–1880]‡ | ~1.0× | 38118 ms [37754–38363]‡ | 27490 ms [26657–27636]‡ | ~0.7× |
-| LUBM schema + data | SHI | 100850 | 1238 ms [1234–1243]‡ | 1235 ms | 2892 ms [2863–2918] | ~2.3× | 1245 ms [1240–1246]‡ | 3579 ms [3460–3766] | ~2.9× |
+| Roberts family | SROIQ | 3866 | 2223 ms [2077–2282]‡ | 1909 ms | 1854 ms [1836–1891]‡ | ~1.0× | 40038 ms [32229–49872]†‡ | 27471 ms [26645–28459]‡ | ~0.7× |
+| LUBM schema + data | SHI | 100850 | 1221 ms [1200–1255]‡ | 1219 ms | 2870 ms [2856–2990] | ~2.4× | 1237 ms [1227–1255]‡ | 3550 ms [3492–3785] | ~2.9× |
 
 #### §1c WASM phase breakdown (breakdown only — do not compare phases across releases)
 
 | Ontology | Op | init (one-off) | ingest (encode+sync) | reasoning | output decode | ingest→result | TS layer total ³ |
 |---|---|---|---|---|---|---|---|
-| LUBM schema | classification | 901 ms [895–1368]† | 1 ms [1–2]† | 309 ms [305–328] | 2 ms [1–2]† | 311 ms [309–332] | 452 ms [445–475] |
-| GALEN | classification | 904 ms [855–1062]† | 54 ms [53–61]† | 1511 ms [1497–1569] | 20 ms [19–23]† | 1589 ms [1570–1643] | 1971 ms [1959–2000] |
-| Roberts family | realization | 914 ms [897–1383]†‡ | 7 ms [6–19]†‡ | 27037 ms [26261–27228]‡ | 401 ms [389–434]†‡ | 27490 ms [26657–27636]‡ | 30133 ms [29850–33112]†‡ |
-| LUBM schema + data | realization | 905 ms [895–970] | 174 ms [170–187] | 2837 ms [2754–2996] | 550 ms [536–583] | 3579 ms [3460–3766] | 4280 ms [4257–4361] |
+| LUBM schema | classification | 927 ms [872–1357]† | 1 ms [1–2]† | 294 ms [277–327]† | 2 ms [1–2]† | 297 ms [279–330]† | 456 ms [446–467] |
+| GALEN | classification | 916 ms [887–1044]† | 56 ms [54–63]† | 1516 ms [1501–1550] | 20 ms [19–21] | 1594 ms [1575–1627] | 1946 ms [1920–1967] |
+| Roberts family | realization | 975 ms [937–1382]†‡ | 7 ms [7–28]†‡ | 27100 ms [26236–27997]‡ | 403 ms [364–435]†‡ | 27471 ms [26645–28459]‡ | 29557 ms [29548–29572]‡ |
+| LUBM schema + data | realization | 934 ms [846–1098]† | 180 ms [173–189] | 2829 ms [2789–3006] | 541 ms [525–591]† | 3550 ms [3492–3785] | 4327 ms [4241–4371] |
 
 **Reading these numbers:**
 
@@ -95,7 +95,7 @@ Native Konclude has no output path for role assertions, sameAs, or justification
 |---|---|---|---|---|---|---|---|---|
 | LUBM schema | SHI | classification | 0 | 0 | 0 | 44 | +0 (×1.0 total) | 55 |
 | GALEN | SHIF | classification | 0 | 0 | 0 | 3287 | +0 (×1.0 total) | 4752 |
-| Roberts family | SROIQ | realization | 348562 | 0 | 348648 | 4552 | +348648 (×77.6 total) | 5900 |
+| Roberts family | SROIQ | realization | 348562 | 0 | 348648 | 4552 | +348648 (×77.6 total) | 5905 |
 | LUBM schema + data | SHI | realization | 98497 | 0 | 98541 | 39981 | +98541 (×3.5 total) | 73984 |
 
 **Capabilities notes:**
@@ -113,10 +113,10 @@ Native Konclude has no output path for role assertions, sameAs, or justification
 
 | Ontology | Exp. | cold (first call) | unchanged content | identical content, new Store | one axiom added (full rebuild) |
 |---|---|---|---|---|---|
-| LUBM schema | SHI | 485 ms [458–498] | 4 ms [3–6]† | 7 ms [7–18]† | 141 ms [119–167]† |
-| GALEN | SHIF | 1993 ms [1935–2035] | 89 ms [82–94]† | 140 ms [137–145] | 1428 ms [1425–1468] |
-| Roberts family | SROIQ | 30275 ms [29608–37915]†‡ | 21 ms [17–37]†‡ | 1614 ms [1574–1710]‡ | 27597 ms [27361–30692]†‡ |
-| LUBM schema + data | SHI | 4476 ms [4385–4561] | 279 ms [275–282] | 1384 ms [1376–1394] | 3653 ms [3638–3697] |
+| LUBM schema | SHI | 489 ms [437–521]† | 4 ms [3–6]† | 10 ms [7–12]† | 157 ms [130–160]† |
+| GALEN | SHIF | 2025 ms [1980–2034] | 88 ms [75–89]† | 136 ms [133–139] | 1429 ms [1427–1444] |
+| Roberts family | SROIQ | 29388 ms [29336–42890]†‡ | 17 ms [14–36]†‡ | 1706 ms [1635–1760]‡ | 105520 ms [28592–155490]†‡ |
+| LUBM schema + data | SHI | 4414 ms [4296–4486] | 277 ms [268–292] | 1383 ms [1371–1394] | 3746 ms [3661–3798] |
 
 **Scenario definitions:**
 - *cold*: first public call on a fresh `RdfReasoner` in a fresh process (includes Worker and WASM start). Each repetition of the four scenarios is its own process.
