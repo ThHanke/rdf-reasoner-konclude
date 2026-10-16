@@ -10,6 +10,7 @@ Options: `--quick`, `--case "<name>"` (one case; names in `cases.mjs`). The run 
 |---|---|
 | WASM ingest→result | encode + `syncTripleBuffer()` + reasoning (incl. lazy parse/mapping) + output decode. Module start (`init`) is one-off and excluded. |
 | Konclude total | Konclude's own "Total processing time" in the container: OWL/XML parse + reasoning + result serialisation. Container start excluded. |
+| Konclude + role closure | ABox cases only: ONE `sparqlfile` run with a `SELECT ?s ?o WHERE { ?s <p> ?o }` per declared object property (native `realization` computes the role closure but never serializes it; SPARQL is the only way to get it). Wall clock of `docker run` minus container start. Counterpart of WASM full `realization()`; data properties are not queried. |
 | TS layer total | one full public `RdfReasoner` call in a fresh process, including Worker and module start. |
 | warm scenarios | one reasoner: unchanged content, identical content in a new Store, one added axiom. Kernel counters (`syncStats`) are asserted for each. |
 

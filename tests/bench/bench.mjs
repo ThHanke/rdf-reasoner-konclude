@@ -168,16 +168,18 @@ async function main() {
   }
 
   console.log('\n#### §1b ABox ontologies (realization) — classification path, and full role-closure realization\n');
-  console.log('Native realization outputs rdf:type only and never computes role assertions; WASM `realization()` materialises the full role closure. Only the **classification path** is like-for-like: Konclude total minus its realization phase vs WASM `classification()` on the same input. The full-realization column is reported for reference and is **not comparable**.\n');
-  console.log('| Ontology | Exp. | Triples | Konclude total (types only) | Konclude excl. realization ⁷ | WASM classification path (ingest→result) | WASM / Konclude (classification path) | WASM full realization (ingest→result, incl. role closure) |');
-  console.log('|---|---|---|---|---|---|---|---|');
+  console.log('Native `realization` output contains rdf:type only: Konclude computes the role closure internally but never serializes it. The closure is retrievable only with one SPARQL query per object property, so *Konclude + role closure* runs ONE `sparqlfile` invocation with a `SELECT ?s ?o WHERE { ?s <p> ?o }` for every declared object property (parse + classification + realization + all queries + XML serialisation; wall clock minus container start ⁸). This is the only native route that returns the closure, but it resolves roles lazily per individual (`OPSANSWERCOMPLEXQUERY`), whereas WASM `realization()` runs the bulk role-realization step (`OPSROLEREALIZE`) once; the full-realization ratio therefore compares two different native code paths, not a slowdown or speedup of the same algorithm. An OWLlink `GetFlattenedObjectPropertyTargets` request does not trigger the bulk step (it returns an empty set for a Roberts individual that has relatives). The classification path compares Konclude total minus its realization phase with WASM `classification()`.\n');
+  console.log('| Ontology | Exp. | Triples | Konclude realization (types only) | Konclude excl. realization ⁷ | WASM classification path (ingest→result) | WASM / Konclude (classification path) | Konclude + role closure via SPARQL ⁸ | WASM full realization (ingest→result, incl. role closure) | WASM / Konclude (full) |');
+  console.log('|---|---|---|---|---|---|---|---|---|---|');
   for (const c of wasmCases.filter(c => c.abox)) {
     const nc = nativeByName[c.name], wc = wasmByName[c.name];
     const nTot = isOk(nc) ? st(nc.result, 'total') : null;
     const nExcl = nTot && nc.result.realizeMs != null ? nTot.median - nc.result.realizeMs : null;
+    const nRole = nc?.result?.roleClosure?.stats ?? null;
+    const roleCell = nRole ? fmtStat(nRole) : (nc?.result?.roleClosure?.error ? 'FAIL' : '—');
     const wCls = isOk(wc) ? st(wc.result, 'classifyOnlyIngestToResult') : null;
     const wFull = isOk(wc) ? st(wc.result, 'ingestToResult') : null;
-    console.log(`| ${c.name} | ${c.expressiveness} | ${wc?.tripleCount ?? '—'} | ${nc?.result?.error ? 'N/A' : fmtStat(nTot)} | ${nExcl != null ? nExcl + ' ms' : '—'} | ${wc?.result?.error ? 'FAIL' : fmtStat(wCls)} | ${ratio(wCls?.median, nExcl)} | ${wc?.result?.error ? 'FAIL' : fmtStat(wFull)} |`);
+    console.log(`| ${c.name} | ${c.expressiveness} | ${wc?.tripleCount ?? '—'} | ${nc?.result?.error ? 'N/A' : fmtStat(nTot)} | ${nExcl != null ? nExcl + ' ms' : '—'} | ${wc?.result?.error ? 'FAIL' : fmtStat(wCls)} | ${ratio(wCls?.median, nExcl)} | ${roleCell} | ${wc?.result?.error ? 'FAIL' : fmtStat(wFull)} | ${ratio(wFull?.median, nRole?.median)} |`);
   }
 
   console.log('\n#### §1c WASM phase breakdown (breakdown only — do not compare phases across releases)\n');
@@ -196,6 +198,7 @@ async function main() {
   console.log('- Single host, shared machine; numbers carry the host load average from the header. A difference smaller than the printed spread is not evidence of a difference.');
   console.log('- ³ "TS layer total" = one full public `RdfReasoner` call in a fresh process: Worker + module start, encode, sync, reasoning, output, `store.addQuad`. It includes startup that §1a/§1b exclude.');
   console.log('- ⁴ HermiT (via ROBOT/ODK) is a different reasoner run in Docker; "reason" = consistency + classification + axiom generation, excluding JVM start and parsing.');
+  console.log('- ⁸ Konclude + role closure: single `sparqlfile` run, one `SELECT ?s ?o WHERE { ?s <p> ?o }` per declared object property (data properties are not queried), output discarded after serialisation; wall clock of `docker run` minus the median container-start time (a bare `docker run` of the image). Not Konclude\'s own timer: `sparqlfile` prints no total.');
   console.log('- ⁷ Konclude excl. realization = Konclude total − its `Finished (lazy) realization` phase; an approximation of parse + classification + serialisation.');
   console.log('- The earlier "WASM classify" column (2026-09-18 and before) excluded parse/mapping, which then lived in "load"; v0.8.0 performs that work lazily inside reasoning. Old and new phase columns are therefore not comparable. Details and the A/B measurement: `docs/solutions/performance-issues/benchmark-phase-boundary-shift-2026-10.md`.');
   console.log('- WASM runs: warm-up and run counts are per case (`tests/bench/cases.mjs`); slow cases use fewer runs and are marked ‡.');

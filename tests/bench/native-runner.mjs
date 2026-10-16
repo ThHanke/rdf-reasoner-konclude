@@ -2,7 +2,7 @@
 // Runs native Konclude via Docker, parses timing from log output.
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { summarize } from './stats.mjs';
@@ -213,14 +213,67 @@ export function benchOne(owlFile, mountDir, runs = 3, command = 'classification'
   return result;
 }
 
+
+// ── Role closure via SPARQL ──────────────────────────────────────────────────
+// Native `realization` computes the role closure internally but its OWL/XML output never lists it; the only way to retrieve it
+// is one SPARQL `SELECT ?s ?o WHERE { ?s <p> ?o }` per property. This measures that retrieval end to end in ONE `sparqlfile`
+// invocation (parse + classification + realization + all property queries + XML serialisation) so it can be compared with WASM
+// `realization()`, which returns the closure. Time = wall clock around `docker run` minus the container start baseline.
+const RE_IRI_ATTR = /<ObjectProperty (?:IRI|abbreviatedIRI)="([^"]+)"/g;
+
+// Object properties declared in an OWL/XML file (IRIs relative to the document prefix ":" are resolved with `base`).
+export function owlXmlObjectProperties(file, base) {
+  const xml = readFileSync(file, 'utf8');
+  return [...new Set([...xml.matchAll(RE_IRI_ATTR)].map(m => m[1]))].map(i => (i.startsWith('#') ? base + i : i.replace(/^:/, base + '#'))).sort();
+}
+
+// Object properties typed owl:ObjectProperty in an N-Triples file.
+export function ntObjectProperties(file) {
+  const re = /^<([^>]+)> <http:\/\/www\.w3\.org\/1999\/02\/22-rdf-syntax-ns#type> <http:\/\/www\.w3\.org\/2002\/07\/owl#ObjectProperty>/;
+  return [...new Set(readFileSync(file, 'utf8').split('\n').map(l => l.match(re)?.[1]).filter(Boolean))].sort();
+}
+
+function containerStartMs() {
+  const t = [];
+  for (let i = 0; i < 3; i++) {
+    const t0 = performance.now();
+    spawnSync('docker', ['run', '--rm', 'konclude/konclude:latest'], { encoding: 'utf8', timeout: 60000 });
+    t.push(Math.round(performance.now() - t0));
+  }
+  return median(t);
+}
+
+export function roleClosureOne(owlFile, mountDir, props, runs = 3) {
+  if (!checkDocker()) return { error: 'docker unavailable' };
+  if (!props.length) return { error: 'no object properties' };
+  const work = mkdtempSync(join(tmpdir(), 'konclude-roles-'));
+  writeFileSync(join(work, 'q.sparql'), props.map(p => `SELECT ?s ?o WHERE { ?s <${p}> ?o }`).join('\n\n') + '\n');
+  const startMs = containerStartMs();
+  const walls = [];
+  for (let i = 0; i < runs; i++) {
+    const t0 = performance.now();
+    const r = spawnSync('docker', [
+      'run', '--rm', '-v', `${mountDir}:/tests:ro`, '-v', `${work}:/work`, 'konclude/konclude:latest',
+      'sparqlfile', '-w', 'AUTO', '-i', `/tests/${owlFile}`, '-s', '/work/q.sparql', '-o', '/work/out.xml',
+    ], { encoding: 'utf8', timeout: 1_800_000 });
+    const wall = Math.round(performance.now() - t0);
+    if (r.error || r.status !== 0) { rmSync(work, { recursive: true, force: true }); return { error: `sparqlfile failed: ${r.error?.message ?? r.status}` }; }
+    walls.push(Math.max(0, wall - startMs));
+  }
+  rmSync(work, { recursive: true, force: true });
+  return { properties: props.length, containerStartMs: startMs, stats: summarize(walls) };
+}
+
 export const NATIVE_CASES = [
   { name: 'LUBM schema',    owlFile: 'lubm-univ-bench.owl.xml',      dir: TESTS_DIR,    expressiveness: 'SHI',    command: 'classification' },
   { name: 'GALEN',          owlFile: 'galen.owl.xml',                 dir: TESTS_DIR,    expressiveness: 'SHIF',   command: 'classification' },
   // Roberts has ABox individuals → realization (which includes classification internally)
-  { name: 'Roberts family', owlFile: 'roberts-family-full-D.owl.xml', dir: TESTS_DIR,    expressiveness: 'SROIQ',  command: 'realization' },
+  { name: 'Roberts family', owlFile: 'roberts-family-full-D.owl.xml', dir: TESTS_DIR,    expressiveness: 'SROIQ',  command: 'realization',
+    roleProps: () => owlXmlObjectProperties(join(TESTS_DIR, 'roberts-family-full-D.owl.xml'), 'http://www.co-ode.org/roberts/family-tree.owl') },
   // Combined TBox+ABox as RDF/XML — generated from lubm.nt + lubm-data.nt via rdflib
   { name: 'LUBM schema + data', owlFile: 'lubm-combined.rdf.xml',    dir: FIXTURES_DIR, expressiveness: 'SHI',
-    command: 'realization', generate: ensureLubmCombined },
+    command: 'realization', generate: ensureLubmCombined,
+    roleProps: () => ntObjectProperties(join(FIXTURES_DIR, 'lubm.nt')) },
 ];
 
 export async function benchAll(cases = NATIVE_CASES, runs = 3) {
@@ -240,6 +293,10 @@ export async function benchAll(cases = NATIVE_CASES, runs = 3) {
     }
 
     const result = benchOne(c.owlFile, dir, runs, c.command ?? 'classification');
+    if (!result.error && c.roleProps) {
+      process.stderr.write('role closure via SPARQL... ');
+      result.roleClosure = roleClosureOne(c.owlFile, dir, c.roleProps(), runs);
+    }
     if (result.error) {
       process.stderr.write(`ERROR: ${result.error}\n`);
     } else {
