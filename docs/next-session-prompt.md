@@ -14,7 +14,7 @@ Prompt cache expires after 5 min idle: background anything >1 min (setsid nohup 
 1. Remaining ~46 MB/call and the one-time call-2 step (top growing stacks now: task pool blocks acquired in CCalculationTableauCompletionTaskHandleAlgorithm::handleTask, realizer getSatisfiableCalculationJob ~30 MB, marker individual node hash). Use `HEAPDIFF_RAW=1 scripts/heap-diff.py` for stacks, exact counters for sizes. Recipe: `REPRO_MEM=1 REPRO_FLUSH=1 REPRO_PROF=dir LD_PRELOAD=libjemalloc.so.2 MALLOC_CONF=prof:true,lg_prof_sample:17 setarch -R build-native/konclude_repro --timeout 900 --seq "m:F,..."`, then `scripts/heap-diff.py OLD NEW BIN` (HEAPDIFF_RAW=1 for stacks).
 2. Step-time variance 17-97 s: seeded deterministic scheduler (`REPRO_SERIAL=1 REPRO_SCHED_SEED=n REPRO_HASH_SEED=0`).
 3. Still open: `make repro-wasm` oracle check; WASM 4 GiB heap exhaustion / stall net; ~100x slowdown vs upstream; MALLOC_PERTURB_ sweep for other uninitialized reads.
-4. (done) native bulk role realization timed: `docs/solutions/performance-issues/native-bulk-role-realization-timing-2026-10.md` (same kernel -O1: 40-49 s; WASM 27 s; lazy SPARQL 91-354 s). Optional: an -O2 native build for a release-quality number.
+4. (done) native bulk role realization timed against UNMODIFIED Konclude via config key `RoleInstances=true`: 38.1 s vs WASM 27.5 s on Roberts (`docs/solutions/performance-issues/native-bulk-role-realization-timing-2026-10.md`).
 
 ## Resolved (no further action)
 - Worker-recycle slow call: not recycle-related (`tests/bench/recycle-probe.mjs`; see `docs/solutions/performance-issues/ts-runner-in-process-slow-runs-2026-10.md`). Same variance as item 2.

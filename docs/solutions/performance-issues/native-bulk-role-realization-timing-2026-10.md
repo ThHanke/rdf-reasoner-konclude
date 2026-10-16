@@ -1,37 +1,38 @@
 ---
-title: Native timing of the bulk role-realization step (same kernel, no WASM)
+title: Upstream Konclude can run the bulk role-realization step; timing vs WASM
 date: 2026-10-16
 module: tests/bench
 problem_type: performance
-tags: [benchmark, role-closure, OPSROLEREALIZE, native, roberts]
+tags: [benchmark, role-closure, OPSROLEREALIZE, native, roberts, konclude-config]
 ---
 
-# Native bulk role realization vs the lazy SPARQL path
+# Upstream Konclude's bulk role realization is a config switch
 
-## Question
+## Finding
 
-`docs/benchmark.md` §1b compares WASM `realization()` (bulk `OPSROLEREALIZE`, full role closure) with upstream Konclude answering one SPARQL query per property (lazy, per individual). Those are two different native code paths. What does the bulk step cost natively?
+`CRealizeQuery` reads `Konclude.Calculation.Realization.RealizePrecomputation.RoleInstances` (default **false**). With it true, the unmodified `konclude/konclude` image's `realization` command runs the bulk role-realization step (`OPSROLEREALIZE`) that this package's WASM `realization()` always requests. Its OWL/XML output still lists class assertions only, but the work is done and shows in "Total processing time".
 
-## Method
-
-`build-native/konclude_repro` links the same patched kernel and the same `src/KoncludeReasoner.cpp` as the WASM build, so `realization()` natively requests `OPSROLEREALIZE` exactly like WASM. Three fresh processes on `tests/fixtures/roberts-family.nt`, idle host (load 0.05), 8 threads:
-
-```bash
-build-native/konclude_repro --mode reuse --runs 1 --timeout 600 --out DIR tests/fixtures/roberts-family.nt
+```xml
+<RequestMessage xmlns="http://www.owllink.org/owllink-xml#">
+  <Set key='Konclude.Calculation.Realization.RealizePrecomputation.RoleInstances'><Literal>true</Literal></Set>
+</RequestMessage>
 ```
 
-## Result
+```bash
+docker run --rm -v DIR:/t konclude/konclude:latest realization -v -w 8 -c /t/cfg.xml -i /t/ont.owl.xml -o /t/out.xml
+```
 
-| Path | Roberts wall time |
-| --- | --- |
-| Native, same kernel, bulk `OPSROLEREALIZE`, whole process (load + realization + dump of 353 279 triples) | 44.9 / 48.6 / 40.3 s |
-| WASM `realization()` ingest→result | 27.5 s [26.7–27.6] |
-| Upstream Konclude, one `sparqlfile` run, 80 property queries (lazy per individual) | 91–215 s under load, ~354 s in a standalone run |
+## Numbers (idle host, 8 threads, 3 runs, Konclude's own total)
 
-Same output size (353 279 vs WASM 353 200 triples, equal modulo equivalent roles).
+| Ontology | Konclude default (types) | Konclude `RoleInstances=true` | WASM full realization |
+| --- | --- | --- | --- |
+| Roberts family | 2198 ms | 38118 ms [37754–38363] | 27490 ms |
+| LUBM schema + data | 1240 ms | 1245 ms [1240–1246] | 3579 ms |
 
-## Reading
+WASM is ~1.4x faster than unmodified native on Roberts and ~2.9x slower on LUBM+data, where the role step is negligible and the fixed WASM start cost dominates.
 
-- The bulk step is the cheaper way to get the closure: about 2-8x faster than the lazy SPARQL path, in native as well as in WASM.
-- Native here is built `-g3 -O1` (`native/CMakeLists.txt`) with debug-friendly flags and includes process start and the result dump, so it is not a release-quality native number; it shows the order of magnitude, not WASM-vs-native speed. The WASM 27 s excludes module start.
-- The bulk step is not reachable from the upstream CLI, SPARQL or `GetFlattenedObjectPropertyTargets`; this package requests it directly.
+## Dead ends (and why they were misleading)
+
+- A SPARQL query per object property in one `sparqlfile` run does return the closure, but it takes the lazy per-individual route (`OPSANSWERCOMPLEXQUERY`, "N realization requests"): 91-354 s on Roberts depending on host load. Real Konclude, wrong code path for comparison.
+- OWLlink `GetFlattenedObjectPropertyTargets` for one Roberts individual returned an empty set.
+- The native `konclude_repro` harness (same patched kernel, `-g3 -O1`) took 40-49 s for the same step, but it is a modified kernel, so it is not used for the comparison.

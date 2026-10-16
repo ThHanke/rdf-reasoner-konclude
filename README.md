@@ -410,18 +410,20 @@ const related = store.getQuads(
 );
 ```
 
-**Why this matters.** Native Konclude computes role assertions lazily, one individual and one
-property at a time, to answer a query. Its command-line `realization` output lists class
-assertions only, and the only way to read roles out of it is one SPARQL query per property.
-That is the right design for answering a few targeted questions about a huge ABox. It is the
-wrong one when you want the inferred graph as data, for example to load it into a triple store,
-to feed a UI, or to join against it without a reasoner in the loop. This package runs
-Konclude's bulk role-realization step once and hands back the finished closure as RDF quads.
+**Why this matters.** Upstream Konclude is built to answer queries. Its command-line `realization`
+computes class assertions only: the bulk role-realization step is off by default
+(`Konclude.Calculation.Realization.RealizePrecomputation.RoleInstances=false`), roles are
+otherwise resolved lazily per individual and property when a query asks, and even with the
+step enabled its OWL/XML output lists class assertions only. That is the right design for a
+few targeted questions about a huge ABox. It is the wrong one when you want the inferred graph
+as data, for example to load it into a triple store, to feed a UI, or to join against it
+without a reasoner in the loop. This package always runs the bulk role-realization step once
+and hands back the finished closure as RDF quads.
 
 On the Roberts family ontology (405 individuals, 3 866 input triples) the result holds about
-350 000 inferred triples, 99% of them role assertions, in about 27 s. Fetching the same
-information from native Konclude with one SPARQL query per property took about 90-215 s
-(`docs/benchmark.md` §1b explains why the two timings are not the same algorithm).
+350 000 inferred triples, 99% of them role assertions, in about 27 s. Unmodified native Konclude
+with the role step enabled needs about 38 s for the same reasoning (it cannot output the
+roles); `docs/benchmark.md` §1b has the comparison.
 
 **Things to know.**
 
