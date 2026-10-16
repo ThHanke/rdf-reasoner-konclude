@@ -374,3 +374,67 @@ test("classify(store): Roberts family ontology — key equivalentClass inference
     `Expected BloodRelation≡Person.\nGot ${result.length} inferred triples.`,
   ).toBe(true);
 });
+
+// ---------------------------------------------------------------------------
+// Worker recycle: changed content after a large heap terminates the Worker and starts a new one
+// (recycleHeapBytes: 1 forces it after the first call). Must work with a real browser Worker.
+// ---------------------------------------------------------------------------
+
+test("Worker recycle: changed content starts a fresh browser Worker and results stay correct", async ({
+  page,
+}) => {
+  const out = await page.evaluate(async () => {
+    const { RdfReasoner, INFERRED_GRAPH_IRI, DataFactory, Store } = window;
+    const { namedNode, quad, defaultGraph } = DataFactory;
+
+    // Count real Worker constructions.
+    const RealWorker = globalThis.Worker;
+    let created = 0;
+    (globalThis as any).Worker = class extends RealWorker {
+      constructor(...args: any[]) { super(...(args as [any, any])); created++; }
+    };
+
+    const RDFS_SUB = namedNode("http://www.w3.org/2000/01/rdf-schema#subClassOf");
+    const OWL_CLASS = namedNode("http://www.w3.org/2002/07/owl#Class");
+    const OWL_EQUIV = namedNode("http://www.w3.org/2002/07/owl#equivalentClass");
+    const RDF_TYPE = namedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#type");
+    const ex = (n: string) => namedNode("http://example.org/" + n);
+
+    const store = new Store();
+    for (const c of ["Base", "Alias", "Child"]) store.addQuad(quad(ex(c), RDF_TYPE, OWL_CLASS, defaultGraph()));
+    store.addQuad(quad(ex("Alias"), OWL_EQUIV, ex("Base"), defaultGraph()));
+    store.addQuad(quad(ex("Child"), RDFS_SUB, ex("Base"), defaultGraph()));
+
+    const reasoner = new RdfReasoner({ recycleHeapBytes: 1 });
+    await reasoner.ready;
+    const inferred = () =>
+      store.getQuads(null, null, null, namedNode(INFERRED_GRAPH_IRI)).map((q: any) => `${q.subject.value}>${q.object.value}`);
+
+    await reasoner.classify(store);
+    const first = inferred();
+    const afterFirst = created;
+
+    // Changed content -> recycle path.
+    store.addQuad(quad(ex("Child2"), RDF_TYPE, OWL_CLASS, defaultGraph()));
+    store.addQuad(quad(ex("Child2"), RDFS_SUB, ex("Base"), defaultGraph()));
+    await reasoner.classify(store);
+    const second = inferred();
+    const afterSecond = created;
+
+    // Unchanged content -> no further Worker.
+    await reasoner.classify(store);
+    const afterThird = created;
+
+    reasoner.terminate();
+    (globalThis as any).Worker = RealWorker;
+    return { first, second, afterFirst, afterSecond, afterThird };
+  });
+
+  const ex = "http://example.org/";
+  expect(out.first).toContain(`${ex}Child>${ex}Alias`);
+  expect(out.second).toContain(`${ex}Child2>${ex}Alias`);
+  expect(out.second).toContain(`${ex}Child>${ex}Alias`);
+  expect(out.afterFirst).toBe(1);
+  expect(out.afterSecond).toBe(2); // exactly one recycle
+  expect(out.afterThird).toBe(2); // unchanged call does not recycle
+});
