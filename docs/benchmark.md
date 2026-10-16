@@ -1,12 +1,12 @@
 ## Benchmark Results
 
 ```
-Date:      2026-10-15
-Package:   rdf-reasoner-konclude 0.8.0  (git 1bd5942; vendor/konclude 056334ad)
+Date:      2026-10-16
+Package:   rdf-reasoner-konclude 0.8.0  (git 13fcca9, dirty tree; vendor/konclude 056334ad)
 WASM:      dist/konclude.wasm sha256 a8e8134d27e1; pthread pool 32; Konclude processors 8
 Native:    Konclude v0.7.0-1138 - 500e11d9 (image 49374483e311); threads 8 (-w AUTO)
 HermiT:    1.9.10 (image 731aaa3c781f)
-Host:      Intel(R) Xeon(R) Silver 4216 CPU @ 2.10GHz, 8 cores, 41 GB; load average at start 4.56
+Host:      Intel(R) Xeon(R) Silver 4216 CPU @ 2.10GHz, 8 cores, 41 GB; load average at start 6.59
 Runtime:   Node v25.1.0
 ```
 
@@ -20,34 +20,35 @@ Markers: † spread (max−min)/median above 10%; ‡ fewer than 5 samples (indi
 
 | Ontology | Exp. | Triples | Konclude total | HermiT reason ⁴ | WASM ingest→result | WASM / Konclude |
 |---|---|---|---|---|---|---|
-| LUBM schema | SHI | 307 | 67 ms [67–68]‡ | 57 ms | 298 ms [286–352]† | ~4.4× |
-| GALEN | SHIF | 30817 | 321 ms [317–321]‡ | 4692 ms | 1589 ms [1569–1649] | ~5.0× |
+| LUBM schema | SHI | 307 | 60 ms [59–69]†‡ | 56 ms | 311 ms [309–332] | ~5.2× |
+| GALEN | SHIF | 30817 | 321 ms [315–326]‡ | 4661 ms | 1589 ms [1570–1643] | ~5.0× |
 
 #### §1b ABox ontologies (realization) — classification path, and full role-closure realization
 
-Native realization outputs rdf:type only and never computes role assertions; WASM `realization()` materialises the full role closure. Only the **classification path** is like-for-like: Konclude total minus its realization phase vs WASM `classification()` on the same input. The full-realization column is reported for reference and is **not comparable**.
+Native `realization` output contains rdf:type only: Konclude computes the role closure internally but never serializes it. The closure is retrievable only with one SPARQL query per object property, so *Konclude + role closure* runs ONE `sparqlfile` invocation with a `SELECT ?s ?o WHERE { ?s <p> ?o }` for every declared object property (parse + classification + realization + all queries + XML serialisation; wall clock minus container start ⁸). This is the only native route that returns the closure, but it resolves roles lazily per individual (`OPSANSWERCOMPLEXQUERY`), whereas WASM `realization()` runs the bulk role-realization step (`OPSROLEREALIZE`) once; the full-realization ratio therefore compares two different native code paths, not a slowdown or speedup of the same algorithm. An OWLlink `GetFlattenedObjectPropertyTargets` request does not trigger the bulk step (it returns an empty set for a Roberts individual that has relatives). The classification path compares Konclude total minus its realization phase with WASM `classification()`.
 
-| Ontology | Exp. | Triples | Konclude total (types only) | Konclude excl. realization ⁷ | WASM classification path (ingest→result) | WASM / Konclude (classification path) | WASM full realization (ingest→result, incl. role closure) |
-|---|---|---|---|---|---|---|---|
-| Roberts family | SROIQ | 3866 | 2205 ms [2098–2222]‡ | 1899 ms | 1854 ms [1835–1907]‡ | ~1.0× | 26748 ms [26511–27000]‡ |
-| LUBM schema + data | SHI | 100850 | 1217 ms [1217–1229]‡ | 1215 ms | 2868 ms [2830–2894] | ~2.4× | 3508 ms [3477–3683] |
+| Ontology | Exp. | Triples | Konclude realization (types only) | Konclude excl. realization ⁷ | WASM classification path (ingest→result) | WASM / Konclude (classification path) | Konclude + role closure via SPARQL ⁸ | WASM full realization (ingest→result, incl. role closure) | WASM / Konclude (full) |
+|---|---|---|---|---|---|---|---|---|---|
+| Roberts family | SROIQ | 3866 | 2134 ms [2082–2169]‡ | 1841 ms | 1867 ms [1831–1880]‡ | ~1.0× | 134351 ms [90918–214824]†‡ | 27490 ms [26657–27636]‡ | ~0.2× |
+| LUBM schema + data | SHI | 100850 | 1238 ms [1234–1243]‡ | 1235 ms | 2892 ms [2863–2918] | ~2.3× | 1242 ms [1230–1274]‡ | 3579 ms [3460–3766] | ~2.9× |
 
 #### §1c WASM phase breakdown (breakdown only — do not compare phases across releases)
 
 | Ontology | Op | init (one-off) | ingest (encode+sync) | reasoning | output decode | ingest→result | TS layer total ³ |
 |---|---|---|---|---|---|---|---|
-| LUBM schema | classification | 946 ms [894–1280]† | 1 ms [1–2]† | 294 ms [284–349]† | 2 ms [1–2]† | 298 ms [286–352]† | 467 ms [464–482] |
-| GALEN | classification | 928 ms [892–999]† | 56 ms [55–61]† | 1511 ms [1487–1574] | 20 ms [19–23]† | 1589 ms [1569–1649] | 1940 ms [1905–1958] |
-| Roberts family | realization | 909 ms [898–1433]†‡ | 11 ms [6–16]†‡ | 26333 ms [26122–26539]‡ | 399 ms [382–449]†‡ | 26748 ms [26511–27000]‡ | 29471 ms [28942–29744]‡ |
-| LUBM schema + data | realization | 877 ms [783–900]† | 172 ms [170–188] | 2783 ms [2762–2957] | 541 ms [538–555] | 3508 ms [3477–3683] | 4307 ms [4222–4343] |
+| LUBM schema | classification | 901 ms [895–1368]† | 1 ms [1–2]† | 309 ms [305–328] | 2 ms [1–2]† | 311 ms [309–332] | 452 ms [445–475] |
+| GALEN | classification | 904 ms [855–1062]† | 54 ms [53–61]† | 1511 ms [1497–1569] | 20 ms [19–23]† | 1589 ms [1570–1643] | 1971 ms [1959–2000] |
+| Roberts family | realization | 914 ms [897–1383]†‡ | 7 ms [6–19]†‡ | 27037 ms [26261–27228]‡ | 401 ms [389–434]†‡ | 27490 ms [26657–27636]‡ | 30133 ms [29850–33112]†‡ |
+| LUBM schema + data | realization | 905 ms [895–970] | 174 ms [170–187] | 2837 ms [2754–2996] | 550 ms [536–583] | 3579 ms [3460–3766] | 4280 ms [4257–4361] |
 
 **Reading these numbers:**
 
 - Single host, shared machine; numbers carry the host load average from the header. A difference smaller than the printed spread is not evidence of a difference.
 - ³ "TS layer total" = one full public `RdfReasoner` call in a fresh process: Worker + module start, encode, sync, reasoning, output, `store.addQuad`. It includes startup that §1a/§1b exclude.
 - ⁴ HermiT (via ROBOT/ODK) is a different reasoner run in Docker; "reason" = consistency + classification + axiom generation, excluding JVM start and parsing.
+- ⁸ Konclude + role closure: single `sparqlfile` run, one `SELECT ?s ?o WHERE { ?s <p> ?o }` per declared object property (data properties are not queried), output discarded after serialisation; wall clock of `docker run` minus the median container-start time (a bare `docker run` of the image). Not Konclude's own timer: `sparqlfile` prints no total.
 - ⁷ Konclude excl. realization = Konclude total − its `Finished (lazy) realization` phase; an approximation of parse + classification + serialisation.
-- The earlier "WASM classify" column (2026-09-18 and before) excluded parse/mapping, which then lived in "load"; v0.8.0 performs that work lazily inside reasoning. Old and new phase columns are therefore not comparable. Details and the old-vs-new measurement: `docs/solutions/performance-issues/benchmark-phase-boundary-shift-2026-10.md`.
+- The earlier "WASM classify" column (2026-09-18 and before) excluded parse/mapping, which then lived in "load"; v0.8.0 performs that work lazily inside reasoning. Old and new phase columns are therefore not comparable. Details and the A/B measurement: `docs/solutions/performance-issues/benchmark-phase-boundary-shift-2026-10.md`.
 - WASM runs: warm-up and run counts are per case (`tests/bench/cases.mjs`); slow cases use fewer runs and are marked ‡.
 - Outliers are never filtered. The Roberts *one axiom added* scenario shows an intermittent very slow call (maximum ~220 s against ~31–34 s typical): after a call that grows the WASM heap past 2 GiB, the next changed-content call recycles the Worker (terminate and start a new one in the same process). This is an open follow-up (`docs/next-session-prompt.md` item 4; `docs/solutions/performance-issues/ts-runner-in-process-slow-runs-2026-10.md`). The TS-layer cold numbers run one fresh process per measurement and are not affected.
 - LUBM+data native input: NTriples merged to RDF/XML via rdflib (auto-generated, .gitignored).
@@ -94,7 +95,7 @@ Native Konclude has no output path for role assertions, sameAs, or justification
 |---|---|---|---|---|---|---|---|---|
 | LUBM schema | SHI | classification | 0 | 0 | 0 | 44 | +0 (×1.0 total) | 55 |
 | GALEN | SHIF | classification | 0 | 0 | 0 | 3287 | +0 (×1.0 total) | 4752 |
-| Roberts family | SROIQ | realization | 348562 | 0 | 348648 | 4552 | +348648 (×77.6 total) | 5902 |
+| Roberts family | SROIQ | realization | 348562 | 0 | 348648 | 4552 | +348648 (×77.6 total) | 5900 |
 | LUBM schema + data | SHI | realization | 98497 | 0 | 98541 | 39981 | +98541 (×3.5 total) | 73984 |
 
 **Capabilities notes:**
@@ -112,10 +113,10 @@ Native Konclude has no output path for role assertions, sameAs, or justification
 
 | Ontology | Exp. | cold (first call) | unchanged content | identical content, new Store | one axiom added (full rebuild) |
 |---|---|---|---|---|---|
-| LUBM schema | SHI | 462 ms [439–493]† | 5 ms [3–6]† | 10 ms [8–16]† | 136 ms [111–147]† |
-| GALEN | SHIF | 2000 ms [1963–2035] | 84 ms [74–88]† | 136 ms [132–138] | 1458 ms [1405–1465] |
-| Roberts family | SROIQ | 29090 ms [28479–29364]‡ | 17 ms [14–17]†‡ | 1602 ms [1592–1737]‡ | 33840 ms [31293–220383]†‡ |
-| LUBM schema + data | SHI | 4425 ms [4326–4484] | 278 ms [272–280] | 1368 ms [1367–1409] | 3695 ms [3641–3713] |
+| LUBM schema | SHI | 485 ms [458–498] | 4 ms [3–6]† | 7 ms [7–18]† | 141 ms [119–167]† |
+| GALEN | SHIF | 1993 ms [1935–2035] | 89 ms [82–94]† | 140 ms [137–145] | 1428 ms [1425–1468] |
+| Roberts family | SROIQ | 30275 ms [29608–37915]†‡ | 21 ms [17–37]†‡ | 1614 ms [1574–1710]‡ | 27597 ms [27361–30692]†‡ |
+| LUBM schema + data | SHI | 4476 ms [4385–4561] | 279 ms [275–282] | 1384 ms [1376–1394] | 3653 ms [3638–3697] |
 
 **Scenario definitions:**
 - *cold*: first public call on a fresh `RdfReasoner` in a fresh process (includes Worker and WASM start). Each repetition of the four scenarios is its own process.

@@ -21,6 +21,10 @@ Every public call now sends the store content to the kernel, which hashes each t
 
 See `docs/solutions/architecture-patterns/self-invalidating-reasoner-api-2026-10-10.md`.
 
+### Full role closure from `materialize()`
+
+`materialize()` returns the complete object-property closure (e.g. `isRelationOf`, `isBloodRelationOf`) together with the rdf:type assertions, in one call and as quads. It uses Konclude's bulk role-realization step (`OPSROLEREALIZE`), which the native CLI `realization` command never requests and whose result its OWL/XML output never lists; natively the closure is only reachable per property through SPARQL, which resolves roles lazily per individual (Roberts: ~6 min for 80 properties in one `sparqlfile` run, vs ~27 s here).
+
 ### Correctness fixes (Konclude kernel patches)
 
 - **Lossy / nondeterministic realization:** late role candidates are now queued for confirmation; an uninitialized "queued" flag in the realizer's role-instances item is initialized (documented in `docs/solutions/logic-errors/uninitialized-queued-flag-lossy-sequential-realization-2026-10-12.md`); transitive sub-role links are copied from the right orientation; trivial merging operation limit precedence fixed (`(*limit)--`); `CDependencyNode` pointers zero-initialized.
@@ -52,5 +56,5 @@ Per-call release of structures upstream Konclude leaves for process exit: task d
 - Remaining memory growth of ~46 MB per realization call in the native runs; WASM heap is still capped at 4 GiB (recycling mitigates).
 - Occasional unexplained step-time variance on identical input (one 20 s step among ~6 s steps in the sequential test).
 - Role closure picks one representative of equivalent roles (e.g. `hasChild` vs `isParentOf`); the choice is semantically equivalent but not stable across builds.
-- WASM runs ~7-17× slower than native Konclude on data-heavy ontologies; realization with full role closure is not comparable to native (native never emits role assertions).
+- WASM runs ~7-17× slower than native Konclude on data-heavy ontologies; WASM `realization()` materialises the full role closure, whereas native `Konclude realization` output lists class assertions only (role closure is computed internally but only retrievable per property via SPARQL), so full-realization timings are not comparable.
 - Incremental realization is not implemented (upstream is a stub); every changed-content call rebuilds.

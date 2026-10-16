@@ -374,6 +374,65 @@ To also receive the class hierarchy in the same call:
 await reasoner.materialize(store, { includeClassHierarchy: true });
 ```
 
+### ABox: materialize the full role closure
+
+`materialize(store)` does not stop at `rdf:type`. It also returns **every object-property
+assertion that follows from your ontology**: sub-properties, inverses, symmetric and
+transitive properties and property chains, all expanded to the
+complete set of triples. You get the whole closure in one call and read it with plain
+`store.getQuads(...)`.
+
+Example (`tests/fixtures/mini-family.nt`). The data only says:
+
+```turtle
+:alice :isMotherOf :eve .
+:bob   :isFatherOf :eve .
+```
+
+After `materialize(store)` the inferred graph also contains, among others:
+
+```turtle
+:eve :hasMother   :alice .      # inverse of isMotherOf
+:eve :hasParent   :alice .      # super-property of hasMother
+:eve :hasAncestor :alice .      # super-property of hasParent
+:alice :isAncestorOf :eve .     # inverse of hasAncestor
+:eve :isBloodRelationOf :alice . # transitive + symmetric
+:eve :isRelationOf :bob .       # super-property of isBloodRelationOf
+```
+
+```typescript
+await reasoner.materialize(store);
+const related = store.getQuads(
+  null,
+  "http://example.org/family#isRelationOf",
+  null,
+  INFERRED_GRAPH_IRI,
+);
+```
+
+**Why this matters.** Native Konclude computes role assertions lazily, one individual and one
+property at a time, to answer a query. Its command-line `realization` output lists class
+assertions only, and the only way to read roles out of it is one SPARQL query per property.
+That is the right design for answering a few targeted questions about a huge ABox. It is the
+wrong one when you want the inferred graph as data, for example to load it into a triple store,
+to feed a UI, or to join against it without a reasoner in the loop. This package runs
+Konclude's bulk role-realization step once and hands back the finished closure as RDF quads.
+
+On the Roberts family ontology (405 individuals, 3 866 input triples) the result holds about
+350 000 inferred triples, 99% of them role assertions, in about 27 s. Fetching the same
+information from native Konclude with one SPARQL query per property took about 90-215 s
+(`docs/benchmark.md` §1b explains why the two timings are not the same algorithm).
+
+**Things to know.**
+
+- The closure is quadratic in the number of individuals for transitive and
+  super-properties (`isRelationOf` relates every pair in a family). Expect large output on
+  big ABoxes; run `classify()` instead when you only need the class hierarchy.
+- When several roles are equivalent (for example `hasChild` and `isParentOf` declared as
+  inverses or equivalents), one representative per equivalence class is returned. Which one
+  can differ between builds, but the sets are semantically equivalent.
+- Data-property assertions are included too; `owl:differentFrom` entailments are not emitted.
+
 ### Property hierarchy
 
 Use `classifyProperties(store)` to infer `rdfs:subPropertyOf` entailments.
@@ -663,7 +722,8 @@ Verified working:
 ### ABox realization (`materialize`)
 
 `materialize(store)` infers `rdf:type` entailments for named individuals under the
-class hierarchy. Verified working on ontologies up to ~25 000 individuals (LUBM + data).
+class hierarchy and materializes the full object-property closure (see
+[ABox: materialize the full role closure](#abox-materialize-the-full-role-closure)). Verified working on ontologies up to ~25 000 individuals (LUBM + data).
 
 Input ABox axioms accepted:
 

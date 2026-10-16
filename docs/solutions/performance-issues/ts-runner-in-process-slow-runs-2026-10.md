@@ -35,6 +35,14 @@ With the same harness v0.7.2 returned two different inferred counts across eight
 
 The warm scenario run in a fresh process with ONE `RdfReasoner` still showed the effect on the call after a large one: Roberts "one axiom added" 29.8 s, 48.6 s (median), 218.7 s over three repetitions. After a call that pushed the WASM heap past `recycleHeapBytes` (2 GiB), a changed load makes the TS layer `terminate()` the Worker and immediately start a new one in the same process (`ts/index.ts`, recycle path). That is the same "second module in one process" situation as the old runner, and it is intermittently 1-7x slow. The sequential test's one-off 20 s call among ~6 s calls (roberts-160, call 7, right where RSS crossed 2 GiB) is probably the same event. No CPU quota applies (cgroup `cpu.max` = max, no throttling on this host). A plausible mechanism, not verified: `Worker.terminate()` is asynchronous, so the old Worker's busy kernel threads can still be running while the new module starts, oversubscribing 8 cores with a spin-waiting kernel.
 
-## Open
+## Resolution (2026-10-16): not caused by the recycle
 
-Find the in-process trigger (what state from a previous Worker/module slows the next kernel run). Candidates: shared memory or thread-pool state surviving `terminate()`, heap pressure with several 1 GB modules.
+`tests/bench/recycle-probe.mjs` runs 8 changed-content calls on roberts-160 in one process, three variants (one run each, sequential, no other load):
+
+| Variant | per-call ms |
+| --- | --- |
+| recycle every call, `terminate()` not awaited | 7249 8597 8479 7142 11641 8416 8469 11581 |
+| recycle every call, `terminate()` awaited | 7934 8585 11656 11635 8417 11727 7461 8567 |
+| no recycle (control) | 7904 12117 7281 6498 8493 18578 6505 6246 |
+
+The control (single Worker, no recycle, the first call included) shows the same outliers (up to 2.9x), so the recycle and the async `terminate()` are not the trigger. Awaiting `terminate()` changes nothing; the OS thread count stays at 44 after each recycle, so old kernel threads do not overlap. Slow calls burn proportionally more CPU (e.g. 54 s vs 80-137 s for the same input), i.e. the kernel does more or spins more work: the same unexplained step-time variance seen natively (17-97 s, handover item 2). The earlier "second module in one process" explanation (old runner, recycle) is withdrawn; remaining lead is the nondeterministic scheduler (`REPRO_SERIAL=1 REPRO_SCHED_SEED`). Treat Roberts timings as having a heavy upper tail regardless of recycle.
