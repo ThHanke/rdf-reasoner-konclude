@@ -659,7 +659,7 @@ export class RdfReasoner {
         this._lastExplBuffer = null;
       }
 
-      if (process.env["DEBUG_MATERIALIZE"]) {
+      if (typeof process !== "undefined" && process.env?.["DEBUG_MATERIALIZE"]) {
         console.error("[DEBUG materialize] allQuads:", allQuads.length, allQuads.slice(0,5).map(q => `${q.subject.value} ${q.predicate.value} ${q.object.value}`));
       }
 

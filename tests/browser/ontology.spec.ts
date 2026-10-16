@@ -56,18 +56,24 @@ function loadNativeFixture(file: string): string[] {
     .filter((l) => l.length > 0 && !l.startsWith("#"));
 }
 
-function assertNativeMatch(triples: Triple[], predicates: string[], fixtureFile: string): void {
-  const predSet = new Set(predicates);
-  const actual = triples
-    .filter((t) => predSet.has(t.p))
-    .map((t) => `<${t.s}> <${t.p}> <${t.o}> .`)
-    .sort();
-  const expected = loadNativeFixture(fixtureFile).sort();
+type Result = { all: Triple[]; inferred: Triple[] };
 
-  const actualSet   = new Set(actual);
+/**
+ * classify()/materialize() write only NEW entailments into the inferred graph, while the native fixtures list the
+ * Hasse diagram / types of the whole ontology (asserted + inferred, IRI-to-IRI). So:
+ *   completeness: every native triple is in asserted ∪ inferred (named nodes only);
+ *   precision:    every inferred triple is a native triple.
+ * Asserted-but-redundant edges are not in the native output and are not inferred, so they are not compared.
+ */
+function assertNativeMatch(res: Result, predicates: string[], fixtureFile: string): void {
+  const predSet = new Set(predicates);
+  const fmt = (t: Triple) => `<${t.s}> <${t.p}> <${t.o}> .`;
+  const all = new Set(res.all.filter((t) => predSet.has(t.p)).map(fmt));
+  const inferred = res.inferred.filter((t) => predSet.has(t.p)).map(fmt);
+  const expected = loadNativeFixture(fixtureFile);
   const expectedSet = new Set(expected);
-  const missing = expected.filter((t) => !actualSet.has(t));
-  const extra   = actual.filter((t)   => !expectedSet.has(t));
+  const missing = expected.filter((t) => !all.has(t));
+  const extra = inferred.filter((t) => !expectedSet.has(t));
 
   if (missing.length > 0 || extra.length > 0) {
     throw new Error(
@@ -76,15 +82,14 @@ function assertNativeMatch(triples: Triple[], predicates: string[], fixtureFile:
       `  Extra in browser   (${extra.length}):   ${JSON.stringify(extra.slice(0, 5))}`,
     );
   }
-
-  expect(actual).toEqual(expected);
 }
 
 /**
- * Fetch one or more NT fixtures, parse them, run classify(), return all inferred triples.
+ * Fetch one or more NT fixtures, parse them, run classify() (or materialize()), return the inferred triples and
+ * the union of all graphs (named nodes only).
  */
-async function classifyFixtures(page: any, fixtures: string[]): Promise<Triple[]> {
-  return page.evaluate(async (fixturePaths: string[]) => {
+async function classifyFixtures(page: any, fixtures: string[], op: "classify" | "materialize" = "classify"): Promise<Result> {
+  return page.evaluate(async ({ fixturePaths, op }: { fixturePaths: string[]; op: string }) => {
     const { RdfReasoner, INFERRED_GRAPH_IRI, Store, Parser, DataFactory } = window;
 
     const store = new Store();
@@ -101,14 +106,17 @@ async function classifyFixtures(page: any, fixtures: string[]): Promise<Triple[]
 
     const reasoner = new RdfReasoner();
     await reasoner.ready;
-    await reasoner.classify(store);
+    if (op === "materialize") await reasoner.materialize(store, { includeClassHierarchy: true });
+    else await reasoner.classify(store);
     reasoner.terminate();
 
-    const inferredGraph = DataFactory.namedNode(INFERRED_GRAPH_IRI);
-    return store
-      .getQuads(null, null, null, inferredGraph)
-      .map((q: any) => ({ s: q.subject.value, p: q.predicate.value, o: q.object.value }));
-  }, fixtures);
+    const flat = (q: any) => ({ s: q.subject.value, p: q.predicate.value, o: q.object.value });
+    const named = (q: any) => q.subject.termType === "NamedNode" && q.object.termType === "NamedNode";
+    return {
+      inferred: store.getQuads(null, null, null, DataFactory.namedNode(INFERRED_GRAPH_IRI)).filter(named).map(flat),
+      all: store.getQuads(null, null, null, null).filter(named).map(flat),
+    };
+  }, { fixturePaths: fixtures, op });
 }
 
 // ---------------------------------------------------------------------------
@@ -116,7 +124,7 @@ async function classifyFixtures(page: any, fixtures: string[]): Promise<Triple[]
 // ---------------------------------------------------------------------------
 
 test("pizza ontology: browser worker classifies same as Node.js", async ({ page }) => {
-  const triples = await classifyFixtures(page, ["/tests/fixtures/pizza.nt"]);
+  const { all: triples } = await classifyFixtures(page, ["/tests/fixtures/pizza.nt"]);
 
   expect(triples.length).toBeGreaterThan(0);
 
@@ -133,10 +141,10 @@ test("pizza ontology: browser worker classifies same as Node.js", async ({ page 
 test("lubm ontology: browser worker matches native Konclude output", async ({ page }) => {
   test.setTimeout(120_000);
 
-  const triples = await classifyFixtures(page, ["/tests/fixtures/lubm.nt"]);
+  const res = await classifyFixtures(page, ["/tests/fixtures/lubm.nt"]);
 
-  expect(triples.length).toBeGreaterThan(0);
-  assertNativeMatch(triples, [SUBCLASS_OF, EQUIV_CLASS], "lubm-native-tbox.nt");
+  expect(res.all.length).toBeGreaterThan(0);
+  assertNativeMatch(res, [SUBCLASS_OF, EQUIV_CLASS], "lubm-native-tbox.nt");
 });
 
 // ---------------------------------------------------------------------------
@@ -146,10 +154,10 @@ test("lubm ontology: browser worker matches native Konclude output", async ({ pa
 test("galen ontology: browser worker matches native Konclude output", async ({ page }) => {
   test.setTimeout(300_000);
 
-  const triples = await classifyFixtures(page, ["/tests/fixtures/galen.nt"]);
+  const res = await classifyFixtures(page, ["/tests/fixtures/galen.nt"]);
 
-  expect(triples.length).toBeGreaterThan(0);
-  assertNativeMatch(triples, [SUBCLASS_OF, EQUIV_CLASS], "galen-native-tbox.nt");
+  expect(res.all.length).toBeGreaterThan(0);
+  assertNativeMatch(res, [SUBCLASS_OF, EQUIV_CLASS], "galen-native-tbox.nt");
 });
 
 // ---------------------------------------------------------------------------
@@ -159,11 +167,11 @@ test("galen ontology: browser worker matches native Konclude output", async ({ p
 test("roberts-family ontology: browser worker matches native Konclude output", async ({ page }) => {
   test.setTimeout(300_000);
 
-  const triples = await classifyFixtures(page, ["/tests/fixtures/roberts-family.nt"]);
+  const res = await classifyFixtures(page, ["/tests/fixtures/roberts-family.nt"], "materialize");
 
-  expect(triples.length).toBeGreaterThan(0);
-  assertNativeMatch(triples, [SUBCLASS_OF, EQUIV_CLASS], "roberts-native-tbox.nt");
-  assertNativeMatch(triples, [RDF_TYPE],                 "roberts-native-abox.nt");
+  expect(res.all.length).toBeGreaterThan(0);
+  assertNativeMatch(res, [SUBCLASS_OF, EQUIV_CLASS], "roberts-native-tbox.nt");
+  assertNativeMatch(res, [RDF_TYPE],                 "roberts-native-abox.nt");
 });
 
 // ---------------------------------------------------------------------------
@@ -173,15 +181,16 @@ test("roberts-family ontology: browser worker matches native Konclude output", a
 test("lubm schema + data: browser worker realization matches native TBox", async ({ page }) => {
   test.setTimeout(300_000);
 
-  const triples = await classifyFixtures(page, [
+  const res = await classifyFixtures(page, [
     "/tests/fixtures/lubm.nt",
     "/tests/fixtures/lubm-data.nt",
-  ]);
+  ], "materialize");
+  const triples = res.all;
 
   expect(triples.length).toBeGreaterThan(0);
 
   // TBox should be identical to schema-only native output
-  assertNativeMatch(triples, [SUBCLASS_OF, EQUIV_CLASS], "lubm-native-tbox.nt");
+  assertNativeMatch(res, [SUBCLASS_OF, EQUIV_CLASS], "lubm-native-tbox.nt");
 
   // ABox spot-check: individuals get expected types via realization
   const lubm = "http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#";
