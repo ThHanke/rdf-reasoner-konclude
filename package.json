@@ -25,6 +25,8 @@
   },
   "files": [
     "dist",
+    "!dist/*-backup",
+    "!dist/*.wat",
     "vocab",
     "NOTICE",
     "LICENSE"
