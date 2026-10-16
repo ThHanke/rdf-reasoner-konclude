@@ -209,7 +209,14 @@ import { Store } from "n3";
 
 const store = createManagedStore(new Store());
 // Add your ontology to any other graph — this is unrestricted:
-store.addQuad(DataFactory.quad(s, p, o, DataFactory.namedNode("http://example.org/ontology")));
+store.addQuad(
+  DataFactory.quad(
+    s,
+    p,
+    o,
+    DataFactory.namedNode("http://example.org/ontology"),
+  ),
+);
 
 const reasoner = new RdfReasoner();
 await reasoner.classify(store);
@@ -218,13 +225,16 @@ await reasoner.classify(store);
 const inferred = store.getQuads(null, null, null, INFERRED_GRAPH_IRI);
 
 // External writes to managed graphs throw RangeError immediately:
-store.addQuad(DataFactory.quad(s, p, o, DataFactory.namedNode(INFERRED_GRAPH_IRI)));
+store.addQuad(
+  DataFactory.quad(s, p, o, DataFactory.namedNode(INFERRED_GRAPH_IRI)),
+);
 // ↑ RangeError: Cannot write to managed graph "urn:konclude:inferred" ...
 
 reasoner.terminate();
 ```
 
 Managed graphs (guarded by `createManagedStore`):
+
 - `INFERRED_GRAPH_IRI` (`"urn:konclude:inferred"`) — inference output
 - `EXPLANATION_GRAPH_IRI` (`"urn:konclude:explanations"`) — justification graph
 - `HYPOTHETICAL_IRI` (`"urn:konclude:hypothetical"`) — whatIf scratch graph
@@ -564,24 +574,24 @@ const result = await reasoner.explainEntailment(
 
 **Supported entailment types:**
 
-| Predicate | Method | Speed |
-|-----------|--------|-------|
-| `rdfs:subClassOf` | Native dep-chain cache | ~1ms |
-| `rdf:type` (subClassOf chain) | Native (classification + asserted type) | ~1ms |
-| `rdf:type` (realization) | Native (clash-path hook) | ~1ms |
-| `rdf:type` (someValuesFrom) | Synthesized (restriction + role scan) | <1ms |
-| `rdf:type` (minCardinality) | Synthesized (restriction + filler count) | <1ms |
-| `owl:sameAs` (FP/IFP) | Synthesized (FP/IFP pattern scan) | <1ms |
-| `owl:sameAs` (native) | Native (realization cache) | ~1ms |
-| `owl:equivalentClass` | Native (bidirectional subClassOf) | ~1ms |
-| `owl:disjointWith` | Native (classification cache) | ~1ms |
-| `owl:equivalentProperty` | Synthesized (assertion scan) | <1ms |
-| `rdfs:subPropertyOf` | Native (clash-path hook) | ~1ms |
-| `rdfs:domain` / `rdfs:range` | Native (GCI in taxonomy) | ~1ms |
-| `disjointUnionOf` → `subClassOf` | Synthesized (RDF list walk) | <1ms |
-| `owl:oneOf` → `rdf:type` | Synthesized (member scan) | <1ms |
-| Data property assertions | Asserted-triple lookup | <1ms |
-| Object property assertions | Asserted-triple lookup | <1ms |
+| Predicate                        | Method                                   | Speed |
+| -------------------------------- | ---------------------------------------- | ----- |
+| `rdfs:subClassOf`                | Native dep-chain cache                   | ~1ms  |
+| `rdf:type` (subClassOf chain)    | Native (classification + asserted type)  | ~1ms  |
+| `rdf:type` (realization)         | Native (clash-path hook)                 | ~1ms  |
+| `rdf:type` (someValuesFrom)      | Synthesized (restriction + role scan)    | <1ms  |
+| `rdf:type` (minCardinality)      | Synthesized (restriction + filler count) | <1ms  |
+| `owl:sameAs` (FP/IFP)            | Synthesized (FP/IFP pattern scan)        | <1ms  |
+| `owl:sameAs` (native)            | Native (realization cache)               | ~1ms  |
+| `owl:equivalentClass`            | Native (bidirectional subClassOf)        | ~1ms  |
+| `owl:disjointWith`               | Native (classification cache)            | ~1ms  |
+| `owl:equivalentProperty`         | Synthesized (assertion scan)             | <1ms  |
+| `rdfs:subPropertyOf`             | Native (clash-path hook)                 | ~1ms  |
+| `rdfs:domain` / `rdfs:range`     | Native (GCI in taxonomy)                 | ~1ms  |
+| `disjointUnionOf` → `subClassOf` | Synthesized (RDF list walk)              | <1ms  |
+| `owl:oneOf` → `rdf:type`         | Synthesized (member scan)                | <1ms  |
+| Data property assertions         | Asserted-triple lookup                   | <1ms  |
+| Object property assertions       | Asserted-triple lookup                   | <1ms  |
 
 Full coverage matrix with test cases: [`docs/entailment-coverage.md`](docs/entailment-coverage.md)
 
@@ -679,25 +689,25 @@ does not yet surface as output.
 
 Violation detection verified against native Konclude v0.7.0 ground truth:
 
-| #   | Violation pattern                                         | Native             | WASM           | Status                             |
-| --- | --------------------------------------------------------- | ------------------ | -------------- | ---------------------------------- |
-| 1   | `owl:disjointWith` (direct)                               | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
-| 2   | `owl:disjointWith` (via domain/range inference)           | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
-| 3   | `owl:AsymmetricProperty` bidirectional assertion          | consistent ✗ (bug) | inconsistent ✓ | **PARITY (WASM surpasses native)** |
-| 4   | `owl:IrreflexiveProperty` self-reference                  | consistent ✗ (bug) | inconsistent ✓ | **PARITY (WASM surpasses native)** |
-| 5   | `owl:maxQualifiedCardinality` + `owl:differentFrom`       | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
-| 6   | `owl:allValuesFrom` + `owl:disjointWith`                  | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
-| 7   | `owl:ReflexiveProperty` + `ObjectComplementOf(HasSelf)`   | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
-| 8   | `owl:InverseFunctionalProperty` + `DifferentIndividuals`  | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
-| 9   | `owl:AllDisjointClasses` (3-way) + double membership      | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
-| 10  | `DisjointObjectProperties` + `EquivalentObjectProperties` | consistent ✗ (bug) | inconsistent ✓ | **PARITY (WASM surpasses native)** |
-| 11  | `owl:disjointUnionOf` + double membership                 | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
-| 12  | `owl:NegativeObjectPropertyAssertion` contradiction       | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
-| 13  | `DataAllValuesFrom xsd:minInclusive` (consistent case)    | consistent ✓       | consistent ✓   | **PARITY**                         |
-| 14  | `DataAllValuesFrom xsd:minInclusive` (inconsistent case)  | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
-| 15  | `owl:hasSelf(p)` + `owl:hasSelf(q)` + `p owl:propertyDisjointWith q` | inconsistent ✓ | inconsistent ✓ | **PARITY**             |
-| 16  | `owl:ReflexiveProperty(p)` + `owl:hasSelf(q)` + `p owl:propertyDisjointWith q` | inconsistent ✓ | inconsistent ✓ | **PARITY**  |
-| 17  | `owl:AsymmetricProperty(r)` + `r(a, a)` self-loop                    | inconsistent ✓ | inconsistent ✓ | **PARITY (WASM surpasses native)** |
+| #   | Violation pattern                                                              | Native             | WASM           | Status                             |
+| --- | ------------------------------------------------------------------------------ | ------------------ | -------------- | ---------------------------------- |
+| 1   | `owl:disjointWith` (direct)                                                    | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
+| 2   | `owl:disjointWith` (via domain/range inference)                                | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
+| 3   | `owl:AsymmetricProperty` bidirectional assertion                               | consistent ✗ (bug) | inconsistent ✓ | **PARITY (WASM surpasses native)** |
+| 4   | `owl:IrreflexiveProperty` self-reference                                       | consistent ✗ (bug) | inconsistent ✓ | **PARITY (WASM surpasses native)** |
+| 5   | `owl:maxQualifiedCardinality` + `owl:differentFrom`                            | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
+| 6   | `owl:allValuesFrom` + `owl:disjointWith`                                       | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
+| 7   | `owl:ReflexiveProperty` + `ObjectComplementOf(HasSelf)`                        | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
+| 8   | `owl:InverseFunctionalProperty` + `DifferentIndividuals`                       | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
+| 9   | `owl:AllDisjointClasses` (3-way) + double membership                           | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
+| 10  | `DisjointObjectProperties` + `EquivalentObjectProperties`                      | consistent ✗ (bug) | inconsistent ✓ | **PARITY (WASM surpasses native)** |
+| 11  | `owl:disjointUnionOf` + double membership                                      | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
+| 12  | `owl:NegativeObjectPropertyAssertion` contradiction                            | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
+| 13  | `DataAllValuesFrom xsd:minInclusive` (consistent case)                         | consistent ✓       | consistent ✓   | **PARITY**                         |
+| 14  | `DataAllValuesFrom xsd:minInclusive` (inconsistent case)                       | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
+| 15  | `owl:hasSelf(p)` + `owl:hasSelf(q)` + `p owl:propertyDisjointWith q`           | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
+| 16  | `owl:ReflexiveProperty(p)` + `owl:hasSelf(q)` + `p owl:propertyDisjointWith q` | inconsistent ✓     | inconsistent ✓ | **PARITY**                         |
+| 17  | `owl:AsymmetricProperty(r)` + `r(a, a)` self-loop                              | inconsistent ✓     | inconsistent ✓ | **PARITY (WASM surpasses native)** |
 
 **PARITY (WASM surpasses native v0.7.0)** means native Konclude v0.7.0 has a kernel bug for this
 construct; this package applies a saturation-phase clash check that the upstream kernel misses.
