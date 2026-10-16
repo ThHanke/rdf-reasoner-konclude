@@ -14,7 +14,7 @@ Options: `--quick`, `--case "<name>"` (one case; names in `cases.mjs`). The run 
 | TS layer total | one full public `RdfReasoner` call in a fresh process, including Worker and module start. |
 | warm scenarios | one reasoner: unchanged content, identical content in a new Store, one added axiom. Kernel counters (`syncStats`) are asserted for each. |
 
-Only ingest→result vs Konclude total (TBox) or vs Konclude excl. realization (ABox classification path) is a ratio. Phase columns are a breakdown: v0.8.0 moved parse/mapping from "load" into "reasoning" (see `docs/solutions/performance-issues/benchmark-phase-boundary-shift-2026-10.md`), so phases are not comparable across releases.
+Only ingest→result vs Konclude total (TBox) vs Konclude excl. realization (ABox classification path), or full realization vs Konclude with `RoleInstances=true` is a ratio. Phase columns are a breakdown: v0.8.0 moved parse/mapping from "load" into "reasoning" (see `docs/solutions/performance-issues/benchmark-phase-boundary-shift-2026-10.md`), so phases are not comparable across releases.
 
 Cells show `median [min–max]`; `†` = spread above 10%, `‡` = fewer than 5 samples. Run counts and subprocess budgets per case live in `cases.mjs` (slow cases: 3 runs, no warm-up).
 

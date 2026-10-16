@@ -114,7 +114,7 @@ export async function benchAll(cases = WASM_CASES, opts = { warmup: 1, runs: 3 }
 
     // For ABox cases we run two passes per iteration:
     //   1. classification() only — gives TBox-only timing, comparable to native
-    //   2. realization()         — full ABox + role closure (not comparable to native speed)
+    //   2. realization()         — full ABox + role closure (compare with native `realization` run with RoleInstances=true)
     // This is necessary because classification() and realization() cannot share a
     // KoncludeReasoner instance (prepareOntology must be called once).
     async function runFresh() {
