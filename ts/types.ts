@@ -32,6 +32,21 @@ export interface ExplainOptions {
   timeout?: number;
 }
 
+/** One OWL axiom as it is stored: all triples that make it up. A restriction axiom is several triples. */
+export interface Axiom {
+  /** The triple that names the axiom (for a subclass-of-restriction axiom: `C rdfs:subClassOf _:b`). Exact instance from the store. */
+  principal: Quad;
+  /** All triples of the axiom including `principal`, every graph copy of each; remove them together. */
+  quads: Quad[];
+}
+
+export interface AxiomJustification {
+  /** Logical axioms that together cause the clash. Declarations are never in this list. */
+  axioms: Axiom[];
+  /** Declaration triples (`C a owl:Class`, `p a owl:ObjectProperty`, ...) the justification needs but that are not candidates for removal. */
+  context: Quad[];
+}
+
 /**
  * Named graph IRI used to hold hypothetical (what-if) triples.
  * Quads in this graph are excluded from store fingerprints.
