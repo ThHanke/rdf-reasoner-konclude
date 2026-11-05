@@ -1706,103 +1706,117 @@ export class RdfReasoner {
         if (!(await this._checkInconsistencyDirect(allCandidates))) return [];
       }
 
-      const justifications: Quad[][] = [];
-
-      // Race each WASM call against a per-call timer so a hung tableau
-      // (infinite expansion for certain partial TBox subsets) can be
-      // interrupted.  On timeout the Worker is terminated and recreated.
-      const checkOrAbort = async (quads: Quad[]): Promise<boolean | "aborted"> => {
-        const remaining = deadline - Date.now();
-        if (remaining <= 0) return "aborted";
-        const perCallMs = Math.min(remaining + 1_000, 30_000);
-        let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-        const timerPromise = new Promise<"aborted">(resolve => {
-          timeoutHandle = setTimeout(() => resolve("aborted"), perCallMs);
-        });
-        try {
-          const result = await Promise.race([
-            this._checkInconsistencyDirect(quads).then(r => r as boolean | "aborted"),
-            timerPromise,
-          ]);
-          if (result === "aborted") await this._reinitForBisection();
-          return result;
-        } finally {
-          clearTimeout(timeoutHandle);
-        }
-      };
-
-      const findOneJustification = async (candidates: Quad[]): Promise<Quad[] | null> => {
-        let working = [...candidates];
-        let changed = true;
-        while (changed && working.length > 1) {
-          if (isExpired()) return working;
-          changed = false;
-          const mid = Math.floor(working.length / 2);
-          const firstHalf = working.slice(0, mid);
-          const secondHalf = working.slice(mid);
-          const fhResult = await checkOrAbort(firstHalf);
-          if (fhResult === "aborted") return working;
-          if (fhResult) { working = firstHalf; changed = true; continue; }
-          if (isExpired()) return working;
-          const shResult = await checkOrAbort(secondHalf);
-          if (shResult === "aborted") return working;
-          if (shResult) { working = secondHalf; changed = true; continue; }
-          break;
-        }
-        let i = 0;
-        while (i < working.length) {
-          if (isExpired()) return working;
-          if (working.length === 1) break;
-          const without = [...working.slice(0, i), ...working.slice(i + 1)];
-          const r = await checkOrAbort(without);
-          if (r === "aborted") return working;
-          if (r) { working = without; } else { i++; }
-        }
-        return working;
-      };
-
-      const j1 = await findOneJustification(allCandidates);
-      if (!j1 || j1.length === 0) return [];
-      justifications.push(j1);
-
-      if (!isExpired() && maxJustifications > 1) {
-        // HSDAG queue: pairs of (excluded set, justification to expand from)
-        const hsQueue: Array<{ excluded: Set<string>; justification: Quad[] }> = [
-          { excluded: new Set(), justification: j1 },
-        ];
-        const exploredExclusions = new Set<string>();
-        while (!isExpired() && hsQueue.length > 0 && justifications.length < maxJustifications) {
-          const { excluded, justification: currentJ } = hsQueue.shift()!;
-          const excludedKey = [...excluded].sort().join("|");
-          if (exploredExclusions.has(excludedKey)) continue;
-          exploredExclusions.add(excludedKey);
-          for (const axiomInJ of currentJ) {
-            if (isExpired()) break;
-            const newExcluded = new Set(excluded);
-            const axKey = `${axiomInJ.subject.value}\0${axiomInJ.predicate.value}\0${axiomInJ.object.value}`;
-            newExcluded.add(axKey);
-            const newExcludedKey = [...newExcluded].sort().join("|");
-            if (exploredExclusions.has(newExcludedKey)) continue;
-            const reduced = allCandidates.filter(q => !newExcluded.has(`${q.subject.value}\0${q.predicate.value}\0${q.object.value}`));
-            const rCheck = await checkOrAbort(reduced);
-            if (rCheck === "aborted" || !rCheck) continue;
-            const jNew = await findOneJustification(reduced);
-            if (!jNew || jNew.length === 0) continue;
-            const jKey = jNew.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`).sort().join("|");
-            const alreadyFound = justifications.some(j => j.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`).sort().join("|") === jKey);
-            if (!alreadyFound) {
-              justifications.push(jNew);
-              if (justifications.length >= maxJustifications) break;
-              hsQueue.push({ excluded: newExcluded, justification: jNew });
-            }
-          }
-        }
-      }
-
-      return justifications;
+      return this._explainInconsistencyQuadsDirect(allCandidates, maxJustifications, deadline);
     });
     this._queue = result.then(() => {}, () => {});
     return result;
+  }
+
+  /**
+   * Slot-held BlackBox MIPS search over an explicit quad set that is already known to be inconsistent.
+   * Must be called from inside a _queue slot (uses _callDirect only; never the public methods).
+   * `deadline` is an absolute Date.now() value (Infinity = none). Returns [] when no justification is found.
+   */
+  private async _explainInconsistencyQuadsDirect(
+    allCandidates: Quad[],
+    maxJustifications: number,
+    deadline: number,
+  ): Promise<Quad[][]> {
+    const isExpired = () => Date.now() >= deadline;
+    const justifications: Quad[][] = [];
+
+    // Race each WASM call against a per-call timer so a hung tableau
+    // (infinite expansion for certain partial TBox subsets) can be
+    // interrupted.  On timeout the Worker is terminated and recreated.
+    const checkOrAbort = async (quads: Quad[]): Promise<boolean | "aborted"> => {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return "aborted";
+      const perCallMs = Math.min(remaining + 1_000, 30_000);
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+      const timerPromise = new Promise<"aborted">(resolve => {
+        timeoutHandle = setTimeout(() => resolve("aborted"), perCallMs);
+      });
+      try {
+        const result = await Promise.race([
+          this._checkInconsistencyDirect(quads).then(r => r as boolean | "aborted"),
+          timerPromise,
+        ]);
+        if (result === "aborted") await this._reinitForBisection();
+        return result;
+      } finally {
+        clearTimeout(timeoutHandle);
+      }
+    };
+
+    const findOneJustification = async (candidates: Quad[]): Promise<Quad[] | null> => {
+      let working = [...candidates];
+      let changed = true;
+      while (changed && working.length > 1) {
+        if (isExpired()) return working;
+        changed = false;
+        const mid = Math.floor(working.length / 2);
+        const firstHalf = working.slice(0, mid);
+        const secondHalf = working.slice(mid);
+        const fhResult = await checkOrAbort(firstHalf);
+        if (fhResult === "aborted") return working;
+        if (fhResult) { working = firstHalf; changed = true; continue; }
+        if (isExpired()) return working;
+        const shResult = await checkOrAbort(secondHalf);
+        if (shResult === "aborted") return working;
+        if (shResult) { working = secondHalf; changed = true; continue; }
+        break;
+      }
+      let i = 0;
+      while (i < working.length) {
+        if (isExpired()) return working;
+        if (working.length === 1) break;
+        const without = [...working.slice(0, i), ...working.slice(i + 1)];
+        const r = await checkOrAbort(without);
+        if (r === "aborted") return working;
+        if (r) { working = without; } else { i++; }
+      }
+      return working;
+    };
+
+    const j1 = await findOneJustification(allCandidates);
+    if (!j1 || j1.length === 0) return [];
+    justifications.push(j1);
+
+    if (!isExpired() && maxJustifications > 1) {
+      // HSDAG queue: pairs of (excluded set, justification to expand from)
+      const hsQueue: Array<{ excluded: Set<string>; justification: Quad[] }> = [
+        { excluded: new Set(), justification: j1 },
+      ];
+      const exploredExclusions = new Set<string>();
+      while (!isExpired() && hsQueue.length > 0 && justifications.length < maxJustifications) {
+        const { excluded, justification: currentJ } = hsQueue.shift()!;
+        const excludedKey = [...excluded].sort().join("|");
+        if (exploredExclusions.has(excludedKey)) continue;
+        exploredExclusions.add(excludedKey);
+        for (const axiomInJ of currentJ) {
+          if (isExpired()) break;
+          const newExcluded = new Set(excluded);
+          const axKey = `${axiomInJ.subject.value}\0${axiomInJ.predicate.value}\0${axiomInJ.object.value}`;
+          newExcluded.add(axKey);
+          const newExcludedKey = [...newExcluded].sort().join("|");
+          if (exploredExclusions.has(newExcludedKey)) continue;
+          const reduced = allCandidates.filter(q => !newExcluded.has(`${q.subject.value}\0${q.predicate.value}\0${q.object.value}`));
+          const rCheck = await checkOrAbort(reduced);
+          if (rCheck === "aborted" || !rCheck) continue;
+          const jNew = await findOneJustification(reduced);
+          if (!jNew || jNew.length === 0) continue;
+          const jKey = jNew.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`).sort().join("|");
+          const alreadyFound = justifications.some(j => j.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`).sort().join("|") === jKey);
+          if (!alreadyFound) {
+            justifications.push(jNew);
+            if (justifications.length >= maxJustifications) break;
+            hsQueue.push({ excluded: newExcluded, justification: jNew });
+          }
+        }
+      }
+    }
+
+    return justifications;
   }
 
   // -------------------------------------------------------------------------
