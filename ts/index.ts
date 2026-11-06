@@ -1726,6 +1726,17 @@ export class RdfReasoner {
   }
 
   /**
+   * Replace the Worker from inside a _queue slot (heap recycle). Each check re-syncs the full quad set, so no WASM
+   * state needs replaying; the slot's queue position is preserved.
+   */
+  private async _recycleWorkerInSlot(): Promise<void> {
+    const queue = this._queue;
+    await this._reinitForBisection();
+    this._queue = queue;
+    this._lastHeapBytes = 0;
+  }
+
+  /**
    * Slot-held BlackBox MIPS search over an explicit quad set that is already known to be inconsistent.
    * Must be called from inside a _queue slot (uses _callDirect only; never the public methods).
    * `deadline` is an absolute Date.now() value (Infinity = none). Returns [] when no justification is found.
@@ -1744,6 +1755,9 @@ export class RdfReasoner {
     const checkOrAbort = async (quads: Quad[]): Promise<boolean | "aborted"> => {
       const remaining = deadline - Date.now();
       if (remaining <= 0) return "aborted";
+      // Every reload retains ~20 MB of WASM heap (measured on PMDco); a long search would hit the 4 GiB wasm32
+      // ceiling and trap. Recycle the Worker between calls once the heap passes the recycle threshold.
+      if (this._recycleHeapBytes > 0 && this._lastHeapBytes > this._recycleHeapBytes) await this._recycleWorkerInSlot();
       const perCallMs = Math.min(remaining + 1_000, 30_000);
       let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
       const timerPromise = new Promise<"aborted">(resolve => {
@@ -1761,34 +1775,35 @@ export class RdfReasoner {
       }
     };
 
+    // QuickXplain (Junker 2004): a minimal inconsistent subset in about 2*k*log2(n/k) consistency checks for a
+    // justification of size k. The previous halve-then-delete-one-by-one search degenerated to n checks
+    // (17,159 x 0.6 s on PMDco) whenever the clash spanned both halves of the candidate set.
+    const ABORT = Symbol("explain-abort");
     const findOneJustification = async (candidates: Quad[]): Promise<Quad[] | null> => {
-      let working = [...candidates];
-      let changed = true;
-      while (changed && working.length > 1) {
-        if (isExpired()) return working;
-        changed = false;
-        const mid = Math.floor(working.length / 2);
-        const firstHalf = working.slice(0, mid);
-        const secondHalf = working.slice(mid);
-        const fhResult = await checkOrAbort(firstHalf);
-        if (fhResult === "aborted") return working;
-        if (fhResult) { working = firstHalf; changed = true; continue; }
-        if (isExpired()) return working;
-        const shResult = await checkOrAbort(secondHalf);
-        if (shResult === "aborted") return working;
-        if (shResult) { working = secondHalf; changed = true; continue; }
-        break;
+      if (candidates.length === 0) return [];
+      let best = candidates; // smallest set known to be inconsistent; returned (non-minimal) on deadline/abort
+      const inconsistent = async (set: Quad[]): Promise<boolean> => {
+        const r = await checkOrAbort(set);
+        if (r === "aborted") throw ABORT;
+        if (r && set.length < best.length) best = set;
+        return r;
+      };
+      const qx = async (background: Quad[], hasDelta: boolean, c: Quad[]): Promise<Quad[]> => {
+        if (hasDelta && (await inconsistent(background))) return [];
+        if (c.length === 1) return c;
+        const k = c.length >> 1;
+        const c1 = c.slice(0, k);
+        const c2 = c.slice(k);
+        const d2 = await qx([...background, ...c1], c1.length > 0, c2);
+        const d1 = await qx([...background, ...d2], d2.length > 0, c1);
+        return [...d1, ...d2];
+      };
+      try {
+        return await qx([], false, candidates);
+      } catch (e) {
+        if (e === ABORT) return best;
+        throw e;
       }
-      let i = 0;
-      while (i < working.length) {
-        if (isExpired()) return working;
-        if (working.length === 1) break;
-        const without = [...working.slice(0, i), ...working.slice(i + 1)];
-        const r = await checkOrAbort(without);
-        if (r === "aborted") return working;
-        if (r) { working = without; } else { i++; }
-      }
-      return working;
     };
 
     const j1 = await findOneJustification(allCandidates);
