@@ -46,16 +46,24 @@ Product path (`seq-sync`, `syncBuffers` -> `ensureBuilt`) and the harness `loadN
 - PMDco `repair()` (`tests/bench/repair-case.mjs . tests/fixtures/pmdco.nt bfo`): 83 checks, 0 Worker recycles, max heap 1201 MB (005/006) -> 1024 MB = initial heap, never grew (with 007), 29 s, same justifications [3,3] and repairs [1,1,2], verified consistent, store untouched.
 - Patch stack 000-006 verified to apply from a clean `git archive` of the submodule.
 
-## Open
+## Open: what the remaining +5 MB/consistent check is (investigated 2026-11-06, not fixed)
 
-- Remaining native growth is small (+2 / +5 MB/check); not investigated further.
-- Optional: consistency-only pipeline requirement list in `runPipeline` (skip precompute-saturation / class classification on a pure consistency check).
+Residual growth is almost all in pools (POOLS outstanding 88 -> 136 MB over 10 steps; live heap +5.4 MB/check). Split by the owner of each stale pool:
+
+- **~2.8 MB/call: the global saturation-node expansion cache.** `CSaturationNodeAssociatedExpansionCache` keeps one long-lived `CSaturationNodeAssociatedExpansionCacheContext` (a `CLimitedReserveMemoryPoolAllocationManager` over a `CNewAllocationMemoryPoolProvider`). Its per-node entries (`CSaturationNodeAssociatedExpansionCacheEntry`, expansions, linkers; attached to saturation nodes via `setCacheExpansionData`) are allocated from that arena (`context->getMemoryAllocationManager()`) and never returned when the ontology that owns the node dies; pools shipped by `CSaturationNodeExpansionCacheHandler` are consumed into it by `processCustomsEvents`. Ontology ids are random per call, so the entries are dead weight. A real fix needs per-ontology arenas (or clearing the cache when an ontology is deleted); it touches a cache shared by all threads, so it was not attempted blind.
+- **~2.7 MB/call: other non-pool data, not attributed** (heap profile spread over many small stacks: OR-branching lists, occurrence-statistics cache vectors).
+- **Not leaks (registry artifacts):** pools of `CNewAllocationIncreasingMemoryPoolProvider` (triples indexer batch vectors) are freed with plain `delete[]` (`clearMemoryPools`), so the `KON_POOLSITE` registry and the POOLS "outstanding" counter keep counting them. Patch 008 (free the two unfreed `mappedIndi1HashKeyVec` pool chains in `indexTripleData`/`indexTriples`) changed nothing measurable and was dropped. Pools "parked" in the cache context's free list were also mislabelled: pools reused via `getMemoryBlock` keep their parked label.
+
+Cost model for explain/repair: 150-600 consistent checks x 5 MB = 0.8-3 GB worst case, inconsistent checks (most of them) +2 MB. The TS recycle stays as the safety net.
+
+- Optional: consistency-only pipeline requirement list in `runPipeline` (skip precompute-saturation / class classification on a pure consistency check) would also skip creating these cache entries.
 
 ## Method (reusable)
 
 - `REPRO_MEM=1 REPRO_FLUSH=1 [REPRO_CONTINUE=1] setarch -R build-native/konclude_repro --seq "k:f.nt~drop100,k:f.nt~drop200,..."`: `~dropK` removes line K so each step has new content; `pmdco-bad.nt` = fixture + two disjoint type assertions (needs `REPRO_CONTINUE=1`).
 - jemalloc profiles need an unsized-delete shim (`operator delete(void*, size_t)` -> `free`) because of latent wrong-size deletes; then `scripts/heap-diff.py` between two `heap.N.prof`.
 - Stale native tree (2000+ files "outdated" after git operations): `find build-native -name '*.o' -exec touch {} +` then incremental `cmake --build` (~2 min per changed file); a full rebuild is ~2 h.
+- Pool-owner registry caveats: it stamps the FIRST allocation only, ignores pools freed behind the provider's back, and does not see pools taken from a free list by `getMemoryBlock`; tag parked pools with the owning manager type/pointer and the releasing stack to attribute them.
 - Count librdf objects with gdb (`break librdf_new_stream/free_stream/new_hash/free_hash`, silent+continue, `info breakpoints`): an unbalanced pair points at a leaked handle that pins a whole structure even though the owner's free function ran.
 - Always check the retention claim by counting dtor hits in gdb (`break Class::~Class` with silent/continue) before assuming a lifetime bug.
 
