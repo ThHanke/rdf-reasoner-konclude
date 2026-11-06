@@ -815,6 +815,8 @@ On complex OWL 2 DL reasoning (SROIQ, Roberts family), this package matches nati
 
 Full benchmark — speed, output comparison vs native Konclude and HermiT, incremental reasoning, memory: [`docs/benchmark.md`](docs/benchmark.md).
 
+`repair()` (inconsistency repair) latency and robustness across ontology sizes: [`docs/benchmark-repair.md`](docs/benchmark-repair.md); reproduce with `npm run bench:repair`.
+
 Run `npm run bench` to reproduce (requires built WASM binary + Docker).
 
 ## How it works

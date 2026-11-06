@@ -1,6 +1,6 @@
 # Benchmark
 
-`npm run bench` (full, ~30 min, needs Docker for native Konclude and HermiT) or `npm run bench:quick` (LUBM schema + GALEN, 3 runs, ~5 min). Output is Markdown; `docs/benchmark.md` is a saved full run.
+`npm run bench:repair` runs the `repair()` benchmark (about 40 min, no Docker; results and method in [`docs/benchmark-repair.md`](../../docs/benchmark-repair.md)). `npm run bench` (full, ~30 min, needs Docker for native Konclude and HermiT) or `npm run bench:quick` (LUBM schema + GALEN, 3 runs, ~5 min). Output is Markdown; `docs/benchmark.md` is a saved full run.
 
 Options: `--quick`, `--case "<name>"` (one case; names in `cases.mjs`). The run waits up to 5 minutes for a quiet host (1-minute load average < 3.5) before measuring.
 
@@ -26,3 +26,4 @@ Cells show `median [min–max]`; `†` = spread above 10%, `‡` = fewer than 5 
 - TS-layer runner (`ts-runner.mjs`): **one fresh process, one fresh `RdfReasoner`, one call per measurement** (`simple-run.mjs`; `simple-warm.mjs` for the warm scenarios). Several reasoners created and terminated inside one Node process produced intermittent 4–5× slow kernel runs on Roberts (`docs/solutions/performance-issues/ts-runner-in-process-slow-runs-2026-10.md`), so in-process repetition is not used.
 - Stability across many changed-content calls on one reasoner: `sequential-runner.mjs` (by hand).
 - `gen-family.mjs` generates synthetic family ontologies; OWL/XML conversion helper: `scripts/native-xml-to-nt.mjs`.
+- `repair()` benchmark: `repair-bench.mjs` (matrix driver and `--report` table), `repair-case.mjs` (one case: fresh process, base-consistency check, clash injection, `repair()`, apply and re-check), `repair-clashes.mjs` (the injected clashes with their axioms and expected results, shared by the scripts and the docs), `repair-example.mjs` (prints the real `repair()` output for one case). Results and the known Roberts issue: `docs/benchmark-repair.md`.

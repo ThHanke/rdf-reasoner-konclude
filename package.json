@@ -42,6 +42,7 @@
     "patch-wasm": "bash scripts/patch-konclude-mjs.sh",
     "bench": "node --expose-gc tests/bench/bench.mjs 2>&1 | tee bench-results.md",
     "test:browser": "playwright test",
+    "bench:repair": "node tests/bench/repair-bench.mjs --out /tmp/repair-bench.jsonl && node tests/bench/repair-bench.mjs --report /tmp/repair-bench.jsonl",
     "bench:quick": "node --expose-gc tests/bench/bench.mjs --quick 2>&1 | tee bench-results.md"
   },
   "dependencies": {
