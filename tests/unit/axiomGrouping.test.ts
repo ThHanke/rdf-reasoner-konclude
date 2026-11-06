@@ -114,4 +114,24 @@ describe("groupJustification", () => {
     const res = groupJustification([ax], storeOf(ax), ignore);
     expect(res.axioms[0].quads).toHaveLength(1);
   });
+
+  it("groups an anonymous-rooted AllDisjointClasses axiom into one unit, restoring cells the justification dropped", () => {
+    const h = b("h"), l1 = b("l1"), l2 = b("l2");
+    const first = n(`${RDF}first`), restP = n(`${RDF}rest`), nil = n(`${RDF}nil`);
+    const typ = quad(h, type, n(`${OWL}AllDisjointClasses`));
+    const all = [typ, quad(h, n(`${OWL}members`), l1), quad(l1, first, A), quad(l1, restP, l2), quad(l2, first, B), quad(l2, restP, nil)];
+    // the minimised justification kept five of the six triples (the final rdf:rest nil was dropped)
+    const res = groupJustification(all.slice(0, 5), storeOf(...all), ignore);
+    expect(res.axioms).toHaveLength(1);
+    expect(res.axioms[0].principal).toBe(typ);
+    expect(res.axioms[0].quads).toHaveLength(6);
+  });
+
+  it("does not treat a blank node that is the object of another triple as an axiom head", () => {
+    const r1 = b("r1");
+    const principal = quad(A, subClassOf, r1);
+    const t = quad(r1, type, n(`${OWL}Restriction`));
+    const res = groupJustification([principal, t], storeOf(principal, t), ignore);
+    expect(res.axioms).toHaveLength(1);
+  });
 });

@@ -73,4 +73,25 @@ describe.skipIf(!wasmExists || !enabled)("repair round trip on PMDco (A2 reprodu
       420_000,
     );
   }
+
+  it(
+    "0000004 x 0000020 has two justifications; the AllDisjointClasses axiom is one grouped unit",
+    async () => {
+      const ind = n("http://ex.org/x-two-justifications");
+      const store = new Store([...base, quad(ind, n(RDF_TYPE), n(`${BFO}0000004`)), quad(ind, n(RDF_TYPE), n(`${BFO}0000020`))]);
+      const t = performance.now();
+      const js = await reasoner.explainInconsistencyAxioms(store, { maxJustifications: 3 });
+      console.log(`[roundtrip] two-justifications: explain ${secs(t)} -> sizes ${js.map(j => j.axioms.length)}`);
+      expect(js.length).toBe(2);
+      const adc = js.flatMap(j => j.axioms).find(a => a.principal.object.value === "http://www.w3.org/2002/07/owl#AllDisjointClasses");
+      expect(adc).toBeDefined();
+      expect(adc!.quads.length).toBeGreaterThanOrEqual(5); // type, members, two list cells (first/rest), not 5 singletons
+      // the two type assertions are in both justifications: removing one of them alone restores consistency
+      const shared = js[0].axioms.find(a => a.principal.subject.value === ind.value);
+      expect(shared).toBeDefined();
+      for (const q of shared!.quads) store.removeQuad(q);
+      expect(await reasoner.checkConsistency(store)).toBe(true);
+    },
+    420_000,
+  );
 });

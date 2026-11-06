@@ -13,7 +13,7 @@
  * is not grouped; each such triple is its own singleton axiom.
  */
 import type { Quad, Term } from "@rdfjs/types";
-import type { Store } from "n3";
+import { DataFactory, type Store } from "n3";
 import type { Axiom, AxiomJustification } from "./types.js";
 
 const RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
@@ -99,6 +99,35 @@ export function groupJustification(
     for (const b of blanks) groupedBlanks.add(b);
     axioms.push({ principal: root, quads: [...copies(root), ...quads] });
   });
+
+  // Anonymous-rooted axioms (AllDisjointClasses, AllDifferent, ...): a blank node that no live triple points at is
+  // the head of its own axiom; group its closure from the store the same way as a named root.
+  const isHead = (label: string): boolean =>
+    store.getQuads(null, null, DataFactory.blankNode(label), null).every(c => graphsToIgnore.has(c.graph.value));
+  const headLabels = new Set<string>();
+  for (const q of blankSubjectQuads) {
+    if (!groupedBlanks.has(q.subject.value) && isHead(q.subject.value)) headLabels.add(q.subject.value);
+  }
+  for (const label of headLabels) {
+    const head = DataFactory.blankNode(label);
+    const quads: Quad[] = [];
+    const blanks = new Set<string>();
+    const visit = (term: Term): void => {
+      if (term.termType !== "BlankNode" || blanks.has(term.value)) return;
+      blanks.add(term.value);
+      for (const c of store.getQuads(term, null, null, null)) {
+        if (graphsToIgnore.has(c.graph.value)) continue;
+        quads.push(c);
+        visit(c.object);
+      }
+    };
+    visit(head);
+    if ([...blanks].some(b => groupedBlanks.has(b))) continue; // shared with another axiom: singleton fallback below
+    const inJustification = blankSubjectQuads.filter(q => q.subject.value === label);
+    const principal = inJustification.find(q => q.predicate.value === RDF_TYPE) ?? inJustification[0];
+    for (const b of blanks) groupedBlanks.add(b);
+    axioms.push({ principal, quads });
+  }
 
   for (const q of blankSubjectQuads) {
     if (groupedBlanks.has(q.subject.value)) continue;
