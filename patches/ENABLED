@@ -5,3 +5,5 @@
 002  # Realizer/kernel correctness fixes
 003  # Stall detection hooks
 004  # Per-call memory lifecycle (pool/item/cache release, virtual dtors) + diagnostic counters
+005  # Release pseudo-model pool container of KPSet class/role classification items in their dtor
+006  # ~CRedlandStoredTriplesData frees the remaining statement-linker copies

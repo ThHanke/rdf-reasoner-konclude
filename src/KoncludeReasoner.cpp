@@ -548,13 +548,31 @@ struct KoncludeReasoner::Impl {
         mReasonerManager->setClassificationManager(mClassManager);
     }
 
+    // ~COntologyTriplesData never deletes the CTriplesData objects it lists (upstream is a one-shot
+    // process), so every ontology leaked its Redland world/storage/model (~1 KB per triple). Each
+    // ontology built here owns its triples data exclusively unless it is part of an incremental
+    // revision chain (native prototype), whose members share data: those are left alone.
+    void freeOntology(CConcreteOntology* ont) {
+        if (!ont) return;
+        std::vector<CRedlandStoredTriplesData*> owned;
+        if (mRevisionChain.empty()) {
+            if (COntologyTriplesData* otd = ont->getOntologyTriplesData()) {
+                for (CTriplesData* t : *otd->getAllTriplesData()) {
+                    if (auto* rt = dynamic_cast<CRedlandStoredTriplesData*>(t)) owned.push_back(rt);
+                }
+            }
+        }
+        delete ont;
+        for (CRedlandStoredTriplesData* rt : owned) delete rt;
+    }
+
     ~Impl() {
         // Stop all threads BEFORE freeing the ontology.
         // threadStopped() (overridden) joins the realizer and BackendAssCache threads.
         delete mReasonerManager; // joins CReasonerManagerThread; threadStopped() runs
         delete mClassManager;
-        delete mPreviousOntology;
-        delete mOntology;        // safe: all background threads have stopped
+        freeOntology(mPreviousOntology);
+        freeOntology(mOntology); // safe: all background threads have stopped
         delete mConfigProvider;
     }
 
@@ -599,7 +617,7 @@ struct KoncludeReasoner::Impl {
         ++mResetCount;
         // The previous call's result has been read; free its realization data now (thread objects stay).
         if (mReasonerManager) mReasonerManager->releaseStoppedRealizerItems();
-        delete mPreviousOntology;
+        freeOntology(mPreviousOntology);
         mPreviousOntology = mOntology;
         mOntology = nullptr;
         buildFreshOntology();
@@ -2140,7 +2158,7 @@ bool KoncludeReasoner::runPipeline(KoncludeReasoner::Impl* impl, bool includeRea
     // per-ontology items lazily when they first see the new one). Keeping it until the next reset()
     // doubled the retained heap between calls. REPRO_KEEP_PREV=1 restores the old lifetime (A/B tests).
     if (impl->mPreviousOntology && !getenv("REPRO_KEEP_PREV")) {
-        delete impl->mPreviousOntology;
+        impl->freeOntology(impl->mPreviousOntology);
         impl->mPreviousOntology = nullptr;
     }
 

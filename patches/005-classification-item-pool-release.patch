@@ -1,0 +1,44 @@
+--- a/Source/Reasoner/Classifier/COptimizedKPSetClassOntologyClassificationItem.cpp
++++ b/Source/Reasoner/Classifier/COptimizedKPSetClassOntologyClassificationItem.cpp
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include "COptimizedKPSetClassOntologyClassificationItem.h"
++#include "Utilities/Memory/CNewAllocationMemoryPoolProvider.h"
+ 
+ 
+ namespace Konclude {
+@@ -55,6 +56,11 @@
+ 
+ 			COptimizedKPSetClassOntologyClassificationItem::~COptimizedKPSetClassOntologyClassificationItem() {
+ 				for (auto* item : mSatTestItemContainer) { delete item; }
++				// pseudo model pools collected via addMemoryPools(): nothing else frees them
++				if (CMemoryPool* pools = mMemoryPoolContainer.takeMemoryPools()) {
++					CNewAllocationMemoryPoolProvider tmpProv;
++					tmpProv.releaseMemoryPool(pools);
++				}
+ 			}
+ 
+ 
+--- a/Source/Reasoner/Classifier/COptimizedKPSetRoleOntologyClassificationItem.cpp
++++ b/Source/Reasoner/Classifier/COptimizedKPSetRoleOntologyClassificationItem.cpp
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include "COptimizedKPSetRoleOntologyClassificationItem.h"
++#include "Utilities/Memory/CNewAllocationMemoryPoolProvider.h"
+ 
+ 
+ namespace Konclude {
+@@ -67,6 +68,11 @@
+ 				}
+ 				delete mTmpRoleClassificationOnt;
+ 				for (auto* item : mSatTestItemContainer) { delete item; }
++				// pseudo model pools collected via addMemoryPools(): nothing else frees them
++				if (CMemoryPool* pools = mMemoryPoolContainer.takeMemoryPools()) {
++					CNewAllocationMemoryPoolProvider tmpProv;
++					tmpProv.releaseMemoryPool(pools);
++				}
+ 			}
+ 
+ 
