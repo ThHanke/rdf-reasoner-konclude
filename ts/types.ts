@@ -85,6 +85,45 @@ export interface RepairResult {
   reason?: 'deadline' | 'round-cap' | 'solution-cap' | 'explain-failed' | 'verify-failed';
 }
 
+export interface Edit {
+  /** Quads to remove, by exact identity (graph included). Quads that are not in the store are reported in `unmatchedRemovals`. */
+  remove?: Quad[];
+  /** Quads to add. */
+  add?: Quad[];
+}
+
+/** Two named classes, `a < b` lexicographically. */
+export interface DisjointPair {
+  a: string;
+  b: string;
+}
+
+export interface AssessEditOptions {
+  /** Class pairs to protect. Default: the asserted disjointness pairs of the unedited store (`owl:disjointWith`, `owl:AllDisjointClasses`, `owl:disjointUnionOf`, expanded, named classes only), read syntactically so an inconsistent store works. */
+  pairs?: DisjointPair[];
+  /** Also protect the pairs formed by descendants of the asserted endpoints (entailed by monotonicity; needs a consistent unedited store, otherwise ignored). Default false. */
+  deriveFromHierarchy?: boolean;
+  /** Wall-clock budget in ms for the whole call, 0 = none. Default 180000. */
+  timeout?: number;
+  /** Named graph IRI that holds inferred triples in the store (excluded from the ontology). Default `INFERRED_GRAPH_IRI`. */
+  inferredGraph?: string;
+}
+
+export interface EditAssessment {
+  /** The ontology after the edit is consistent. */
+  consistent: boolean;
+  /** Pairs that were asserted (or derived) disjoint before the edit and are no longer entailed disjoint after it. A pair whose endpoint became unsatisfiable still counts as disjoint. `null` when the edited ontology is inconsistent or the check was cut short. */
+  lostDisjointPairs: DisjointPair[] | null;
+  /** The pairs that were tested. */
+  pairsChecked: DisjointPair[];
+  /** Requested removals that matched no quad of the store (the edit did nothing for them). */
+  unmatchedRemovals: Quad[];
+  /** The call stopped early (`reason` says why); what is set is still valid. */
+  incomplete: boolean;
+  /** `deadline` and `pair-cap` (more than 5000 pairs) set `incomplete`; `edited-inconsistent` is informational (the edit does not restore consistency, so disjointness cannot be judged). */
+  reason?: 'deadline' | 'pair-cap' | 'edited-inconsistent';
+}
+
 /**
  * Named graph IRI used to hold hypothetical (what-if) triples.
  * Quads in this graph are excluded from store fingerprints.

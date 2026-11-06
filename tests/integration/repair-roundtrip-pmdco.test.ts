@@ -120,4 +120,27 @@ describe.skipIf(!wasmExists || !enabled)("repair round trip on PMDco (A2 reprodu
     },
     600_000,
   );
+
+  it(
+    "assessEdit(): cost of each repair of the real BFO clash on PMDco",
+    async () => {
+      const ind = n("http://ex.org/x-assess");
+      const store = new Store([...base, quad(ind, n(RDF_TYPE), n(`${BFO}0000004`)), quad(ind, n(RDF_TYPE), n(`${BFO}0000020`))]);
+      const rep = await reasoner.repair(store);
+      expect(rep.repairs.length).toBeGreaterThanOrEqual(3);
+      const short = (iri: string) => iri.replace("http://purl.obolibrary.org/obo/", "obo:");
+      for (const r of rep.repairs) {
+        const label = r.remove.map((a) => `${short(a.principal.subject.value)} ${short(a.principal.predicate.value.replace(/^.*[#/]/, ""))}`).join(" + ");
+        const t = performance.now();
+        const cost = await reasoner.assessEdit(store, { remove: r.remove.flatMap((a) => a.quads) });
+        console.log(`[roundtrip] assessEdit [${label}]: ${secs(t)}; consistent=${cost.consistent}; pairs checked=${cost.pairsChecked.length}; lost=${cost.lostDisjointPairs?.length}${cost.lostDisjointPairs?.length ? " e.g. " + cost.lostDisjointPairs.slice(0, 3).map((p) => `${short(p.a)}/${short(p.b)}`).join(", ") : ""}`);
+        expect(cost.consistent).toBe(true);
+        expect(cost.incomplete).toBe(false);
+        const removesDisjointness = r.remove.some((a) => a.principal.predicate.value.endsWith("disjointWith") || a.principal.object.value.endsWith("AllDisjointClasses"));
+        if (!removesDisjointness) expect(cost.lostDisjointPairs).toEqual([]);
+        else expect(cost.lostDisjointPairs!.length).toBeGreaterThan(0);
+      }
+    },
+    900_000,
+  );
 });

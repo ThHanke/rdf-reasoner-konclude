@@ -24,17 +24,18 @@ import { Store, DataFactory } from "n3";
 import { encodeToBuffers, decodeBuffers } from "./intern.js";
 
 
-export type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions, LaconicPart, LaconicJustification, LaconicExplainOptions, Axiom, AxiomJustification, RepairOptions, Repair, RepairResult } from "./types.js";
+export type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions, LaconicPart, LaconicJustification, LaconicExplainOptions, Axiom, AxiomJustification, RepairOptions, Repair, RepairResult, Edit, DisjointPair, AssessEditOptions, EditAssessment } from "./types.js";
 export { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, KJ_NS, KJ_JUSTIFICATION, KJ_JUSTIFIES, KJ_AXIOM } from "./types.js";
 export { createInlineWorker } from "./inlineWorker.js";
 export { createManagedStore } from "./n3Inject.js";
-import type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions, LaconicPart, LaconicJustification, LaconicExplainOptions, Axiom, AxiomJustification, RepairOptions, Repair, RepairResult } from "./types.js";
+import type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions, LaconicPart, LaconicJustification, LaconicExplainOptions, Axiom, AxiomJustification, RepairOptions, Repair, RepairResult, Edit, DisjointPair, AssessEditOptions, EditAssessment } from "./types.js";
 import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, KJ_JUSTIFIES, KJ_AXIOM, ReasonerStalledError } from "./types.js";
 export { ReasonerStalledError } from "./types.js";
 import { injectExplanationsFromBuffer, encodeStoreToBuffers, existsInSourceGraphs, clearGraph, createManagedStore, getRawStore } from "./n3Inject.js";
 import { groupJustification, partitionIntoUnits } from "./axiomGrouping.js";
 import { dropAnnotationTriples } from "./annotations.js";
 import { computeRepairs, REPAIR_DEFAULT_TIMEOUT_MS, type RepairOracle } from "./repair.js";
+import { computeAssessment, type AssessOracle } from "./assessEdit.js";
 import { buildEntailmentProbe, classifyAxiom, tripleKey as probeTripleKey } from "./entailmentProbe.js";
 import { computeLaconicAsync, groupQuadsIntoAxioms, splitAxiom, axiomKey } from "./laconicJustification.js";
 
@@ -1718,6 +1719,49 @@ export class RdfReasoner {
   }
 
   /**
+   * What does a proposed edit cost? Applies `edit` (removals by exact quad identity, then additions) to a copy and
+   * reports whether the result is consistent and which asserted class-disjointness pairs are no longer entailed.
+   *
+   * The pairs to protect are the asserted disjointness pairs of the unedited store (`owl:disjointWith`,
+   * `owl:AllDisjointClasses`, `owl:disjointUnionOf`, named classes), read syntactically, so this works on an inconsistent
+   * store (the typical input: the edit is a repair). They are tested after the edit in one batch with probe classes.
+   * `lostDisjointPairs` is `null` when the edited ontology is itself inconsistent. Never mutates the caller's store and
+   * never throws for a deadline (`incomplete: true`, `reason: 'deadline'`). The reasoner's own state is left on the edited
+   * copy, so the caller's next normal call reloads once.
+   */
+  assessEdit(store: Store, edit: Edit, opts?: AssessEditOptions): Promise<EditAssessment> {
+    if (typeof (store as { getQuads?: unknown } | null)?.getQuads !== "function") {
+      return Promise.reject(new TypeError("assessEdit: store must be an N3 Store"));
+    }
+    if (edit === null || typeof edit !== "object") return Promise.reject(new TypeError("assessEdit: edit must be an object"));
+    const result = this._queue.then(async () => {
+      const ig = opts?.inferredGraph ?? INFERRED_GRAPH_IRI;
+      const graphsToIgnore = new Set<string>([ig, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI]);
+      const base = store.getQuads(null, null, null, null).filter(q => !graphsToIgnore.has(q.graph.value));
+      const timeoutMs = opts?.timeout ?? 180_000;
+      const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : Infinity;
+      const oracle: AssessOracle = {
+        inconsistent: quads => this._boundedInconsistencyCheck(quads, deadline),
+        unsatisfiable: quads => this._unsatisfiableClassesDirect(quads, deadline),
+        subClassPairs: quads => this._subClassPairsDirect(quads, deadline),
+      };
+      try {
+        return await computeAssessment({ base, edit, opts, oracle });
+      } finally {
+        // sub-calls replaced the WASM state: every generation-keyed cache is stale
+        this._classifyCache = null;
+        this._materializeCache = null;
+        this._classifyPropertiesCache = null;
+        this._consistencyCache = null;
+        this._lastExplBuffer = null;
+        this._lastPropertyExplBuffer = null;
+      }
+    });
+    this._queue = result.then(() => {}, () => {});
+    return result;
+  }
+
+  /**
    * Compute repairs for an inconsistent store: complete sets of axioms whose removal restores consistency.
    *
    * Lazy candidate / verify / refine loop (see ts/repair.ts): explain the inconsistency, take the minimal hitting
@@ -1805,6 +1849,51 @@ export class RdfReasoner {
     } finally {
       clearTimeout(timeoutHandle);
     }
+  }
+
+  /**
+   * Run slot-held reasoner work bounded by an absolute deadline: "aborted" when the deadline is (about to be) reached.
+   * On a timeout the hung Worker is replaced (as in _boundedInconsistencyCheck). Heap-recycles the Worker first.
+   */
+  private async _withDeadline<T>(work: () => Promise<T>, deadline: number): Promise<T | "aborted"> {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return "aborted";
+    if (this._recycleHeapBytes > 0 && this._lastHeapBytes > this._recycleHeapBytes) await this._recycleWorkerInSlot();
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    const timer = new Promise<"aborted">(resolve => {
+      timeoutHandle = setTimeout(() => resolve("aborted"), Math.min(remaining + 1_000, 120_000));
+    });
+    try {
+      const result = await Promise.race([work(), timer]);
+      if (result === "aborted") await this._reinitForBisection();
+      return result;
+    } finally {
+      clearTimeout(timeoutHandle);
+    }
+  }
+
+  /** Slot-held: IRIs of the unsatisfiable classes of an explicit (consistent) quad set. */
+  private _unsatisfiableClassesDirect(quads: Quad[], deadline: number): Promise<Set<string> | "aborted"> {
+    return this._withDeadline(async () => {
+      const { tripleBuffer, strTableBuffer } = encodeToBuffers(quads);
+      await this._callDirect("sync", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
+      await this._callDirect("classification", []);
+      const raw = (await this._callDirect("getUnsatisfiableClassBuffer", [])) as string;
+      return new Set(raw.split("\n").filter(Boolean));
+    }, deadline);
+  }
+
+  /** Slot-held: entailed named rdfs:subClassOf pairs [sub, super] of an explicit (consistent) quad set. */
+  private _subClassPairsDirect(quads: Quad[], deadline: number): Promise<Array<[string, string]> | "aborted"> {
+    return this._withDeadline(async () => {
+      const { tripleBuffer, strTableBuffer } = encodeToBuffers(quads);
+      await this._callDirect("sync", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
+      await this._callDirect("classification", []);
+      const buf = (await this._callDirect("getInferredTripleBuffer", [])) as ArrayBuffer;
+      return decodeBuffers(buf)
+        .filter(q => q.predicate.value === RDFS_SUB_CLASS_OF && q.subject.termType === "NamedNode" && q.object.termType === "NamedNode")
+        .map(q => [q.subject.value, q.object.value] as [string, string]);
+    }, deadline);
   }
 
   /**

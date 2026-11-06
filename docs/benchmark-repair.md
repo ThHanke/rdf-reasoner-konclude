@@ -1,6 +1,6 @@
 # `repair()` benchmark
 
-Latency and robustness of `RdfReasoner.repair()` across ontology sizes and kinds of inconsistency. Scripts: [`tests/bench/repair-bench.mjs`](../tests/bench/repair-bench.mjs) (matrix driver), [`repair-case.mjs`](../tests/bench/repair-case.mjs) (one case), [`repair-clashes.mjs`](../tests/bench/repair-clashes.mjs) (the injected clashes), [`repair-example.mjs`](../tests/bench/repair-example.mjs) (prints real output). Speed benchmark of the reasoner itself: [`docs/benchmark.md`](benchmark.md).
+Latency and robustness of `RdfReasoner.repair()` across ontology sizes and kinds of inconsistency, and the cost report of `assessEdit()`. Scripts: [`tests/bench/repair-bench.mjs`](../tests/bench/repair-bench.mjs) (matrix driver), [`repair-case.mjs`](../tests/bench/repair-case.mjs) (one case), [`repair-clashes.mjs`](../tests/bench/repair-clashes.mjs) (the injected clashes), [`repair-example.mjs`](../tests/bench/repair-example.mjs) (prints real output). Speed benchmark of the reasoner itself: [`docs/benchmark.md`](benchmark.md).
 
 ```
 Date:      2026-11-06
@@ -177,6 +177,22 @@ repairs (3):
 ```
 
 The type assertions are in both justifications, so removing either one (size 1) repairs both; removing the two disjointness axioms (size 2) is the alternative. All repairs are verified (`verifiedConsistent: true`) and inclusion-minimal.
+
+## Repair cost: `assessEdit()`
+
+`repair()` says _what_ can be removed; `assessEdit(store, {remove, add}, opts)` says _what it costs_: whether the edited ontology is consistent and which asserted class-disjointness pairs are no longer entailed disjoint after the edit (`owl:disjointWith`, `owl:AllDisjointClasses` and `owl:disjointUnionOf`, expanded, named classes). The pairs are read from the unedited store syntactically, so the call works on an inconsistent store, which is where a repair comes from. After the edit all pairs are tested in one batch with probe classes (a class that is a subclass of both endpoints is unsatisfiable exactly when they are disjoint). `deriveFromHierarchy: true` also protects the pairs of the descendants of the asserted endpoints. The store is never modified.
+
+Real output on PMDco (17,158 quads) with the real BFO clash from above, assessing each of the three repairs `repair()` returned (test `assessEdit(): cost of each repair of the real BFO clash on PMDco` in `tests/integration/repair-roundtrip-pmdco.test.ts`, run with `REPRO_PMDCO=1`):
+
+```
+assessEdit [x type obo:BFO_0000020]                          1.20 s  consistent=true  pairs checked=215  lost=0
+assessEdit [x type obo:BFO_0000004]                          1.21 s  consistent=true  pairs checked=215  lost=0
+assessEdit [BFO_0000004 disjointWith BFO_0000020
+            + AllDisjointClasses axiom]                      1.16 s  consistent=true  pairs checked=215  lost=1
+                                                             lost: obo:BFO_0000004 / obo:BFO_0000020
+```
+
+Removing a type assertion repairs the inconsistency for free; removing both disjointness axioms repairs it too but gives up exactly the one disjointness the ontology asserted. 215 pairs is the whole set of disjointness PMDco asserts between named classes.
 
 ## Results
 
