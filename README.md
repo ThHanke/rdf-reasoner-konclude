@@ -140,10 +140,12 @@ const justs = await reasoner.explain(store, quad, { maxJustifications: 3 });
 const inconsJusts = await reasoner.explainInconsistency(store);
 
 // Inconsistency repair: explain by axiom, repair, cost of an edit, weakening
-const axiomJusts = await reasoner.explainInconsistencyAxioms(store);   // AxiomJustification[]
-const { repairs } = await reasoner.repair(store);                       // sets of axioms whose removal restores consistency
-const cost = await reasoner.assessEdit(store, { remove: repairs[0].remove.flatMap((a) => a.quads) });
-const { weakenings } = await reasoner.weaken(store, culpritAxiom);      // weaker replacements for a subClassOf axiom
+const axiomJusts = await reasoner.explainInconsistencyAxioms(store); // AxiomJustification[]
+const { repairs } = await reasoner.repair(store); // sets of axioms whose removal restores consistency
+const cost = await reasoner.assessEdit(store, {
+  remove: repairs[0].remove.flatMap((a) => a.quads),
+});
+const { weakenings } = await reasoner.weaken(store, culpritAxiom); // weaker replacements for a subClassOf axiom
 
 // Satisfiability
 const classes = await reasoner.getUnsatisfiableClasses(store);
@@ -257,24 +259,31 @@ Options for `classify(store, opts)`, `materialize(store, opts)`, and `classifyPr
 // classify, classifyProperties
 interface StoreReasoningOptions {
   inferredGraph?: string; // default: INFERRED_GRAPH_IRI
+  failOnInconsistent?: boolean; // default false, see "Signalling an inconsistent ontology"
 }
 
 // materialize
 interface MaterializeStoreOptions {
   inferredGraph?: string; // default: INFERRED_GRAPH_IRI
   includeClassHierarchy?: boolean; // also emit subClassOf/equivalentClass; default false
+  failOnInconsistent?: boolean; // default false
 }
 ```
 
 Options for the Phase 2 axiom-work methods:
 
 ```typescript
-// isEntailed: no options
+// isEntailed, getUnsatisfiableClasses, isSatisfiable
+interface InconsistencyGuardOptions {
+  inferredGraph?: string; // default: INFERRED_GRAPH_IRI
+  failOnInconsistent?: boolean; // default false
+}
 
 // whatIf
 interface WhatIfOptions {
   removals?: Quad[]; // quads to remove from the base ontology
   outputGraph?: string; // named graph for hypothetical inferences
+  failOnInconsistent?: boolean; // reject when the hypothetical ontology is inconsistent; default false
 }
 
 // explain / explainInconsistency
@@ -528,8 +537,10 @@ automatically — queued calls run in order, never interleaved.
 
 ### Checking if a specific entailment holds (`isEntailed`)
 
-`isEntailed` supports `rdfs:subClassOf`, `owl:equivalentClass`, `rdf:type`, and
-`rdfs:subPropertyOf`. Returns `null` for unsupported predicates.
+`isEntailed` supports `rdfs:subClassOf`, `owl:equivalentClass`, `rdf:type`,
+`rdfs:subPropertyOf` and `owl:disjointWith` between named classes. Returns `null` for unsupported predicates.
+
+`owl:disjointWith` is answered for asserted **and derived** disjointness (two classes below disjoint classes, or classes disjoint through a functional property): the kernel does not emit disjointness in its output, it only uses the axioms inside reasoning, so the pairs of a call are decided together with probe classes (a class below both is unsatisfiable exactly when the two are disjoint; 630 pairs on a 17k-quad ontology take about 1.4 s). A pair with an unsatisfiable class holds vacuously (`explainEntailment` sets `vacuous`). On an inconsistent ontology the answer is `null` (unknown), not a vacuous `true`. `explainEntailment` adds the asserted axiom as justification when there is one; no justification is computed for a derived pair.
 
 ```typescript
 await reasoner.materialize(store);
@@ -543,6 +554,24 @@ const isAnimal = await reasoner.isEntailed(
 );
 // true if Fido rdf:type Animal is entailed
 ```
+
+### Signalling an inconsistent ontology (`failOnInconsistent`)
+
+By default `classify`, `materialize`, `classifyProperties`, `getUnsatisfiableClasses`, `isSatisfiable`, `isEntailed` and `whatIf` return an empty result for an inconsistent ontology without any signal: check `checkConsistency` first, or pass `failOnInconsistent: true` to get an `InconsistentOntologyError` instead (nothing is written to the store before the rejection):
+
+```typescript
+import { InconsistentOntologyError } from "rdf-reasoner-konclude";
+
+try {
+  await reasoner.classify(store, { failOnInconsistent: true });
+} catch (e) {
+  if (e instanceof InconsistentOntologyError)
+    console.error("Fix the inconsistency first: see repair()");
+  else throw e;
+}
+```
+
+The check is one consistency call per changed content (memoised per generation); `materialize` and `whatIf` need one extra rebuild because the realization variant differs from the consistency one. For `whatIf` the check applies to the hypothetical ontology (the store plus the additions), which is how to ask "does this addition make it inconsistent?". `explainEntailment` already reports `ontologyInconsistent`, and `isEntailed` returns `null` for `owl:disjointWith` on an inconsistent ontology.
 
 ### Hypothetical reasoning (`whatIf`)
 
@@ -594,7 +623,7 @@ const result = await reasoner.explainEntailment(
 | `owl:sameAs` (FP/IFP)            | Synthesized (FP/IFP pattern scan)        | <1ms  |
 | `owl:sameAs` (native)            | Native (realization cache)               | ~1ms  |
 | `owl:equivalentClass`            | Native (bidirectional subClassOf)        | ~1ms  |
-| `owl:disjointWith`               | Native (classification cache)            | ~1ms  |
+| `owl:disjointWith`               | Asserted axiom, or probe class (derived) | ~1s   |
 | `owl:equivalentProperty`         | Synthesized (assertion scan)             | <1ms  |
 | `rdfs:subPropertyOf`             | Native (clash-path hook)                 | ~1ms  |
 | `rdfs:domain` / `rdfs:range`     | Native (GCI in taxonomy)                 | ~1ms  |
@@ -629,7 +658,7 @@ if (mips.length > 0) {
 
 ### Repairing an inconsistency (`repair`, `assessEdit`, `weaken`)
 
-`repair` answers *what can I change?*, `assessEdit` *what does it cost?*, `weaken` *can I keep part of the axiom?*. All three take quads, return axioms made of the exact triples they removed (an axiom is every triple that belongs together, all graph copies), never modify your store, and return an `incomplete` result with a `reason` instead of throwing at a deadline.
+`repair` answers _what can I change?_, `assessEdit` _what does it cost?_, `weaken` _can I keep part of the axiom?_. All three take quads, return axioms made of the exact triples they removed (an axiom is every triple that belongs together, all graph copies), never modify your store, and return an `incomplete` result with a `reason` instead of throwing at a deadline.
 
 ```typescript
 const result = await reasoner.repair(store);
@@ -643,7 +672,9 @@ const result = await reasoner.repair(store);
 // result.incomplete / result.reason: 'deadline' | 'round-cap' | 'solution-cap' | 'explain-failed' | 'verify-failed'
 
 // Policy stays with the caller: prefer removing assertions over schema axioms, and so on.
-const cheapFirst = await reasoner.repair(store, { cost: (axiom) => (isAssertion(axiom) ? 0 : 10) });
+const cheapFirst = await reasoner.repair(store, {
+  cost: (axiom) => (isAssertion(axiom) ? 0 : 10),
+});
 
 // What does a repair cost? Class-disjointness the edit gives up, read from the asserted pairs
 // (owl:disjointWith, owl:AllDisjointClasses, owl:disjointUnionOf), so it works on an inconsistent store.

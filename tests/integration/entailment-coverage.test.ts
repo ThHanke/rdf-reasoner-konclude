@@ -89,11 +89,21 @@ describe.skipIf(!wasmExists)("Entailment coverage: roberts-family", () => {
     expect(result.isEntailed).toBe(false);
   }, 60000);
 
-  // ── 3. owl:disjointWith — Native (classification cache) ─────────────
+  // ── 3. owl:disjointWith — decided with a probe class (the kernel does not emit disjointness) ──
 
-  it("disjointWith: not entailed for non-disjoint classes", async () => {
+  it("disjointWith: entailed for classes that are disjoint only by derivation (Father/Mother via Man/Woman)", async () => {
+    // Not asserted: Father is below Man and Mother below Woman, and Man and Woman are disjoint through the functional
+    // hasGender with disjoint Female/Male. An individual typed Father and Mother makes the ontology inconsistent.
     const result = await reasoner.explainEntailment(
       store, `${ROBERTS}Father`, OWL_DISJOINT_WITH, `${ROBERTS}Mother`,
+    );
+    expect(result.isEntailed).toBe(true);
+    expect(result.justifications).toEqual([]); // derived: no axiom-level justification is computed
+  }, 60000);
+
+  it("disjointWith: not entailed for classes that are not disjoint (Father/Man)", async () => {
+    const result = await reasoner.explainEntailment(
+      store, `${ROBERTS}Father`, OWL_DISJOINT_WITH, `${ROBERTS}Man`,
     );
     expect(result.isEntailed).toBe(false);
   }, 60000);

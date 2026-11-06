@@ -186,4 +186,41 @@ describe.skipIf(!wasmExists || !enabled)("repair round trip on PMDco (A2 reprodu
     },
     900_000,
   );
+
+  it(
+    "isEntailed(owl:disjointWith) on PMDco: derived pairs, a large batch, and an independent oracle on a sample",
+    async () => {
+      const DISJOINT = n("http://www.w3.org/2002/07/owl#disjointWith");
+      const store = new Store(base);
+      const obo = (id: string) => n(`http://purl.obolibrary.org/obo/${id}`);
+
+      // continuant vs history: not asserted, derived through the BFO hierarchy (history is below process, below occurrent)
+      expect(await reasoner.isEntailed(store, quad(obo("BFO_0000002"), DISJOINT, obo("BFO_0000182")))).toBe(true);
+
+      // a batch over the BFO classes of the ontology: every unordered pair
+      const bfo = [...new Set(base.filter((q) => q.predicate.value === RDF_TYPE && q.object.value === "http://www.w3.org/2002/07/owl#Class" && q.subject.value.includes("/BFO_")).map((q) => q.subject.value))].slice(0, 45);
+      const axioms = bfo.flatMap((a, i) => bfo.slice(i + 1).map((b) => quad(n(a), DISJOINT, n(b))));
+      let t = performance.now();
+      const results = await reasoner.isEntailed(store, axioms);
+      const entailed = results.filter((r) => r === true).length;
+      console.log(`[roundtrip] isEntailed batch: ${axioms.length} disjointWith axioms in ${secs(t)}; entailed=${entailed}, not=${results.filter((r) => r === false).length}, null=${results.filter((r) => r === null).length}`);
+      expect(results.every((r) => r === true || r === false)).toBe(true);
+      expect(entailed).toBeGreaterThan(0);
+      expect(entailed).toBeLessThan(axioms.length);
+
+      // independent oracle: an individual typed with both classes is inconsistent exactly when the pair is disjoint (satisfiable classes)
+      const picks = [...results.keys()].filter((i) => results[i] === true).slice(0, 6).concat([...results.keys()].filter((i) => results[i] === false).slice(0, 6));
+      let agree = 0;
+      for (const i of picks) {
+        const x = n(`http://ex.org/oracle-${i}`);
+        const probe = new Store([...base, quad(x, n(RDF_TYPE), axioms[i].subject as never), quad(x, n(RDF_TYPE), axioms[i].object as never)]);
+        const inconsistent = !(await reasoner.checkConsistency(probe));
+        if (inconsistent === (results[i] === true)) agree++;
+        else console.log(`[roundtrip] DISAGREE on ${axioms[i].subject.value} / ${axioms[i].object.value}: isEntailed=${results[i]} but individual-typed-in-both inconsistent=${inconsistent}`);
+      }
+      console.log(`[roundtrip] independent oracle agrees on ${agree} of ${picks.length} sampled pairs`);
+      expect(agree).toBe(picks.length);
+    },
+    900_000,
+  );
 });

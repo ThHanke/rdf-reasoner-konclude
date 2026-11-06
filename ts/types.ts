@@ -209,6 +209,9 @@ export interface StoreReasoningOptions extends ReasoningOptions {
    */
   inferredGraph?: string;
 
+  /** Reject with `InconsistentOntologyError` when the ontology is inconsistent (default false: an empty result, no signal). Costs one consistency check per changed content; for `materialize` one extra rebuild (the realization variant differs from the consistency one). */
+  failOnInconsistent?: boolean;
+
   /**
    * When `true`, justifications are serialized as RDF-star triples into the
    * `urn:konclude:explanations` named graph. Query via `store.getQuads()`.
@@ -244,6 +247,9 @@ export interface MaterializeStoreOptions extends MaterializeOptions {
    */
   inferredGraph?: string;
 
+  /** Reject with `InconsistentOntologyError` when the ontology is inconsistent (default false: an empty result, no signal). Costs one consistency check per changed content; for `materialize` one extra rebuild (the realization variant differs from the consistency one). */
+  failOnInconsistent?: boolean;
+
   /**
    * When `true`, the returned Promise resolves to `{ delta: InferenceDelta }`
    * containing the quads added and removed from the inferred graph compared
@@ -272,6 +278,9 @@ export interface ClassifyPropertiesStoreOptions {
    */
   inferredGraph?: string;
 
+  /** Reject with `InconsistentOntologyError` when the ontology is inconsistent (default false: an empty result, no signal). Costs one consistency check per changed content; for `materialize` one extra rebuild (the realization variant differs from the consistency one). */
+  failOnInconsistent?: boolean;
+
   /**
    * When `true`, justifications are serialized as RDF-star triples into the
    * `urn:konclude:explanations` named graph. Query via `store.getQuads()`.
@@ -288,6 +297,9 @@ export interface WhatIfOptions {
   /** Named graph IRI where hypothetical inferences are written in the store.
    *  Must not equal INFERRED_GRAPH_IRI or HYPOTHETICAL_IRI (throws if equal). */
   outputGraph?: string;
+
+  /** Reject with `InconsistentOntologyError` when the ontology is inconsistent (default false: an empty result, no signal; the check applies to the hypothetical ontology). Costs one consistency check per changed content; for `materialize` one extra rebuild (the realization variant differs from the consistency one). */
+  failOnInconsistent?: boolean;
 }
 
 /**
@@ -394,6 +406,26 @@ export class ReasonerStalledError extends Error {
     super(idleMs > 0 ? `Reasoner call "${method}" made no progress for ${Math.round(idleMs / 1000)} s` : `Reasoner "${method}" stalled (no task or event activity)`);
     this.name = "ReasonerStalledError";
   }
+}
+
+/**
+ * Thrown by the reasoning methods that accept `failOnInconsistent: true` when the ontology (or, for `whatIf`, the
+ * hypothetical ontology) is inconsistent. Without the option those methods return empty results for an inconsistent
+ * ontology without any signal: check `checkConsistency` first, or pass the option.
+ */
+export class InconsistentOntologyError extends Error {
+  constructor(message = "The ontology is inconsistent; results of this call would be empty or meaningless.") {
+    super(message);
+    this.name = "InconsistentOntologyError";
+  }
+}
+
+/** Options shared by the methods that can signal an inconsistent ontology. */
+export interface InconsistencyGuardOptions {
+  /** Named graph IRI that holds inferred triples in the store (excluded from the ontology). Default `INFERRED_GRAPH_IRI`. */
+  inferredGraph?: string;
+  /** Reject with `InconsistentOntologyError` when the ontology is inconsistent (default false: an empty result, no signal). Costs one consistency check per changed content; for `materialize` and `whatIf` one extra rebuild (the realization variant differs from the consistency one). */
+  failOnInconsistent?: boolean;
 }
 
 /**

@@ -24,18 +24,18 @@ import { Store, DataFactory } from "n3";
 import { encodeToBuffers, decodeBuffers } from "./intern.js";
 
 
-export type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions, LaconicPart, LaconicJustification, LaconicExplainOptions, Axiom, AxiomJustification, RepairOptions, Repair, RepairResult, Edit, DisjointPair, AssessEditOptions, EditAssessment, WeakenOptions, Weakening, WeakenResult } from "./types.js";
+export type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions, LaconicPart, LaconicJustification, LaconicExplainOptions, Axiom, AxiomJustification, RepairOptions, Repair, RepairResult, Edit, DisjointPair, AssessEditOptions, EditAssessment, WeakenOptions, Weakening, WeakenResult, InconsistencyGuardOptions } from "./types.js";
 export { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, KJ_NS, KJ_JUSTIFICATION, KJ_JUSTIFIES, KJ_AXIOM } from "./types.js";
 export { createInlineWorker } from "./inlineWorker.js";
 export { createManagedStore } from "./n3Inject.js";
-import type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions, LaconicPart, LaconicJustification, LaconicExplainOptions, Axiom, AxiomJustification, RepairOptions, Repair, RepairResult, Edit, DisjointPair, AssessEditOptions, EditAssessment, WeakenOptions, Weakening, WeakenResult } from "./types.js";
-import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, KJ_JUSTIFIES, KJ_AXIOM, ReasonerStalledError } from "./types.js";
-export { ReasonerStalledError } from "./types.js";
+import type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions, LaconicPart, LaconicJustification, LaconicExplainOptions, Axiom, AxiomJustification, RepairOptions, Repair, RepairResult, Edit, DisjointPair, AssessEditOptions, EditAssessment, WeakenOptions, Weakening, WeakenResult, InconsistencyGuardOptions } from "./types.js";
+import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, KJ_JUSTIFIES, KJ_AXIOM, ReasonerStalledError, InconsistentOntologyError } from "./types.js";
+export { ReasonerStalledError, InconsistentOntologyError } from "./types.js";
 import { injectExplanationsFromBuffer, encodeStoreToBuffers, existsInSourceGraphs, clearGraph, createManagedStore, getRawStore } from "./n3Inject.js";
 import { groupJustification, partitionIntoUnits } from "./axiomGrouping.js";
 import { dropAnnotationTriples } from "./annotations.js";
 import { computeRepairs, REPAIR_DEFAULT_TIMEOUT_MS, type RepairOracle } from "./repair.js";
-import { computeAssessment, type AssessOracle } from "./assessEdit.js";
+import { computeAssessment, probeQuads, PROBE_NS, type AssessOracle } from "./assessEdit.js";
 import { computeWeakenings } from "./weaken.js";
 import { buildEntailmentProbe, classifyAxiom, tripleKey as probeTripleKey } from "./entailmentProbe.js";
 import { computeLaconicAsync, groupQuadsIntoAxioms, splitAxiom, axiomKey } from "./laconicJustification.js";
@@ -484,6 +484,7 @@ export class RdfReasoner {
     const wantExplanations = opts?.explanations === true;
     const result = this._queue.then(async () => {
       const gen = await this._syncForOp(store, opts?.inferredGraph);
+      await this._guardConsistent(gen, opts);
       // Cache hit: same store instance with same content as last classify call
       if (this._classifyCache !== null && this._classifyCache.gen === gen && this._classifyCache.store === store) {
         if (wantExplanations) {
@@ -624,6 +625,7 @@ export class RdfReasoner {
         opts?.inferredGraph ?? INFERRED_GRAPH_IRI,
       );
       const gen = await this._syncForOp(store, opts?.inferredGraph);
+      await this._guardConsistent(gen, opts);
 
       // Cache hit: same store instance with same content as last materialize call
       if (this._materializeCache !== null && this._materializeCache.gen === gen && this._materializeCache.store === store) {
@@ -730,6 +732,7 @@ export class RdfReasoner {
     const wantExplanations = opts?.explanations === true;
     const result = this._queue.then(async () => {
       const gen = await this._syncForOp(store, opts?.inferredGraph);
+      await this._guardConsistent(gen, opts);
       // Cache hit: same store instance with same content as last classifyProperties call
       if (this._classifyPropertiesCache !== null && this._classifyPropertiesCache.gen === gen && this._classifyPropertiesCache.store === store) {
         if (wantExplanations) {
@@ -858,8 +861,9 @@ export class RdfReasoner {
    * writes inferred triples into the store on cache miss (same invariant as
    * _classifyInline).  Must be called from inside a _queue slot only.
    */
-  private async _getUnsatisfiableClassesInternal(store: Store, inferredGraph?: string): Promise<string[]> {
+  private async _getUnsatisfiableClassesInternal(store: Store, inferredGraph?: string, guard?: { failOnInconsistent?: boolean }): Promise<string[]> {
     const gen = await this._sync(store, inferredGraph, true);
+    await this._guardConsistent(gen, guard, true);
     if (this._classifyCache?.gen !== gen || this._classifyCache.store !== store) {
       const rawStore = getRawStore(store);
       const ig = DataFactory.namedNode(inferredGraph ?? INFERRED_GRAPH_IRI);
@@ -883,9 +887,9 @@ export class RdfReasoner {
   /** Return the IRIs of all classes that are unsatisfiable (equivalent to
    *  owl:Nothing) in the ontology.  owl:Nothing itself is excluded.
    *  Classes absent from the taxonomy are NOT included (open-world). */
-  getUnsatisfiableClasses(store: Store): Promise<string[]> {
+  getUnsatisfiableClasses(store: Store, opts?: InconsistencyGuardOptions): Promise<string[]> {
     const result = this._queue.then(async () =>
-      this._getUnsatisfiableClassesInternal(store),
+      this._getUnsatisfiableClassesInternal(store, opts?.inferredGraph, opts),
     );
     this._queue = result.then(() => {}, () => {});
     return result;
@@ -894,10 +898,10 @@ export class RdfReasoner {
   /** Return `false` if `classIRI` is equivalent to owl:Nothing in the ontology.
    *  Returns `true` for any class absent from the taxonomy (open-world assumption).
    *  owl:Nothing is always unsatisfiable; returns `false` without a Worker call. */
-  isSatisfiable(store: Store, classIRI: string): Promise<boolean> {
+  isSatisfiable(store: Store, classIRI: string, opts?: InconsistencyGuardOptions): Promise<boolean> {
     if (classIRI === OWL_NOTHING) return Promise.resolve(false);
     const result = this._queue.then(async () => {
-      const unsatSet = await this._getUnsatisfiableClassesInternal(store);
+      const unsatSet = await this._getUnsatisfiableClassesInternal(store, opts?.inferredGraph, opts);
       return !unsatSet.includes(classIRI);
     });
     this._queue = result.then(() => {}, () => {});
@@ -910,15 +914,15 @@ export class RdfReasoner {
   /** Check whether a single axiom is entailed by the store's ontology. Returns
    *  null for unsupported predicates (a warning is logged). Triggers reasoning
    *  internally if the store has changed since the last call. */
-  isEntailed(store: Store, axiom: Quad, opts?: { inferredGraph?: string }): Promise<boolean | null>;
+  isEntailed(store: Store, axiom: Quad, opts?: InconsistencyGuardOptions): Promise<boolean | null>;
   /** Check whether each axiom in a batch is entailed. Returns null for
    *  individual unsupported predicates. Reasoning is triggered at most once
    *  per required operation type. */
-  isEntailed(store: Store, axioms: Quad[], opts?: { inferredGraph?: string }): Promise<(boolean | null)[]>;
+  isEntailed(store: Store, axioms: Quad[], opts?: InconsistencyGuardOptions): Promise<(boolean | null)[]>;
   isEntailed(
     store: Store,
     axiomOrAxioms: Quad | Quad[],
-    opts?: { inferredGraph?: string },
+    opts?: InconsistencyGuardOptions,
   ): Promise<boolean | null> | Promise<(boolean | null)[]> {
     const isBatch = Array.isArray(axiomOrAxioms);
     const axioms: Quad[] = isBatch ? (axiomOrAxioms as Quad[]) : [axiomOrAxioms as Quad];
@@ -927,7 +931,7 @@ export class RdfReasoner {
     // Fast-path unsupported check for single axiom (no queue entry needed)
     if (!isBatch) {
       const op = this._opForPredicate((axiomOrAxioms as Quad).predicate.value);
-      if (op === null) {
+      if (op === null && !this._isDisjointAxiom(axiomOrAxioms as Quad)) {
         console.warn(`isEntailed: unsupported predicate <${(axiomOrAxioms as Quad).predicate.value}>`);
         return Promise.resolve(null);
       }
@@ -936,6 +940,7 @@ export class RdfReasoner {
     const result = this._queue.then(async () => {
       const ig = DataFactory.namedNode(igIri);
       const gen = await this._sync(store, igIri);
+      await this._guardConsistent(gen, opts);
 
       // Determine which operations are needed
       const needsClassify = axioms.some(a => this._opForPredicate(a.predicate.value) === "classify");
@@ -978,9 +983,19 @@ export class RdfReasoner {
         }
       }
 
+      // owl:disjointWith between named classes: decided in one probe batch (after the other operations; it replaces the WASM state)
+      const disjointAxioms = axioms.filter(a => this._isDisjointAxiom(a));
+      const disjointResults = new Map<Quad, boolean | null>();
+      if (disjointAxioms.length > 0) {
+        const res = await this._disjointEntailmentsDirect(store, igIri, disjointAxioms);
+        disjointAxioms.forEach((a, i) => disjointResults.set(a, res[i].entailed));
+        this._invalidateResultCaches();
+      }
+
       // Assemble results
       if (!isBatch) {
         const axiom = axioms[0];
+        if (this._isDisjointAxiom(axiom)) return disjointResults.get(axiom) ?? null;
         const op = this._opForPredicate(axiom.predicate.value);
         if (op === "classify") return classifyResults.get(axiom) ?? false;
         if (op === "materialize") return materializeResults.get(axiom) ?? false;
@@ -989,6 +1004,7 @@ export class RdfReasoner {
       }
 
       return axioms.map(a => {
+        if (this._isDisjointAxiom(a)) return disjointResults.get(a) ?? null;
         const op = this._opForPredicate(a.predicate.value);
         if (op === null) {
           console.warn(`isEntailed: unsupported predicate <${a.predicate.value}>`);
@@ -1060,6 +1076,10 @@ export class RdfReasoner {
       // Encode and run the full materialize pipeline
       const { tripleBuffer, strTableBuffer } = encodeToBuffers(hypothetical);
       await this._call("sync", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
+      if (opts?.failOnInconsistent && !((await this._call("consistency", [])) as boolean)) {
+        this._invalidateResultCaches(); // the WASM state holds the hypothetical content
+        throw new InconsistentOntologyError("The hypothetical ontology (the store plus the additions, minus the removals) is inconsistent.");
+      }
       await this._call("realization", []);
       const buf = (await this._call("getInferredTripleBuffer", [])) as ArrayBuffer;
       const afterQuads = decodeBuffers(buf);
@@ -1898,6 +1918,64 @@ export class RdfReasoner {
   }
 
   /**
+   * Slot-held opt-in guard (`failOnInconsistent`): throws InconsistentOntologyError when the content synced last (generation
+   * `gen`) is inconsistent. The consistency result is memoised per generation; `direct` selects the slot-held call path.
+   */
+  private async _guardConsistent(gen: number, opts?: { failOnInconsistent?: boolean }, direct = false): Promise<void> {
+    if (!opts?.failOnInconsistent) return;
+    let consistent: boolean;
+    if (this._consistencyCache !== null && this._consistencyCache.gen === gen) consistent = this._consistencyCache.result;
+    else {
+      consistent = (await (direct ? this._callDirect("consistency", []) : this._call("consistency", []))) as boolean;
+      this._consistencyCache = { gen, result: consistent };
+    }
+    if (!consistent) throw new InconsistentOntologyError();
+  }
+
+  /** `X owl:disjointWith Y` between two named classes. */
+  private _isDisjointAxiom(q: Quad): boolean {
+    return q.predicate.value === "http://www.w3.org/2002/07/owl#disjointWith" && q.subject.termType === "NamedNode" && q.object.termType === "NamedNode";
+  }
+
+  /**
+   * Slot-held: are the class pairs of these `owl:disjointWith` axioms entailed disjoint by the store's ontology? Decided in one
+   * batch with probe classes (`P rdfs:subClassOf A, B` is unsatisfiable exactly when A and B are disjoint, or an endpoint is
+   * unsatisfiable, in which case the disjointness holds vacuously and `vacuous` is set). `entailed: null` for every axiom when the ontology is inconsistent
+   * (every pair is then vacuously entailed, which says nothing). The probe load replaces the WASM state: the caller invalidates caches.
+   */
+  private async _disjointEntailmentsDirect(store: Store, inferredGraph: string, axioms: Quad[]): Promise<Array<{ entailed: boolean | null; vacuous: boolean }>> {
+    const ignore = new Set<string>([inferredGraph, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI]);
+    const base = dropAnnotationTriples(store.getQuads(null, null, null, null).filter(q => !ignore.has(q.graph.value)));
+    const inconsistent = await this._boundedInconsistencyCheck(base, Infinity);
+    if (inconsistent !== false) return axioms.map(() => ({ entailed: null, vacuous: false }));
+    const pairOf = (a: Quad): string => (a.subject.value < a.object.value ? `${a.subject.value}\0${a.object.value}` : `${a.object.value}\0${a.subject.value}`);
+    const index = new Map<string, number>();
+    const pairs: DisjointPair[] = [];
+    for (const a of axioms) {
+      const k = pairOf(a);
+      if (index.has(k)) continue;
+      index.set(k, pairs.length);
+      pairs.push(a.subject.value < a.object.value ? { a: a.subject.value, b: a.object.value } : { a: a.object.value, b: a.subject.value });
+    }
+    const unsat = await this._unsatisfiableClassesDirect([...base, ...probeQuads(pairs)], Infinity);
+    if (unsat === "aborted") return axioms.map(() => ({ entailed: null, vacuous: false }));
+    return axioms.map(a => {
+      const entailed = unsat.has(`${PROBE_NS}${index.get(pairOf(a))}`);
+      return { entailed, vacuous: entailed && (unsat.has(a.subject.value) || unsat.has(a.object.value)) };
+    });
+  }
+
+  /** Every generation-keyed result cache is stale (sub-calls replaced the WASM state). */
+  private _invalidateResultCaches(): void {
+    this._classifyCache = null;
+    this._materializeCache = null;
+    this._classifyPropertiesCache = null;
+    this._consistencyCache = null;
+    this._lastExplBuffer = null;
+    this._lastPropertyExplBuffer = null;
+  }
+
+  /**
    * Run slot-held reasoner work bounded by an absolute deadline: "aborted" when the deadline is (about to be) reached.
    * On a timeout the hung Worker is replaced (as in _boundedInconsistencyCheck). Heap-recycles the Worker first.
    */
@@ -2726,21 +2804,34 @@ export class RdfReasoner {
       }
 
       if (probeKind === "disjointWith") {
+        // An asserted axiom is trivially entailed (also in an inconsistent ontology) and is its own justification.
         const just = this._synthesizeDisjointWithJustification(allBase, subjectIri, objectIri);
         if (just) return { isEntailed: true, justifications: [just] };
 
-        // Native classification cache: disjointness stored as Classification entries
-        const hasNative = await this._hasJustificationByTypeDirect(
-          subjectIri, objectIri, RdfReasoner._ET_CLASSIFICATION);
-        if (hasNative) {
-          const ntriples = await this._getJustificationByTypeDirect(
-            subjectIri, objectIri, RdfReasoner._ET_CLASSIFICATION);
-          const justQuads = this._parseNTriplesJustification(ntriples);
-          if (justQuads.length > 0) {
-            return { isEntailed: true, justifications: [justQuads] };
-          }
+        // Derived disjointness: the entailment is decided by the same probe batch as isEntailed (the kernel does not emit
+        // disjointness, it only uses the axioms inside reasoning); explaining only adds the flags. No axiom-level justification
+        // is computed for a derived pair. (The "native classification cache" is not consulted: its justifications are
+        // subsumptions, not disjointness, and made `C disjointWith A` look entailed for any `C subClassOf A`.)
+        const [res] = await this._disjointEntailmentsDirect(store, ig, [DataFactory.quad(DataFactory.namedNode(subjectIri), DataFactory.namedNode(predicateIri), DataFactory.namedNode(objectIri))]);
+        this._invalidateResultCaches();
+        if (res.entailed === null) {
+          return {
+            isEntailed: null as boolean | null,
+            justifications: [] as Quad[][],
+            ontologyInconsistent: true,
+            reason: "Ontology is already inconsistent; entailment is vacuous.",
+          };
         }
-        return { isEntailed: false, justifications: [] as Quad[][] };
+        if (!res.entailed) return { isEntailed: false, justifications: [] as Quad[][] };
+        if (res.vacuous) {
+          return {
+            isEntailed: true as boolean | null,
+            justifications: [] as Quad[][],
+            vacuous: true,
+            reason: "A class of the pair is unsatisfiable; the disjointness holds vacuously.",
+          };
+        }
+        return { isEntailed: true, justifications: [] as Quad[][] };
       }
 
       if (probeKind === "dataProperty") {
