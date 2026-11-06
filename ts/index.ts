@@ -33,6 +33,7 @@ import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, KJ_JUSTIFI
 export { ReasonerStalledError } from "./types.js";
 import { injectExplanationsFromBuffer, encodeStoreToBuffers, existsInSourceGraphs, clearGraph, createManagedStore, getRawStore } from "./n3Inject.js";
 import { groupJustification } from "./axiomGrouping.js";
+import { dropAnnotationTriples } from "./annotations.js";
 import { computeRepairs, REPAIR_DEFAULT_TIMEOUT_MS, type RepairOracle } from "./repair.js";
 import { buildEntailmentProbe, classifyAxiom, tripleKey as probeTripleKey } from "./entailmentProbe.js";
 import { computeLaconicAsync, groupQuadsIntoAxioms, splitAxiom, axiomKey } from "./laconicJustification.js";
@@ -559,7 +560,7 @@ export class RdfReasoner {
         return this._consistencyCache.result;
       }
 
-      await this._call("classification", []);
+      // consistency() runs the classification pipeline itself (see _checkInconsistencyDirect).
       const consistent = (await this._call("consistency", [])) as boolean;
 
       // Caches of other content generations are stale; caches of THIS generation stay valid.
@@ -1182,7 +1183,8 @@ export class RdfReasoner {
   private async _checkInconsistencyDirect(candidates: Quad[]): Promise<boolean> {
     const { tripleBuffer, strTableBuffer } = encodeToBuffers(candidates);
     await this._callDirect("sync", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
-    await this._callDirect("classification", []);
+    // consistency() runs the classification pipeline itself; a separate classification call first would make an
+    // inconsistent set (failed pipeline, marked for retry) pay for a second full rebuild (measured: 480 -> 265 ms on PMDco).
     const consistent = (await this._callDirect("consistency", [])) as boolean;
     return !consistent;
   }
@@ -1651,10 +1653,11 @@ export class RdfReasoner {
     const result = this._queue.then(async () => {
       const ig = opts?.inferredGraph ?? INFERRED_GRAPH_IRI;
       // Build base quads (exclude inferred/hypothetical graphs)
-      const allBase = store.getQuads(null, null, null, null).filter(q => {
+      // Annotation assertions never affect consistency (OWL 2 DL): leave them out of every check.
+      const allBase = dropAnnotationTriples(store.getQuads(null, null, null, null).filter(q => {
         const g = q.graph.value;
         return g !== ig && g !== HYPOTHETICAL_IRI;
-      });
+      }));
 
       // Fast-path: check consistency using existing cache or direct Worker call
       const gen = await this._sync(store, ig);
@@ -1682,12 +1685,12 @@ export class RdfReasoner {
       // Unlike explain(), we do NOT apply _isBuiltInDeclaration here because
       // rdf:type owl:Class declarations are semantically meaningful for
       // ABox inconsistency (Konclude requires them to recognize disjoint classes).
-      const allCandidates = store.getQuads(null, null, null, null).filter(q => {
+      const allCandidates = dropAnnotationTriples(store.getQuads(null, null, null, null).filter(q => {
         const g = q.graph.value;
         if (g === ig || g === HYPOTHETICAL_IRI) return false;
         if (opts?.axiomFilter && !opts.axiomFilter(q)) return false;
         return true;
-      });
+      }));
 
       const timeoutMs = opts?.timeout ?? 180_000;
       const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : Infinity;
@@ -1734,7 +1737,8 @@ export class RdfReasoner {
     const result = this._queue.then(async () => {
       const ig = opts?.inferredGraph ?? INFERRED_GRAPH_IRI;
       const graphsToIgnore = new Set<string>([ig, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI]);
-      const base = store.getQuads(null, null, null, null).filter(q => !graphsToIgnore.has(q.graph.value));
+      // Annotation assertions never affect consistency (OWL 2 DL): leave them out of every check.
+      const base = dropAnnotationTriples(store.getQuads(null, null, null, null).filter(q => !graphsToIgnore.has(q.graph.value)));
       const timeoutMs = opts?.timeout ?? REPAIR_DEFAULT_TIMEOUT_MS;
       const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : Infinity;
       const oracle: RepairOracle = {
