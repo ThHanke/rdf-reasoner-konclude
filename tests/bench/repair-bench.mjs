@@ -3,6 +3,7 @@
 //        node tests/bench/repair-bench.mjs --report results.jsonl                                      (Markdown table)
 import { spawnSync } from "node:child_process";
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -78,6 +79,10 @@ writeFileSync(
     meta: {
       Date: new Date().toISOString().slice(0, 10),
       Package: `rdf-reasoner-konclude ${JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")).version} (git ${sh("git", ["rev-parse", "--short", "HEAD"])}${sh("git", ["status", "--porcelain", "--", "ts"]) ? ", ts/ modified" : ""})`,
+      WASM: `dist/konclude.wasm sha256 ${createHash("sha256")
+        .update(readFileSync(join(ROOT, "dist/konclude.wasm")))
+        .digest("hex")
+        .slice(0, 12)}`,
       Host: `${os.cpus()[0].model.trim()}, ${os.cpus().length} cores, ${Math.round(os.totalmem() / 2 ** 30)} GB; load average at start ${os
         .loadavg()
         .map((x) => x.toFixed(2))

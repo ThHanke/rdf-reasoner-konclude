@@ -32,7 +32,7 @@ import type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, Material
 import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, KJ_JUSTIFIES, KJ_AXIOM, ReasonerStalledError } from "./types.js";
 export { ReasonerStalledError } from "./types.js";
 import { injectExplanationsFromBuffer, encodeStoreToBuffers, existsInSourceGraphs, clearGraph, createManagedStore, getRawStore } from "./n3Inject.js";
-import { groupJustification } from "./axiomGrouping.js";
+import { groupJustification, partitionIntoUnits } from "./axiomGrouping.js";
 import { dropAnnotationTriples } from "./annotations.js";
 import { computeRepairs, REPAIR_DEFAULT_TIMEOUT_MS, type RepairOracle } from "./repair.js";
 import { buildEntailmentProbe, classifyAxiom, tripleKey as probeTripleKey } from "./entailmentProbe.js";
@@ -1819,9 +1819,15 @@ export class RdfReasoner {
   }
 
   /**
-   * Slot-held BlackBox MIPS search over an explicit quad set that is already known to be inconsistent.
+   * Slot-held MIPS search over an explicit quad set that is already known to be inconsistent.
    * Must be called from inside a _queue slot (uses _callDirect only; never the public methods).
    * `deadline` is an absolute Date.now() value (Infinity = none). Returns [] when no justification is found.
+   *
+   * The search runs over AXIOM UNITS, not triples (see ts/axiomGrouping.ts): a triple-level subset can contain part
+   * of an RDF list or a restriction, which is a different, stronger axiom for the reasoner and yields false
+   * justifications. Declaration triples are fixed background of every check. A justification whose search was cut
+   * short by the deadline is dropped (it would not be minimal). Each returned justification carries the declarations
+   * of the entities it mentions.
    */
   private async _explainInconsistencyQuadsDirect(
     allCandidates: Quad[],
@@ -1829,80 +1835,81 @@ export class RdfReasoner {
     deadline: number,
   ): Promise<Quad[][]> {
     const isExpired = () => Date.now() >= deadline;
-    const justifications: Quad[][] = [];
+    const { units, background } = partitionIntoUnits(allCandidates);
+    const checkOrAbort = (idx: readonly number[]): Promise<boolean | "aborted"> =>
+      this._boundedInconsistencyCheck([...idx.flatMap(i => units[i]), ...background], deadline);
+    const idKey = (idx: Iterable<number>): string => [...idx].sort((x, y) => x - y).join(",");
 
-    const checkOrAbort = (quads: Quad[]): Promise<boolean | "aborted"> => this._boundedInconsistencyCheck(quads, deadline);
-
-    // QuickXplain (Junker 2004): a minimal inconsistent subset in about 2*k*log2(n/k) consistency checks for a
-    // justification of size k. The previous halve-then-delete-one-by-one search degenerated to n checks
-    // (17,159 x 0.6 s on PMDco) whenever the clash spanned both halves of the candidate set.
+    // QuickXplain (Junker 2004): a minimal inconsistent set of units in about 2*k*log2(n/k) consistency checks for a
+    // justification of k units.
     const ABORT = Symbol("explain-abort");
-    const findOneJustification = async (candidates: Quad[]): Promise<Quad[] | null> => {
+    const findOneJustification = async (candidates: number[]): Promise<number[] | null> => {
       if (candidates.length === 0) return [];
-      let best = candidates; // smallest set known to be inconsistent; returned (non-minimal) on deadline/abort
-      const inconsistent = async (set: Quad[]): Promise<boolean> => {
+      const inconsistent = async (set: number[]): Promise<boolean> => {
         const r = await checkOrAbort(set);
         if (r === "aborted") throw ABORT;
-        if (r && set.length < best.length) best = set;
         return r;
       };
-      const qx = async (background: Quad[], hasDelta: boolean, c: Quad[]): Promise<Quad[]> => {
-        if (hasDelta && (await inconsistent(background))) return [];
+      const qx = async (bg: number[], hasDelta: boolean, c: number[]): Promise<number[]> => {
+        if (hasDelta && (await inconsistent(bg))) return [];
         if (c.length === 1) return c;
         const k = c.length >> 1;
         const c1 = c.slice(0, k);
         const c2 = c.slice(k);
-        const d2 = await qx([...background, ...c1], c1.length > 0, c2);
-        const d1 = await qx([...background, ...d2], d2.length > 0, c1);
+        const d2 = await qx([...bg, ...c1], c1.length > 0, c2);
+        const d1 = await qx([...bg, ...d2], d2.length > 0, c1);
         return [...d1, ...d2];
       };
       try {
         return await qx([], false, candidates);
       } catch (e) {
-        if (e === ABORT) return best;
+        if (e === ABORT) return null;
         throw e;
       }
     };
 
-    const j1 = await findOneJustification(allCandidates);
+    const all = units.map((_, i) => i);
+    const found: number[][] = [];
+    const foundKeys = new Set<string>();
+    const j1 = await findOneJustification(all);
     if (!j1 || j1.length === 0) return [];
-    justifications.push(j1);
+    found.push(j1);
+    foundKeys.add(idKey(j1));
 
     if (!isExpired() && maxJustifications > 1) {
-      // HSDAG queue: pairs of (excluded set, justification to expand from)
-      const hsQueue: Array<{ excluded: Set<string>; justification: Quad[] }> = [
-        { excluded: new Set(), justification: j1 },
-      ];
-      const exploredExclusions = new Set<string>();
-      while (!isExpired() && hsQueue.length > 0 && justifications.length < maxJustifications) {
+      // HSDAG queue: pairs of (excluded units, justification to expand from)
+      const hsQueue: Array<{ excluded: Set<number>; justification: number[] }> = [{ excluded: new Set(), justification: j1 }];
+      const explored = new Set<string>();
+      while (!isExpired() && hsQueue.length > 0 && found.length < maxJustifications) {
         const { excluded, justification: currentJ } = hsQueue.shift()!;
-        const excludedKey = [...excluded].sort().join("|");
-        if (exploredExclusions.has(excludedKey)) continue;
-        exploredExclusions.add(excludedKey);
-        for (const axiomInJ of currentJ) {
+        const excludedKey = idKey(excluded);
+        if (explored.has(excludedKey)) continue;
+        explored.add(excludedKey);
+        for (const u of currentJ) {
           if (isExpired()) break;
-          const newExcluded = new Set(excluded);
-          const axKey = `${axiomInJ.subject.value}\0${axiomInJ.predicate.value}\0${axiomInJ.object.value}`;
-          newExcluded.add(axKey);
-          const newExcludedKey = [...newExcluded].sort().join("|");
-          if (exploredExclusions.has(newExcludedKey)) continue;
-          const reduced = allCandidates.filter(q => !newExcluded.has(`${q.subject.value}\0${q.predicate.value}\0${q.object.value}`));
+          const newExcluded = new Set(excluded).add(u);
+          if (explored.has(idKey(newExcluded))) continue;
+          const reduced = all.filter(i => !newExcluded.has(i));
           const rCheck = await checkOrAbort(reduced);
           if (rCheck === "aborted" || !rCheck) continue;
           const jNew = await findOneJustification(reduced);
           if (!jNew || jNew.length === 0) continue;
-          const jKey = jNew.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`).sort().join("|");
-          const alreadyFound = justifications.some(j => j.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`).sort().join("|") === jKey);
-          if (!alreadyFound) {
-            justifications.push(jNew);
-            if (justifications.length >= maxJustifications) break;
-            hsQueue.push({ excluded: newExcluded, justification: jNew });
-          }
+          const k = idKey(jNew);
+          if (foundKeys.has(k)) continue;
+          foundKeys.add(k);
+          found.push(jNew);
+          if (found.length >= maxJustifications) break;
+          hsQueue.push({ excluded: newExcluded, justification: jNew });
         }
       }
     }
 
-    return justifications;
+    return found.map(idx => {
+      const quads = idx.flatMap(i => units[i]);
+      const iris = new Set<string>();
+      for (const q of quads) for (const t of [q.subject, q.predicate, q.object]) if (t.termType === "NamedNode") iris.add(t.value);
+      return [...quads, ...background.filter(d => iris.has(d.subject.value))];
+    });
   }
 
   // -------------------------------------------------------------------------

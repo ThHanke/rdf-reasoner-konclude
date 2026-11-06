@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { Store, DataFactory } from "n3";
-import { groupJustification } from "../../ts/axiomGrouping.js";
+import { groupJustification, partitionIntoUnits } from "../../ts/axiomGrouping.js";
 
 const { namedNode: n, blankNode: b, quad, literal, defaultGraph } = DataFactory;
 const EX = "http://ex.org/";
@@ -91,15 +91,15 @@ describe("groupJustification", () => {
     expect(graphs).toEqual(["urn:g1", "urn:g2"]);
   });
 
-  it("falls back to singletons when a blank node is shared between two roots", () => {
+  it("merges two roots that share a blank node into ONE axiom (never splits a blank-node structure)", () => {
     const shared = b("s");
     const x = quad(A, subClassOf, shared);
     const y = quad(B, subClassOf, shared);
     const t = quad(shared, type, n(`${OWL}Restriction`));
     const s = storeOf(x, y, t);
     const res = groupJustification([x, y, t], s, ignore);
-    expect(res.axioms).toHaveLength(3);
-    expect(res.axioms.every(a => a.quads.length === 1)).toBe(true);
+    expect(res.axioms).toHaveLength(1);
+    expect(res.axioms[0].quads).toHaveLength(3);
   });
 
   it("keeps an orphan blank-subject triple as its own axiom", () => {
@@ -133,5 +133,73 @@ describe("groupJustification", () => {
     const t = quad(r1, type, n(`${OWL}Restriction`));
     const res = groupJustification([principal, t], storeOf(principal, t), ignore);
     expect(res.axioms).toHaveLength(1);
+  });
+});
+
+describe("partitionIntoUnits", () => {
+  const decl = quad(A, type, n(`${OWL}Class`));
+
+  it("puts declarations into the background, never into a unit", () => {
+    const ax = quad(A, subClassOf, B);
+    const { units, background } = partitionIntoUnits([decl, ax]);
+    expect(background).toEqual([decl]);
+    expect(units).toEqual([[ax]]);
+  });
+
+  it("makes a restriction one unit of four triples", () => {
+    const r1 = b("r1");
+    const qs = [
+      quad(A, subClassOf, r1),
+      quad(r1, type, n(`${OWL}Restriction`)),
+      quad(r1, n(`${OWL}onProperty`), P),
+      quad(r1, n(`${OWL}maxCardinality`), literal("1", n("http://www.w3.org/2001/XMLSchema#nonNegativeInteger"))),
+    ];
+    const { units } = partitionIntoUnits(qs);
+    expect(units).toHaveLength(1);
+    expect(units[0]).toHaveLength(4);
+  });
+
+  it("keeps a whole RDF list (every cell) in the unit of the axiom that owns it", () => {
+    const i = b("i"), l1 = b("l1"), l2 = b("l2");
+    const first = n(`${RDF}first`), restP = n(`${RDF}rest`), nil = n(`${RDF}nil`);
+    const qs = [
+      quad(C, n(`${OWL}equivalentClass`), i), quad(i, type, n(`${OWL}Class`)), quad(i, n(`${OWL}intersectionOf`), l1),
+      quad(l1, first, A), quad(l1, restP, l2), quad(l2, first, B), quad(l2, restP, nil),
+    ];
+    const { units } = partitionIntoUnits([...qs, quad(A, subClassOf, B)]);
+    expect(units).toHaveLength(2);
+    expect(units.map(u => u.length).sort()).toEqual([1, 7]);
+  });
+
+  it("keeps an anonymous-rooted axiom (AllDisjointClasses) in one unit", () => {
+    const h = b("h"), l1 = b("l1"), l2 = b("l2");
+    const first = n(`${RDF}first`), restP = n(`${RDF}rest`), nil = n(`${RDF}nil`);
+    const qs = [quad(h, type, n(`${OWL}AllDisjointClasses`)), quad(h, n(`${OWL}members`), l1), quad(l1, first, A), quad(l1, restP, l2), quad(l2, first, B), quad(l2, restP, nil)];
+    const { units } = partitionIntoUnits(qs);
+    expect(units).toHaveLength(1);
+    expect(units[0]).toHaveLength(6);
+  });
+
+  it("merges two roots that share a blank node", () => {
+    const shared = b("s");
+    const { units } = partitionIntoUnits([quad(A, subClassOf, shared), quad(B, subClassOf, shared), quad(shared, type, n(`${OWL}Restriction`))]);
+    expect(units).toHaveLength(1);
+  });
+
+  it("keeps every graph copy of a triple in the same unit", () => {
+    const g1 = quad(A, subClassOf, B, n("urn:g1"));
+    const g2 = quad(A, subClassOf, B, n("urn:g2"));
+    const { units } = partitionIntoUnits([g1, g2]);
+    expect(units).toHaveLength(1);
+    expect(units[0]).toHaveLength(2);
+  });
+
+  it("is an exact partition: every input quad appears exactly once", () => {
+    const r1 = b("r1");
+    const qs = [decl, quad(A, subClassOf, r1), quad(r1, type, n(`${OWL}Restriction`)), quad(B, subClassOf, C), quad(n(`${EX}x`), type, A)];
+    const { units, background } = partitionIntoUnits(qs);
+    const out = [...background, ...units.flat()];
+    expect(out).toHaveLength(qs.length);
+    for (const q of qs) expect(out.filter(o => o.equals(q))).toHaveLength(1);
   });
 });

@@ -1,19 +1,20 @@
 /**
- * Groups the flat triples of a justification into OWL axioms (B1 + B2 of the repair plan).
+ * Axiom units: the grain at which justifications and repairs are computed.
  *
- * An axiom is the blank-node closure rooted at a triple with a named (IRI) subject: follow object blank
- * nodes (restrictions, RDF list cells, nested expressions) until only IRIs and literals remain. The closure
- * is read from the store, not only from the justification, so removing `Axiom.quads` removes a whole axiom
- * even when the minimised justification kept only part of it.
+ * An axiom is a connected component of triples, where two triples are connected when they share a blank node (as
+ * subject or object): a restriction, an RDF list (intersection, union, property chain, ...), an `AllDisjointClasses`
+ * node with its member list, a nested expression. A triple that touches no blank node is its own axiom. Splitting a
+ * component is never a weakening: a partial RDF list is a different, usually stronger axiom for the reasoner (a
+ * property chain cut to fewer roles is a sub-property axiom), so no check set may contain part of a component.
  *
- * `Axiom.quads` holds every graph copy of each triple (the kernel reasons over the union of graphs, so
- * removing one copy of a triple asserted in two graphs would change nothing).
+ * Declarations (`C a owl:Class`, `p a owl:ObjectProperty`, ...) are not axioms; they are background that every check
+ * keeps (without them an expression is read differently: an undeclared role in a chain changes the result).
  *
- * Fallback: a blank node reachable from two roots, or a blank-subject triple not reachable from any root,
- * is not grouped; each such triple is its own singleton axiom.
+ * `Axiom.quads` holds every graph copy of each triple (the kernel reasons over the union of graphs, so removing one
+ * copy of a triple asserted in two graphs would change nothing).
  */
 import type { Quad, Term } from "@rdfjs/types";
-import { DataFactory, type Store } from "n3";
+import type { Store } from "n3";
 import type { Axiom, AxiomJustification } from "./types.js";
 
 const RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
@@ -32,7 +33,8 @@ function termKey(t: Term): string {
   return `${t.termType[0]}${t.value}`;
 }
 
-function tripleKey(q: Quad): string {
+/** Identity of a triple (graph-independent). */
+export function tripleKey(q: Quad): string {
   return `${termKey(q.subject)} ${termKey(q.predicate)} ${termKey(q.object)}`;
 }
 
@@ -46,103 +48,107 @@ export function axiomKey(a: Axiom): string {
   return tripleKey(a.principal);
 }
 
-function isDeclaration(q: Quad): boolean {
+/** `C a owl:Class`, `p a owl:ObjectProperty`, ...: a declaration of a named entity, not an axiom. */
+export function isDeclaration(q: Quad): boolean {
   return q.subject.termType === "NamedNode" && q.predicate.value === RDF_TYPE && DECLARATION_TYPES.has(q.object.value);
 }
 
-/** `graphsToIgnore`: graph IRIs that are not part of the ontology (inferred, hypothetical, explanation). */
+const blanksOf = (q: Quad): string[] => [q.subject, q.object].filter(t => t.termType === "BlankNode").map(t => t.value);
+
+/**
+ * Partition quads into axiom units and declaration background (see module comment). Every quad of the input is in
+ * exactly one unit or in the background; the graph copies of one triple are in the same unit.
+ */
+export function partitionIntoUnits(quads: readonly Quad[]): { units: Quad[][]; background: Quad[] } {
+  const background: Quad[] = [];
+  const copies = new Map<string, Quad[]>();
+  for (const q of quads) {
+    if (isDeclaration(q)) {
+      background.push(q);
+      continue;
+    }
+    const k = tripleKey(q);
+    const group = copies.get(k);
+    if (group) group.push(q);
+    else copies.set(k, [q]);
+  }
+  const triples = [...copies.values()];
+  const parent = triples.map((_, i) => i);
+  const find = (i: number): number => {
+    while (parent[i] !== i) i = parent[i] = parent[parent[i]];
+    return i;
+  };
+  const firstWithBlank = new Map<string, number>();
+  triples.forEach((group, i) => {
+    for (const b of blanksOf(group[0])) {
+      const j = firstWithBlank.get(b);
+      if (j === undefined) firstWithBlank.set(b, i);
+      else parent[find(i)] = find(j);
+    }
+  });
+  const byRoot = new Map<number, Quad[]>();
+  triples.forEach((group, i) => {
+    const r = find(i);
+    const unit = byRoot.get(r);
+    if (unit) unit.push(...group);
+    else byRoot.set(r, [...group]);
+  });
+  return { units: [...byRoot.values()], background };
+}
+
+/**
+ * Group the flat triples of a justification into axioms. Each axiom is the connected component (through blank nodes)
+ * of a justification triple, read from the store, so removing `Axiom.quads` removes a whole axiom even when the
+ * justification kept only part of it. `principal` is a justification triple of the component (preferably one with a
+ * named subject). Declarations go to `context`.
+ *
+ * `graphsToIgnore`: graph IRIs that are not part of the ontology (inferred, hypothetical, explanation).
+ */
 export function groupJustification(
   justification: Quad[],
   store: Store,
   graphsToIgnore: ReadonlySet<string>,
 ): AxiomJustification {
-  const copies = (q: Quad): Quad[] =>
-    store.getQuads(q.subject, q.predicate, q.object, null).filter(c => !graphsToIgnore.has(c.graph.value));
+  const live = (q: Quad): boolean => !graphsToIgnore.has(q.graph.value);
+  const copiesOf = (q: Quad): Quad[] => store.getQuads(q.subject, q.predicate, q.object, null).filter(live);
+  const neighbours = (b: Term): Quad[] => [...store.getQuads(b, null, null, null), ...store.getQuads(null, null, b, null)].filter(live);
 
   const context: Quad[] = [];
   const contextSeen = new Set<string>();
-  const roots: Quad[] = [];
-  const rootSeen = new Set<string>();
-  const blankSubjectQuads: Quad[] = [];
+  const candidates: Quad[] = [];
   for (const q of justification) {
-    const key = tripleKey(q);
     if (isDeclaration(q)) {
-      if (!contextSeen.has(key)) { contextSeen.add(key); context.push(q); }
-    } else if (q.subject.termType === "BlankNode") {
-      blankSubjectQuads.push(q);
-    } else if (!rootSeen.has(key)) {
-      rootSeen.add(key);
-      roots.push(q);
-    }
-  }
-
-  // Blank-node closure (as store quads, all graph copies) per root.
-  const closureOf = (root: Quad): { quads: Quad[]; blanks: Set<string> } => {
-    const quads: Quad[] = [];
-    const blanks = new Set<string>();
-    const visit = (term: Term): void => {
-      if (term.termType !== "BlankNode" || blanks.has(term.value)) return;
-      blanks.add(term.value);
-      for (const c of store.getQuads(term, null, null, null)) {
-        if (graphsToIgnore.has(c.graph.value)) continue;
-        quads.push(c);
-        visit(c.object);
+      const k = tripleKey(q);
+      if (!contextSeen.has(k)) {
+        contextSeen.add(k);
+        context.push(q);
       }
-    };
-    visit(root.object);
-    return { quads, blanks };
-  };
-
-  const closures = roots.map(closureOf);
-  const reachedBy = new Map<string, number>();
-  for (const c of closures) for (const b of c.blanks) reachedBy.set(b, (reachedBy.get(b) ?? 0) + 1);
+    } else candidates.push(q);
+  }
 
   const axioms: Axiom[] = [];
-  const groupedBlanks = new Set<string>();
-  roots.forEach((root, i) => {
-    const { quads, blanks } = closures[i];
-    const shared = [...blanks].some(b => (reachedBy.get(b) ?? 0) > 1);
-    if (shared) {
-      axioms.push({ principal: root, quads: copies(root) });
-      return;
-    }
-    for (const b of blanks) groupedBlanks.add(b);
-    axioms.push({ principal: root, quads: [...copies(root), ...quads] });
-  });
-
-  // Anonymous-rooted axioms (AllDisjointClasses, AllDifferent, ...): a blank node that no live triple points at is
-  // the head of its own axiom; group its closure from the store the same way as a named root.
-  const isHead = (label: string): boolean =>
-    store.getQuads(null, null, DataFactory.blankNode(label), null).every(c => graphsToIgnore.has(c.graph.value));
-  const headLabels = new Set<string>();
-  for (const q of blankSubjectQuads) {
-    if (!groupedBlanks.has(q.subject.value) && isHead(q.subject.value)) headLabels.add(q.subject.value);
-  }
-  for (const label of headLabels) {
-    const head = DataFactory.blankNode(label);
-    const quads: Quad[] = [];
-    const blanks = new Set<string>();
-    const visit = (term: Term): void => {
-      if (term.termType !== "BlankNode" || blanks.has(term.value)) return;
-      blanks.add(term.value);
-      for (const c of store.getQuads(term, null, null, null)) {
-        if (graphsToIgnore.has(c.graph.value)) continue;
-        quads.push(c);
-        visit(c.object);
+  const claimed = new Set<string>();
+  const bySubject = (qs: Quad[]) => qs.filter(q => q.subject.termType === "NamedNode");
+  for (const seed of candidates) {
+    if (claimed.has(tripleKey(seed))) continue;
+    const component = new Map<string, Quad[]>();
+    const seenBlanks = new Set<string>();
+    const stack: Quad[] = [seed];
+    while (stack.length > 0) {
+      const t = stack.pop()!;
+      const k = tripleKey(t);
+      if (component.has(k)) continue;
+      component.set(k, copiesOf(t));
+      for (const b of [t.subject, t.object]) {
+        if (b.termType !== "BlankNode" || seenBlanks.has(b.value)) continue;
+        seenBlanks.add(b.value);
+        stack.push(...neighbours(b));
       }
-    };
-    visit(head);
-    if ([...blanks].some(b => groupedBlanks.has(b))) continue; // shared with another axiom: singleton fallback below
-    const inJustification = blankSubjectQuads.filter(q => q.subject.value === label);
-    const principal = inJustification.find(q => q.predicate.value === RDF_TYPE) ?? inJustification[0];
-    for (const b of blanks) groupedBlanks.add(b);
-    axioms.push({ principal, quads });
+    }
+    const quads = [...component.values()].flat();
+    for (const k of component.keys()) claimed.add(k);
+    const inComponent = candidates.filter(c => component.has(tripleKey(c)));
+    axioms.push({ principal: bySubject(inComponent)[0] ?? inComponent[0], quads });
   }
-
-  for (const q of blankSubjectQuads) {
-    if (groupedBlanks.has(q.subject.value)) continue;
-    axioms.push({ principal: q, quads: copies(q) });
-  }
-
   return { axioms, context };
 }

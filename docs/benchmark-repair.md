@@ -4,10 +4,11 @@ Latency and robustness of `RdfReasoner.repair()` across ontology sizes and kinds
 
 ```
 Date:      2026-11-06
-Package:   rdf-reasoner-konclude 0.8.0  (git 6520312)
-Host:      Intel(R) Xeon(R) Silver 4216 CPU @ 2.10GHz, 8 cores, 41 GB; load average at start 0.11
-Runtime:   Node v25.1.0, node build (dist/worker-node.mjs); NOT measured in a browser
-Budget:    repair() timeout 240000 ms per case, maxRepairs 10, one fresh process per case, one run per case
+Package:   rdf-reasoner-konclude 0.8.0 (git 2dadce8, ts/ modified)
+WASM:      dist/konclude.wasm sha256 9c95b4419b6a
+Host:      Intel(R) Xeon(R) Silver 4216 CPU @ 2.10GHz, 8 cores, 41 GB; load average at start 0.04 1.23 3.39
+Runtime:   Node v25.1.0
+Budget:    repair() timeout 240000 ms per case, maxRepairs 10, one fresh process per case
 ```
 
 ## Use case
@@ -41,7 +42,7 @@ Each block is the unedited result of `repair(store)` for one case, printed by `n
 ### LUBM schema (307 quads) + `disjoint`
 
 ```
-ontology: 307 quads + injected clash "disjoint"   repair() took 3.9 s
+ontology: 307 quads + injected clash "disjoint"   repair() took 3.0 s
 consistent: false   incomplete: false
 
 justifications (1):
@@ -62,7 +63,7 @@ repairs (3):
 ### LUBM schema + `cardinality` (a restriction axiom is one unit of four triples)
 
 ```
-ontology: 307 quads + injected clash "cardinality"   repair() took 5.3 s
+ontology: 307 quads + injected clash "cardinality"   repair() took 3.9 s
 consistent: false   incomplete: false
 
 justifications (1):
@@ -89,7 +90,7 @@ repairs (5):
 ### LUBM schema + `three` (independent clashes, capped repair list)
 
 ```
-ontology: 307 quads + injected clash "three"   repair() took 16.1 s
+ontology: 307 quads + injected clash "three"   repair() took 9.4 s
 consistent: false   incomplete: true   reason: solution-cap
 
 justifications (3):
@@ -152,7 +153,7 @@ repairs (10):
 ### PMDco (17,158 quads) + `bfo` (a real clash with two justifications)
 
 ```
-ontology: 17158 quads + injected clash "bfo"   repair() took 52.0 s
+ontology: 17158 quads + injected clash "bfo"   repair() took 30.2 s
 consistent: false   incomplete: false
 
 justifications (2):
@@ -160,10 +161,10 @@ justifications (2):
         obo:BFO_0000004 owl:disjointWith obo:BFO_0000020
         bx:x rdf:type obo:BFO_0000020
         bx:x rdf:type obo:BFO_0000004
-  [1] 3 axioms, 2 declaration triples in context
+  [1] 3 axioms, 3 declaration triples in context
+        _:b1 rdf:type owl:AllDisjointClasses   [+7 more triple(s) of the same axiom]
         bx:x rdf:type obo:BFO_0000020
         bx:x rdf:type obo:BFO_0000004
-        _:b1 rdf:type owl:AllDisjointClasses   [+7 more triple(s) of the same axiom]
 
 repairs (3):
   [0] remove 1 axiom(s); covers justifications [0,1]; verifiedConsistent: true; minimal: true
@@ -179,59 +180,80 @@ The type assertions are in both justifications, so removing either one (size 1) 
 
 ## Results
 
-One run per case, fresh process, `repair()` budget 240 s. The case runner now records `baseConsistent` itself and the report marks an inconsistent base as `INVALID`; this matrix was measured before that check existed, so the bases were verified separately (all consistent). `checks` = consistency checks issued to the kernel; `recycles` = Worker recycles triggered by the heap threshold; `applied OK` = consistency after removing the first repair from a copy.
+One run per case, fresh process, `repair()` budget 240 s, minimization over whole axiom units (see below). `checks` = consistency checks issued to the kernel; `recycles` = Worker recycles triggered by the heap threshold; `applied OK` = consistency after removing the first repair from a copy. The runner records `baseConsistent` and the report marks an inconsistent base as `INVALID`; all bases are consistent.
 
-| Ontology           |  Quads | Clash       | repair() s | checks | avg check ms | recycles | peak heap MB | justifications (axioms) | repairs (axioms each) | applied OK | status                     |
-| ------------------ | -----: | ----------- | ---------: | -----: | -----------: | -------: | -----------: | ----------------------- | --------------------- | ---------- | -------------------------- |
-| LUBM schema        |    312 | disjoint    |        3.5 |     31 |          114 |        0 |         1024 | 3                       | 1/1/1                 | True       | complete                   |
-| LUBM schema        |    314 | unsat       |        4.3 |     36 |          119 |        0 |         1024 | 4                       | 1/1/1/1               | True       | complete                   |
-| LUBM schema        |    317 | cardinality |        5.4 |     46 |          117 |        0 |         1024 | 5                       | 1/1/1/1/1             | True       | complete                   |
-| LUBM schema        |    322 | three       |       18.4 |    169 |          109 |        0 |         1024 | 3/3/3                   | 3/3/3/3/3/3/3/3/3/3   | True       | incomplete: solution-cap   |
-| Roberts family     |   3871 | disjoint    |      167.0 |    584 |          286 |        3 |         2253 | 10/3/10                 | 2/2/2/2/2/2/2/2/2/2   | True       | incomplete: solution-cap † |
-| Roberts family     |   3873 | unsat       |      166.3 |    565 |          294 |        3 |         2253 | 10/4/10                 | 2/2/2/2/2/2/2/2/2/2   | True       | incomplete: solution-cap † |
-| Roberts family     |   3876 | cardinality |      189.6 |    576 |          329 |        4 |         2253 | 10/5/10                 | 2/2/2/2/2/2/2/2/2/2   | True       | incomplete: solution-cap † |
-| Roberts family     |   3881 | three       |      240.3 |    654 |          367 |        6 |         2253 | 10/3/10/3/3/1397        | -                     | -          | incomplete: deadline †     |
-| PMDco              |  17163 | disjoint    |       18.8 |     39 |          477 |        1 |         2513 | 3                       | 1/1/1                 | True       | complete                   |
-| PMDco              |  17165 | unsat       |       25.0 |     48 |          517 |        2 |         2253 | 4                       | 1/1/1/1               | True       | complete                   |
-| PMDco              |  17168 | cardinality |       29.8 |     54 |          547 |        3 |         2513 | 5                       | 1/1/1/1/1             | True       | complete                   |
-| PMDco              |  17173 | three       |      101.4 |    221 |          457 |        9 |         2773 | 3/3/3                   | 3/3/3/3/3/3/3/3/3/3   | True       | incomplete: solution-cap   |
-| GALEN              |  30822 | disjoint    |       86.0 |     45 |         1906 |        0 |         1797 | 3                       | 1/1/1                 | True       | complete                   |
-| GALEN              |  30824 | unsat       |       67.0 |     50 |         1333 |        0 |         1993 | 4                       | 1/1/1/1               | True       | complete                   |
-| GALEN              |  30827 | cardinality |       83.1 |     60 |         1379 |        1 |         2253 | 5                       | 1/1/1/1/1             | True       | complete                   |
-| GALEN              |  30832 | three       |      242.0 |    169 |         1424 |        4 |         2257 | 3/3/4741                | -                     | -          | incomplete: deadline ‡     |
-| LUBM schema + data | 100855 | disjoint    |      118.4 |     49 |         2401 |        5 |         2253 | 3                       | 1/1/1                 | True       | complete                   |
-| LUBM schema + data | 100857 | unsat       |      128.5 |     52 |         2454 |        5 |         2253 | 4                       | 1/1/1/1               | True       | complete                   |
-| LUBM schema + data | 100860 | cardinality |      152.2 |     62 |         2437 |        6 |         2253 | 5                       | 1/1/1/1/1             | True       | complete                   |
-| LUBM schema + data | 100865 | three       |      243.3 |    101 |         2389 |       10 |         2253 | 3/3/100642              | -                     | -          | incomplete: deadline ‡     |
-| PMDco              |  17160 | bfo         |       51.9 |    157 |          329 |        4 |         2709 | 3/3                     | 1/1/2                 | True       | complete                   |
+| Ontology           |  Quads | Clash       | repair() s | checks | avg check ms | recycles | peak heap MB | justifications (axioms) | repairs (axioms each) | applied OK | status                   |
+| ------------------ | -----: | ----------- | ---------: | -----: | -----------: | -------: | -----------: | ----------------------- | --------------------- | ---------- | ------------------------ |
+| LUBM schema        |    312 | disjoint    |        2.8 |     23 |          121 |        0 |         1024 | 3                       | 1/1/1                 | True       | complete                 |
+| LUBM schema        |    314 | unsat       |        2.9 |     25 |          117 |        0 |         1024 | 4                       | 1/1/1/1               | True       | complete                 |
+| LUBM schema        |    317 | cardinality |        3.3 |     31 |          107 |        0 |         1024 | 5                       | 1/1/1/1/1             | True       | complete                 |
+| LUBM schema        |    322 | three       |       10.1 |     95 |          106 |        0 |         1024 | 3/3/3                   | 3/3/3/3/3/3/3/3/3/3   | True       | incomplete: solution-cap |
+| Roberts family     |   3871 | disjoint    |       33.7 |     29 |         1158 |        0 |         1861 | 3                       | 1/1/1                 | True       | complete                 |
+| Roberts family     |   3873 | unsat       |       41.9 |     35 |         1195 |        0 |         1993 | 4                       | 1/1/1/1               | True       | complete                 |
+| Roberts family     |   3876 | cardinality |       51.3 |     37 |         1384 |        1 |         2253 | 5                       | 1/1/1/1/1             | True       | complete                 |
+| Roberts family     |   3881 | three       |      135.2 |    121 |         1116 |        3 |         2253 | 3/3/3                   | 3/3/3/3/3/3/3/3/3/3   | True       | incomplete: solution-cap |
+| PMDco              |  17163 | disjoint    |       13.0 |     31 |          413 |        0 |         1024 | 3                       | 1/1/1                 | True       | complete                 |
+| PMDco              |  17165 | unsat       |       15.3 |     35 |          431 |        0 |         1024 | 4                       | 1/1/1/1               | True       | complete                 |
+| PMDco              |  17168 | cardinality |       16.5 |     37 |          440 |        0 |         1024 | 5                       | 1/1/1/1/1             | True       | complete                 |
+| PMDco              |  17173 | three       |       55.9 |    144 |          385 |        0 |         1729 | 3/3/3                   | 3/3/3/3/3/3/3/3/3/3   | True       | incomplete: solution-cap |
+| GALEN              |  30822 | disjoint    |       34.8 |     33 |         1044 |        0 |         1333 | 3                       | 1/1/1                 | True       | complete                 |
+| GALEN              |  30824 | unsat       |       39.8 |     37 |         1066 |        0 |         1465 | 4                       | 1/1/1/1               | True       | complete                 |
+| GALEN              |  30827 | cardinality |       42.4 |     39 |         1077 |        0 |         1465 | 5                       | 1/1/1/1/1             | True       | complete                 |
+| GALEN              |  30832 | three       |      160.0 |    154 |         1033 |        2 |         2253 | 3/3/3                   | 3/3/3/3/3/3/3/3/3/3   | True       | incomplete: solution-cap |
+| LUBM schema + data | 100855 | disjoint    |      105.7 |     43 |         2428 |        4 |         2253 | 3                       | 1/1/1                 | True       | complete                 |
+| LUBM schema + data | 100857 | unsat       |      108.3 |     45 |         2375 |        4 |         2253 | 4                       | 1/1/1/1               | True       | complete                 |
+| LUBM schema + data | 100860 | cardinality |      128.0 |     51 |         2479 |        5 |         2253 | 5                       | 1/1/1/1/1             | True       | complete                 |
+| LUBM schema + data | 100865 | three       |      242.0 |    102 |         2351 |        9 |         2253 | 3/3                     | -                     | -          | incomplete: deadline     |
+| PMDco              |  17160 | bfo         |       28.9 |     83 |          346 |        0 |         1201 | 3/3                     | 1/1/2                 | True       | complete                 |
 
-† Roberts family: the 10-axiom justifications contain no injected axiom and are most likely false positives, see [Known issue](#known-issue-false-justifications-on-list-heavy-ontologies). The base is consistent.
-‡ At the deadline the last justification is the smallest inconsistent set found so far, which is **not minimal** (4741 and 100642 axioms) and no repair was computed. `incomplete: deadline` is the only signal; this should not be reported as a justification (follow-up).
-
-`incomplete: solution-cap` is the `maxRepairs` limit (10), not a failure: three independent clashes with three options each have 27 minimal repair sets.
+`incomplete: solution-cap` is the `maxRepairs` limit (10), not a failure: three independent clashes with three options each have 27 minimal repair sets. `incomplete: deadline` is the 240 s budget: `repair()` returns what it has (here two complete justifications, no repair computed yet) and never an exception.
 
 ### Observations
 
-- **The number of checks does not depend on the ontology size.** A clean single clash needs 31-62 checks on every ontology from 312 to 100,855 quads (QuickXplain scales with the size of the justification, about `k log n`). The latency is therefore `checks x per-check cost`.
-- **Per-check cost grows with the ontology**: about 0.11 s (312 quads), 0.33-0.55 s (17k), 1.3-1.9 s (30.8k), 2.4 s (100k). A single clash on up to 17k quads takes 3-30 s; GALEN 67-86 s; the 100k-quad LUBM with data 118-152 s.
-- **Three independent clashes** need 3x the work plus the verification of up to 10 candidates: 101 s on PMDco, over 240 s on GALEN and LUBM with data (returned as `incomplete: deadline`, never as an exception or hang).
-- **Memory**: peak WASM heap 1.0-2.8 GB; the heap-triggered Worker recycle fired up to 10 times (100k quads, three clashes) and no case hit the 4 GiB limit. Without the recycle, the kernel's per-check heap retention would have reached the limit (the heap investigation is tracked separately).
-- **Everything returned was verified**: every repair that was returned has `verifiedConsistent: true`, and applying the first one gave a consistent ontology in every case.
+- **The number of checks does not depend on the ontology size.** A single clash needs 23-51 checks on every ontology from 312 to 100,855 quads (QuickXplain over axiom units scales with the size of the justification, about `k log n`). The latency is `checks x per-check cost`.
+- **Per-check cost grows with the ontology and with what the check has to do**: about 0.11 s (312 quads), 0.35-0.44 s (PMDco, 17k), 1.0-1.1 s (GALEN, 30.8k), 2.4 s (LUBM with data, 100k). Roberts (3.9k quads, ABox-heavy) costs 1.1-1.4 s per check: a check on a _consistent_ subset runs the whole classification pipeline, an inconsistent one stops early, and the false justifications that used to dominate the Roberts runs were cheap early failures.
+- **A single clash** takes 3-6 s up to 3.9k quads, 13-17 s on PMDco, 35-42 s on GALEN and 106-128 s on the 100k-quad ontology. **Three independent clashes** need about three times the checks and verify up to 10 candidates: 10-56 s on the small ontologies, 135-160 s on Roberts and GALEN, and the 100k-quad ontology reaches the 240 s deadline.
+- **Memory**: peak WASM heap 1.0-2.3 GB, no case reached the 4 GiB limit; the heap-triggered Worker recycle fired up to 9 times (100k quads, three clashes). PMDco stays flat at 1,024 MB with the WASM binary named above.
+- **Everything returned was verified**: every repair has `verifiedConsistent: true` and applying the first one gave a consistent ontology in every case that computed repairs.
 
-## Known issue: false justifications on list-heavy ontologies
+### What the axiom-unit minimization changed
 
-On Roberts family the base ontology is consistent (`checkConsistency` is `true` for `roberts-family.nt`, `roberts-160.nt`, `roberts-240.nt`, `lubm.nt`, `pmdco.nt` and `galen.nt`), yet `repair()` returns two extra justifications of 10 axioms that contain no injected axiom (Roberts axioms only: `Woman ≡ ...`, `hasMother range Woman`, `Man ≡ ...`, a property chain, `Female disjointWith Male`, `hasGender` functional ...). That multiplies the checks (565-654) and the repair list.
+The first version of this benchmark (git 6520312, minimization over individual triples, an older WASM binary) against the current one:
 
-**Cause (confirmed by single-triple experiments in a fresh reasoner).** The minimization works on individual RDF triples, and for the kernel a subset of an ontology's triples is **not** a weakening of the ontology. Two things change the meaning of a subset:
+| Ontology           | Clash       | checks before | checks now | repair() s before | repair() s now | justifications before | justifications now |
+| ------------------ | ----------- | ------------: | ---------: | ----------------: | -------------: | --------------------- | ------------------ |
+| LUBM schema        | disjoint    |            31 |         23 |               3.5 |            2.8 | 3                     | 3                  |
+| LUBM schema        | unsat       |            36 |         25 |               4.3 |            2.9 | 4                     | 4                  |
+| LUBM schema        | cardinality |            46 |         31 |               5.4 |            3.3 | 5                     | 5                  |
+| LUBM schema        | three       |           169 |         95 |              18.4 |           10.1 | 3/3/3                 | 3/3/3              |
+| Roberts family     | disjoint    |           584 |         29 |             167.0 |           33.7 | 10/3/10               | 3                  |
+| Roberts family     | unsat       |           565 |         35 |             166.3 |           41.9 | 10/4/10               | 4                  |
+| Roberts family     | cardinality |           576 |         37 |             189.6 |           51.3 | 10/5/10               | 5                  |
+| Roberts family     | three       |           654 |        121 |             240.3 |          135.2 | 10/3/10/3/3/1397      | 3/3/3              |
+| PMDco              | disjoint    |            39 |         31 |              18.8 |           13.0 | 3                     | 3                  |
+| PMDco              | unsat       |            48 |         35 |              25.0 |           15.3 | 4                     | 4                  |
+| PMDco              | cardinality |            54 |         37 |              29.8 |           16.5 | 5                     | 5                  |
+| PMDco              | three       |           221 |        144 |             101.4 |           55.9 | 3/3/3                 | 3/3/3              |
+| GALEN              | disjoint    |            45 |         33 |              86.0 |           34.8 | 3                     | 3                  |
+| GALEN              | unsat       |            50 |         37 |              67.0 |           39.8 | 4                     | 4                  |
+| GALEN              | cardinality |            60 |         39 |              83.1 |           42.4 | 5                     | 5                  |
+| GALEN              | three       |           169 |        154 |             242.0 |          160.0 | 3/3/4741              | 3/3/3              |
+| LUBM schema + data | disjoint    |            49 |         43 |             118.4 |          105.7 | 3                     | 3                  |
+| LUBM schema + data | unsat       |            52 |         45 |             128.5 |          108.3 | 4                     | 4                  |
+| LUBM schema + data | cardinality |            62 |         51 |             152.2 |          128.0 | 5                     | 5                  |
+| LUBM schema + data | three       |           101 |        102 |             243.3 |          242.0 | 3/3/100642            | 3/3                |
+| PMDco              | bfo         |           157 |         83 |              51.9 |           28.9 | 3/3                   | 3/3                |
 
-1. **A partial RDF list is a different, stronger axiom.** Take the 33-triple justification, complete every axiom to its whole blank-node closure and add all 546 declaration triples of the base: that set is consistent. Cut a single `rdf:rest` triple out of the `hasGreatGrandfather propertyChainAxiom` list and the same set becomes inconsistent: a chain cut down to fewer roles is a stronger axiom (a sub-property axiom), and the kernel reads it that way. The same holds for intersections and other list-based axioms.
-2. **A missing declaration changes the reading of the axioms.** The same complete axioms with only the 8 declarations that were in the justification are inconsistent; adding **one** triple, `hasGrandfather a owl:ObjectProperty`, makes them consistent. QuickXplain treats declaration triples like any other candidate and drops the ones it does not "need".
+The Roberts rows are the point of the change (565-654 checks and two false 10-axiom justifications before). The other rows combine two effects that this benchmark cannot separate: fewer checks from the smaller candidate set, and the newer WASM binary (PMDco's peak heap fell from 2.5 GB to 1.0 GB).
 
-So the minimal sets QuickXplain finds on these ontologies are minimal for the _triples_, not inconsistent subsets of the ontology's _axioms_. The log of such a check carries the same failure lines as a real clash (`'Consistency-Checking' processing step failed`), so the two cannot be told apart from the outside. PMDco and the other bases contain lists too, but no false justification occurred there in these runs.
+## Former issue: false justifications on list-heavy ontologies (fixed)
 
-**Effect.** The verification step is not affected (it checks the full ontology), so every returned repair is valid. But a repair can contain unnecessary axioms, the extra justifications cost checks, and `minimal` is not reliable on such inputs (it assumes the justifications are real).
+On Roberts family (a consistent base) the first version returned two extra justifications of 10 axioms that contained no injected axiom. Cause, confirmed by single-triple experiments in a fresh reasoner: the minimization worked on individual RDF triples, and for the kernel a subset of an ontology's triples is **not** a weakening of the ontology.
 
-**Proposed fix (not implemented).** Minimize over **whole axioms** instead of triples: partition the candidates once into axiom units (a named root triple with its blank-node closure; an anonymous-rooted axiom such as `AllDisjointClasses` as one unit), keep **all declaration triples as fixed background** that is present in every check and never removed, and let QuickXplain add and remove units only. Every check then sees a well-formed ontology, the candidate set is smaller (a restriction is one unit instead of four triples, the declarations drop out), and the justifications returned are real axiom-level justifications.
+1. **A partial RDF list is a different, stronger axiom.** The 33-triple justification, completed to whole axioms with all 546 declarations of the base added, is consistent. Cutting one `rdf:rest` out of the `hasGreatGrandfather propertyChainAxiom` list makes it inconsistent: a chain cut down to fewer roles is a stronger sub-property axiom. The same holds for intersections and other list-based axioms.
+2. **A missing declaration changes the reading of the axioms.** The same complete axioms with only the 8 declarations that were in the justification are inconsistent; adding one triple, `hasGrandfather a owl:ObjectProperty`, makes them consistent.
+
+Fix (this version): `explainInconsistency`, `explainInconsistencyAxioms` and `repair` minimize over **axiom units** (connected components of triples through blank nodes; see `ts/axiomGrouping.ts`), with **all declaration triples as fixed background** of every check. No check set contains part of a list or a restriction, and the justifications are axiom-level. A justification whose search was cut short by the deadline is dropped instead of being returned as a non-minimal set. Declarations of the entities a justification mentions are returned with it (`context`).
 
 ## How to run
 
@@ -246,4 +268,4 @@ The host should be quiet (the driver prints the load average); every case is a f
 
 ## Limits of this benchmark
 
-One run per case (no spread), one machine, node only, synthetic clashes except `bfo`, and a 240 s `repair()` timeout (the default is 300 s). Native Konclude has no repair operation, so there is no comparison column.
+One run per case (no spread), one machine, node only, synthetic clashes except `bfo`, and a WASM binary that changed between the first and the second measurement (see the comparison table), and a 240 s `repair()` timeout (the default is 300 s). Native Konclude has no repair operation, so there is no comparison column.
