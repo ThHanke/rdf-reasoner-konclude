@@ -124,6 +124,33 @@ export interface EditAssessment {
   reason?: 'deadline' | 'pair-cap' | 'edited-inconsistent';
 }
 
+export interface WeakenOptions {
+  /** Wall-clock budget in ms for the whole call, 0 = none. Default 180000. */
+  timeout?: number;
+  /** Named graph IRI that holds inferred triples in the store (excluded from the ontology). Default `INFERRED_GRAPH_IRI`. */
+  inferredGraph?: string;
+}
+
+export interface Weakening {
+  strategy: 'generalize' | 'dropConjunct' | 'delete';
+  /** Triples to remove: every triple of the culprit axiom (all graph copies). */
+  remove: Quad[];
+  /** Triples of the weaker replacement axiom (empty for 'delete'); fresh blank nodes for an intersection. */
+  add: Quad[];
+  /** Removing `remove` and adding `add` leaves a consistent ontology in which the target class is satisfiable. Every returned weakening was verified. */
+  verifiedConsistent: boolean | null;
+  /** What changed: a conjunct generalized to a named superclass (`to`), or dropped (`to: null`). Absent for 'delete'. */
+  change?: { from: string; to: string | null };
+}
+
+export interface WeakenResult {
+  /** The most specific working generalizations first, then dropped conjuncts, ending with 'delete' (the order within a group is unspecified). Empty when `reason` explains why no weakening is offered. */
+  weakenings: Weakening[];
+  incomplete: boolean;
+  /** `deadline` sets `incomplete` (what was found is still valid, 'delete' is included when verified). The others mean no weakening is offered. */
+  reason?: 'deadline' | 'culprit-not-in-store' | 'removal-does-not-restore-consistency' | 'unsupported-axiom';
+}
+
 /**
  * Named graph IRI used to hold hypothetical (what-if) triples.
  * Quads in this graph are excluded from store fingerprints.

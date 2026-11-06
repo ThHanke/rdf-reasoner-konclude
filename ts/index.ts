@@ -24,11 +24,11 @@ import { Store, DataFactory } from "n3";
 import { encodeToBuffers, decodeBuffers } from "./intern.js";
 
 
-export type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions, LaconicPart, LaconicJustification, LaconicExplainOptions, Axiom, AxiomJustification, RepairOptions, Repair, RepairResult, Edit, DisjointPair, AssessEditOptions, EditAssessment } from "./types.js";
+export type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions, LaconicPart, LaconicJustification, LaconicExplainOptions, Axiom, AxiomJustification, RepairOptions, Repair, RepairResult, Edit, DisjointPair, AssessEditOptions, EditAssessment, WeakenOptions, Weakening, WeakenResult } from "./types.js";
 export { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, KJ_NS, KJ_JUSTIFICATION, KJ_JUSTIFIES, KJ_AXIOM } from "./types.js";
 export { createInlineWorker } from "./inlineWorker.js";
 export { createManagedStore } from "./n3Inject.js";
-import type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions, LaconicPart, LaconicJustification, LaconicExplainOptions, Axiom, AxiomJustification, RepairOptions, Repair, RepairResult, Edit, DisjointPair, AssessEditOptions, EditAssessment } from "./types.js";
+import type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions, LaconicPart, LaconicJustification, LaconicExplainOptions, Axiom, AxiomJustification, RepairOptions, Repair, RepairResult, Edit, DisjointPair, AssessEditOptions, EditAssessment, WeakenOptions, Weakening, WeakenResult } from "./types.js";
 import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, KJ_JUSTIFIES, KJ_AXIOM, ReasonerStalledError } from "./types.js";
 export { ReasonerStalledError } from "./types.js";
 import { injectExplanationsFromBuffer, encodeStoreToBuffers, existsInSourceGraphs, clearGraph, createManagedStore, getRawStore } from "./n3Inject.js";
@@ -36,6 +36,7 @@ import { groupJustification, partitionIntoUnits } from "./axiomGrouping.js";
 import { dropAnnotationTriples } from "./annotations.js";
 import { computeRepairs, REPAIR_DEFAULT_TIMEOUT_MS, type RepairOracle } from "./repair.js";
 import { computeAssessment, type AssessOracle } from "./assessEdit.js";
+import { computeWeakenings } from "./weaken.js";
 import { buildEntailmentProbe, classifyAxiom, tripleKey as probeTripleKey } from "./entailmentProbe.js";
 import { computeLaconicAsync, groupQuadsIntoAxioms, splitAxiom, axiomKey } from "./laconicJustification.js";
 
@@ -1713,6 +1714,51 @@ export class RdfReasoner {
       }
 
       return this._explainInconsistencyQuadsDirect(allCandidates, maxJustifications, deadline);
+    });
+    this._queue = result.then(() => {}, () => {});
+    return result;
+  }
+
+  /**
+   * Weaken a culprit `rdfs:subClassOf` axiom instead of deleting it. `culprit` is an `Axiom` from `repair()` or
+   * `explainInconsistencyAxioms()`. Supported (v1): `X subClassOf Y` and `X subClassOf (B1 and ... and Bn)` with named
+   * classes; anything else returns `reason: 'unsupported-axiom'`.
+   *
+   * Offers, most specific first: a conjunct generalized to a named superclass (only the most specific working ones; the
+   * superclasses form a DAG and everything above a working one is pruned), a conjunct dropped, and finally the deletion.
+   * Every weakening is verified on a copy: the edited ontology is consistent and the target class stays satisfiable.
+   * Candidates already entailed without the culprit are skipped. Never mutates the store and never throws for a deadline
+   * (`incomplete: true`). The reasoner's own state is left on the last edited copy, so the next normal call reloads once.
+   */
+  weaken(store: Store, culprit: Axiom, opts?: WeakenOptions): Promise<WeakenResult> {
+    if (typeof (store as { getQuads?: unknown } | null)?.getQuads !== "function") {
+      return Promise.reject(new TypeError("weaken: store must be an N3 Store"));
+    }
+    if (!culprit || typeof culprit !== "object" || !culprit.principal || !Array.isArray(culprit.quads)) {
+      return Promise.reject(new TypeError("weaken: culprit must be an Axiom ({ principal, quads })"));
+    }
+    const result = this._queue.then(async () => {
+      const ig = opts?.inferredGraph ?? INFERRED_GRAPH_IRI;
+      const graphsToIgnore = new Set<string>([ig, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI]);
+      const base = store.getQuads(null, null, null, null).filter(q => !graphsToIgnore.has(q.graph.value));
+      const timeoutMs = opts?.timeout ?? 180_000;
+      const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : Infinity;
+      const oracle: AssessOracle = {
+        inconsistent: quads => this._boundedInconsistencyCheck(quads, deadline),
+        unsatisfiable: quads => this._unsatisfiableClassesDirect(quads, deadline),
+        subClassPairs: quads => this._subClassPairsDirect(quads, deadline),
+      };
+      try {
+        return await computeWeakenings({ base, culprit, oracle, deadline });
+      } finally {
+        // sub-calls replaced the WASM state: every generation-keyed cache is stale
+        this._classifyCache = null;
+        this._materializeCache = null;
+        this._classifyPropertiesCache = null;
+        this._consistencyCache = null;
+        this._lastExplBuffer = null;
+        this._lastPropertyExplBuffer = null;
+      }
     });
     this._queue = result.then(() => {}, () => {});
     return result;

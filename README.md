@@ -139,6 +139,12 @@ const { added, removed } = await reasoner.whatIf(store, [newAxiom]);
 const justs = await reasoner.explain(store, quad, { maxJustifications: 3 });
 const inconsJusts = await reasoner.explainInconsistency(store);
 
+// Inconsistency repair: explain by axiom, repair, cost of an edit, weakening
+const axiomJusts = await reasoner.explainInconsistencyAxioms(store);   // AxiomJustification[]
+const { repairs } = await reasoner.repair(store);                       // sets of axioms whose removal restores consistency
+const cost = await reasoner.assessEdit(store, { remove: repairs[0].remove.flatMap((a) => a.quads) });
+const { weakenings } = await reasoner.weaken(store, culpritAxiom);      // weaker replacements for a subClassOf axiom
+
 // Satisfiability
 const classes = await reasoner.getUnsatisfiableClasses(store);
 const ok2 = await reasoner.isSatisfiable(store, "http://example.org/MyClass");
@@ -294,6 +300,10 @@ isEntailed(store, axioms: Quad[]): Promise<(boolean | null)[]>
 whatIf(store, additions):          Promise<{ added: Quad[], removed: Quad[] }>
 explain(store, axiom):             Promise<Quad[][]>          // [] if not entailed; throws for unsupported predicate
 explainInconsistency(store):       Promise<Quad[][]>          // [] if consistent
+explainInconsistencyAxioms(store): Promise<AxiomJustification[]> // axioms, declarations in `context`; [] if consistent
+repair(store, opts?):              Promise<RepairResult>      // never mutates the store; incomplete result instead of a deadline error
+assessEdit(store, edit, opts?):    Promise<EditAssessment>    // consistency of the edited copy + lost disjointness pairs
+weaken(store, culprit: Axiom, opts?): Promise<WeakenResult>   // verified weaker replacements, deletion last
 validate(store):                   Promise<ValidationResult>
 // where:
 interface ValidationResult {
@@ -608,7 +618,7 @@ Full coverage matrix with test cases: [`docs/entailment-coverage.md`](docs/entai
 
 ### Diagnosing an inconsistency (`explainInconsistency`)
 
-Returns minimal inconsistent sub-ontologies (MIPS). Returns `[]` on consistent ontologies.
+Returns minimal inconsistent sub-ontologies (MIPS). Returns `[]` on consistent ontologies. The search runs over whole axioms (a restriction, an RDF list or an `AllDisjointClasses` node is one unit, never split) with the declaration triples as fixed background; each justification carries the declarations of the entities it mentions. If the `timeout` option stops the search, only justifications that were completed (minimal) are returned.
 
 ```typescript
 const mips = await reasoner.explainInconsistency(store);
@@ -616,6 +626,43 @@ if (mips.length > 0) {
   console.log("Minimal inconsistent core:", mips[0]);
 }
 ```
+
+### Repairing an inconsistency (`repair`, `assessEdit`, `weaken`)
+
+`repair` answers *what can I change?*, `assessEdit` *what does it cost?*, `weaken` *can I keep part of the axiom?*. All three take quads, return axioms made of the exact triples they removed (an axiom is every triple that belongs together, all graph copies), never modify your store, and return an `incomplete` result with a `reason` instead of throwing at a deadline.
+
+```typescript
+const result = await reasoner.repair(store);
+// result.consistent   true when the store was already consistent (then result.repairs is [])
+// result.justifications  the minimal inconsistent sets the repairs were built from (axioms + declaration context)
+// result.repairs      complete sets of axioms whose removal restores consistency
+//   .remove: Axiom[]  (Axiom = { principal: Quad, quads: Quad[] }; remove all of .quads together)
+//   .verifiedConsistent  removing exactly this set leaves a consistent ontology (checked on a copy)
+//   .minimal             no proper subset repairs the ontology
+//   .covers              indices into result.justifications that this set hits
+// result.incomplete / result.reason: 'deadline' | 'round-cap' | 'solution-cap' | 'explain-failed' | 'verify-failed'
+
+// Policy stays with the caller: prefer removing assertions over schema axioms, and so on.
+const cheapFirst = await reasoner.repair(store, { cost: (axiom) => (isAssertion(axiom) ? 0 : 10) });
+
+// What does a repair cost? Class-disjointness the edit gives up, read from the asserted pairs
+// (owl:disjointWith, owl:AllDisjointClasses, owl:disjointUnionOf), so it works on an inconsistent store.
+const edit = { remove: cheapFirst.repairs[0].remove.flatMap((a) => a.quads) };
+const cost = await reasoner.assessEdit(store, edit);
+// cost.consistent, cost.lostDisjointPairs ([{ a, b }] or null), cost.pairsChecked, cost.unmatchedRemovals
+
+// Keep part of a subClassOf axiom: X subClassOf Y, or X subClassOf (B1 and ... and Bn) with named classes.
+const { weakenings } = await reasoner.weaken(store, culpritAxiom);
+// most specific replacements first ('generalize' a conjunct to a superclass, 'dropConjunct'), the deletion last;
+// each has .remove, .add (quads to add) and was verified: consistent and the target class stays satisfiable
+```
+
+Notes:
+
+- `repair` returns at most `maxRepairs` sets (default 10, `reason: 'solution-cap'`) and uses a 300 s default `timeout`; a single clash needs 23-51 reasoner checks on any ontology size (3 s to 2 minutes from 300 to 100,000 quads, see [`docs/benchmark-repair.md`](docs/benchmark-repair.md)).
+- After a call the reasoner holds the last edited copy, so your next normal call reloads once (about 0.6 s on a 17k-quad ontology).
+- Quads inside an `Axiom` are equal by value (`quad.equals`) to those in your store, not the same objects.
+- These methods are new and their result shapes may change between releases.
 
 ### Finding unsatisfiable classes (`getUnsatisfiableClasses`, `isSatisfiable`)
 

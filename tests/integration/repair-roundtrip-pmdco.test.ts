@@ -143,4 +143,47 @@ describe.skipIf(!wasmExists || !enabled)("repair round trip on PMDco (A2 reprodu
     },
     900_000,
   );
+
+  it(
+    "weaken(): real PMDco hierarchy, a useful generalization through multiple inheritance, and the redundant case",
+    async () => {
+      const SUB = n("http://www.w3.org/2000/01/rdf-schema#subClassOf");
+      const CLASS = n("http://www.w3.org/2002/07/owl#Class");
+      const DISJOINT = n("http://www.w3.org/2002/07/owl#disjointWith");
+      const short = (iri: string) => iri.replace("http://purl.obolibrary.org/obo/", "obo:").replace("http://ex.org/", "ex:");
+      const describe = (r: Awaited<ReturnType<typeof reasoner.weaken>>) =>
+        `incomplete=${r.incomplete}${r.reason ? " " + r.reason : ""}; ` + r.weakenings.map((x) => `${x.strategy}${x.change ? " " + short(x.change.from) + " -> " + (x.change.to ? short(x.change.to) : "-") : ""}`).join(" | ");
+      const applied = (store: InstanceType<typeof Store>, x: { remove: any[]; add: any[] }) => {
+        const copy = new Store(store.getQuads(null, null, null, null));
+        for (const q of x.remove) copy.removeQuad(q);
+        for (const q of x.add) copy.addQuad(q);
+        return copy;
+      };
+
+      // (1) CHEBI_194541 has two named parents (CHEBI_23367, CHEBI_25585). W is under it and under Z, which is disjoint from CHEBI_25585.
+      const CHEBI = (id: string) => n(`http://purl.obolibrary.org/obo/CHEBI_${id}`);
+      const W = n("http://ex.org/W"), Z = n("http://ex.org/Z"), w1 = n("http://ex.org/w1");
+      const culpritQuad = quad(W, SUB, CHEBI("194541"));
+      const store = new Store([...base, quad(W, n(RDF_TYPE), CLASS), quad(Z, n(RDF_TYPE), CLASS), culpritQuad, quad(W, SUB, Z), quad(Z, DISJOINT, CHEBI("25585")), quad(w1, n(RDF_TYPE), W)]);
+      expect(await reasoner.checkConsistency(store)).toBe(false);
+      let t = performance.now();
+      const r = await reasoner.weaken(store, { principal: culpritQuad, quads: [culpritQuad] });
+      console.log(`[roundtrip] weaken(W subClassOf CHEBI_194541), ${secs(t)}: ${describe(r)}`);
+      expect(r.incomplete).toBe(false);
+      expect(r.weakenings.at(-1)!.strategy).toBe("delete");
+      const gen = r.weakenings.filter((x) => x.strategy === "generalize");
+      expect(gen.map((x) => x.change!.to)).toContain(CHEBI("23367").value);
+      expect(gen.map((x) => x.change!.to)).not.toContain(CHEBI("25585").value); // disjoint from Z: not a repair
+      for (const x of r.weakenings) expect(await reasoner.checkConsistency(applied(store, x))).toBe(true);
+
+      // (2) BFO: every superclass of BFO_0000004 is already entailed through W subClassOf BFO_0000020, so only the deletion is offered.
+      const W2 = n("http://ex.org/W2"), cq2 = quad(W2, SUB, n(`${BFO}0000004`));
+      const store2 = new Store([...base, quad(W2, n(RDF_TYPE), CLASS), cq2, quad(W2, SUB, n(`${BFO}0000020`)), quad(n("http://ex.org/w2"), n(RDF_TYPE), W2)]);
+      t = performance.now();
+      const r2 = await reasoner.weaken(store2, { principal: cq2, quads: [cq2] });
+      console.log(`[roundtrip] weaken(W2 subClassOf BFO_0000004), ${secs(t)}: ${describe(r2)}`);
+      expect(r2.weakenings.map((x) => x.strategy)).toEqual(["delete"]);
+    },
+    900_000,
+  );
 });
