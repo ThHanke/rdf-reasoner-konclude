@@ -36,6 +36,16 @@ function tripleKey(q: Quad): string {
   return `${termKey(q.subject)} ${termKey(q.predicate)} ${termKey(q.object)}`;
 }
 
+/** Identity of a quad including its graph. */
+export function quadKey(q: Quad): string {
+  return `${tripleKey(q)} ${termKey(q.graph)}`;
+}
+
+/** Identity of an axiom: its principal triple (graph-independent). */
+export function axiomKey(a: Axiom): string {
+  return tripleKey(a.principal);
+}
+
 function isDeclaration(q: Quad): boolean {
   return q.subject.termType === "NamedNode" && q.predicate.value === RDF_TYPE && DECLARATION_TYPES.has(q.object.value);
 }

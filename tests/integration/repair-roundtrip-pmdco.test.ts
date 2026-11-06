@@ -94,4 +94,30 @@ describe.skipIf(!wasmExists || !enabled)("repair round trip on PMDco (A2 reprodu
     },
     420_000,
   );
+
+  it(
+    "repair(): PMDco 0000004 x 0000020 -> one-axiom repair, verified, store untouched, round trip after applying",
+    async () => {
+      const ind = n("http://ex.org/x-repair");
+      const store = new Store([...base, quad(ind, n(RDF_TYPE), n(`${BFO}0000004`)), quad(ind, n(RDF_TYPE), n(`${BFO}0000020`))]);
+      const sizeBefore = store.size;
+      const t = performance.now();
+      const r = await reasoner.repair(store);
+      console.log(`[roundtrip] repair(): ${secs(t)} -> ${r.repairs.length} repair(s) sizes ${r.repairs.map(x => x.remove.length)} justifications ${r.justifications.length} incomplete=${r.incomplete} ${r.reason ?? ""}`);
+      expect(store.size).toBe(sizeBefore);
+      expect(r.consistent).toBe(false);
+      expect(r.repairs.length).toBeGreaterThanOrEqual(1);
+      const best = r.repairs[0];
+      expect(best).toMatchObject({ verifiedConsistent: true, minimal: true });
+      expect(best.remove).toHaveLength(1); // a type assertion shared by both justifications
+      for (const q of best.remove.flatMap(a => a.quads)) store.removeQuad(q);
+      let t2 = performance.now();
+      expect(await reasoner.checkConsistency(store)).toBe(true);
+      console.log(`[roundtrip] repair(): checkConsistency after applying ${secs(t2)}`);
+      t2 = performance.now();
+      await reasoner.classify(store);
+      console.log(`[roundtrip] repair(): classify after applying ${secs(t2)}`);
+    },
+    600_000,
+  );
 });

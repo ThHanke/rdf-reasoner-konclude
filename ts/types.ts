@@ -47,6 +47,44 @@ export interface AxiomJustification {
   context: Quad[];
 }
 
+export interface RepairOptions {
+  /** Justifications to collect per explanation round. Default 3. */
+  maxJustifications?: number;
+  /** Stop after this many repair sets (`reason: 'solution-cap'`). Default 10. */
+  maxRepairs?: number;
+  /** Safety net on refine rounds (an extra explanation call each); refinement normally ends when a candidate verifies, the deadline hits, or a round finds no new justification. Default 10. */
+  maxRounds?: number;
+  /** Lower cost = preferred to remove. When given, repair sets are ordered by total cost, then size. Default: ordered by size. */
+  cost?: (axiom: Axiom) => number;
+  /** Check each repair set by removing it from a copy and testing consistency. Default true. */
+  verify?: boolean;
+  /** Wall-clock budget in ms for the whole call, 0 = none. Default 300000. */
+  timeout?: number;
+  /** Named graph IRI that holds inferred triples in the store (excluded from the ontology). Default `INFERRED_GRAPH_IRI`. */
+  inferredGraph?: string;
+}
+
+export interface Repair {
+  /** Axioms to remove together (every graph copy of every triple, see `Axiom.quads`). */
+  remove: Axiom[];
+  /** Indices into `RepairResult.justifications` that this set hits. */
+  covers: number[];
+  /** Removing exactly `remove` leaves a consistent ontology. `null`: not checked (`verify: false`, deadline or failed check). */
+  verifiedConsistent: boolean | null;
+  /** Inclusion-minimal: no proper subset restores consistency. True whenever the set is a verified minimal hitting set of the known justifications (removing any member leaves a known justification intact). `null` when not verified. */
+  minimal: boolean | null;
+}
+
+export interface RepairResult {
+  /** True when the input was already consistent; then `repairs` is empty. */
+  consistent: boolean;
+  /** The justifications the repairs were built from. */
+  justifications: AxiomJustification[];
+  repairs: Repair[];
+  incomplete: boolean;
+  reason?: 'deadline' | 'round-cap' | 'solution-cap' | 'explain-failed' | 'verify-failed';
+}
+
 /**
  * Named graph IRI used to hold hypothetical (what-if) triples.
  * Quads in this graph are excluded from store fingerprints.

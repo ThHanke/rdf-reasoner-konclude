@@ -24,15 +24,16 @@ import { Store, DataFactory } from "n3";
 import { encodeToBuffers, decodeBuffers } from "./intern.js";
 
 
-export type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions, LaconicPart, LaconicJustification, LaconicExplainOptions, Axiom, AxiomJustification } from "./types.js";
+export type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions, LaconicPart, LaconicJustification, LaconicExplainOptions, Axiom, AxiomJustification, RepairOptions, Repair, RepairResult } from "./types.js";
 export { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, KJ_NS, KJ_JUSTIFICATION, KJ_JUSTIFIES, KJ_AXIOM } from "./types.js";
 export { createInlineWorker } from "./inlineWorker.js";
 export { createManagedStore } from "./n3Inject.js";
-import type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions, LaconicPart, LaconicJustification, LaconicExplainOptions, Axiom, AxiomJustification } from "./types.js";
+import type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions, LaconicPart, LaconicJustification, LaconicExplainOptions, Axiom, AxiomJustification, RepairOptions, Repair, RepairResult } from "./types.js";
 import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, KJ_JUSTIFIES, KJ_AXIOM, ReasonerStalledError } from "./types.js";
 export { ReasonerStalledError } from "./types.js";
 import { injectExplanationsFromBuffer, encodeStoreToBuffers, existsInSourceGraphs, clearGraph, createManagedStore, getRawStore } from "./n3Inject.js";
 import { groupJustification } from "./axiomGrouping.js";
+import { computeRepairs, REPAIR_DEFAULT_TIMEOUT_MS, type RepairOracle } from "./repair.js";
 import { buildEntailmentProbe, classifyAxiom, tripleKey as probeTripleKey } from "./entailmentProbe.js";
 import { computeLaconicAsync, groupQuadsIntoAxioms, splitAxiom, axiomKey } from "./laconicJustification.js";
 
@@ -1714,6 +1715,55 @@ export class RdfReasoner {
   }
 
   /**
+   * Compute repairs for an inconsistent store: complete sets of axioms whose removal restores consistency.
+   *
+   * Lazy candidate / verify / refine loop (see ts/repair.ts): explain the inconsistency, take the minimal hitting
+   * sets of the justifications as candidates, verify each on an edited copy, and when a candidate still fails
+   * explain the edited copy to discover more justifications. Every verified set is inclusion-minimal.
+   * Never mutates the caller's store and never throws for a deadline (`incomplete: true` with a `reason`).
+   * A kernel trap during explanation recycles the Worker and returns `reason: 'explain-failed'`.
+   *
+   * The reasoner's own state is left on the last edited copy, so the caller's next normal call reloads once
+   * (about 0.6 s on PMDco). Result order of `repairs` is by cost then size (size only without `cost`), ties unspecified.
+   * Quads inside axioms are equal by value to those in the store (N3 creates quad objects on demand).
+   */
+  repair(store: Store, opts?: RepairOptions): Promise<RepairResult> {
+    if (typeof (store as { getQuads?: unknown } | null)?.getQuads !== "function") {
+      return Promise.reject(new TypeError("repair: store must be an N3 Store"));
+    }
+    const result = this._queue.then(async () => {
+      const ig = opts?.inferredGraph ?? INFERRED_GRAPH_IRI;
+      const graphsToIgnore = new Set<string>([ig, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI]);
+      const base = store.getQuads(null, null, null, null).filter(q => !graphsToIgnore.has(q.graph.value));
+      const timeoutMs = opts?.timeout ?? REPAIR_DEFAULT_TIMEOUT_MS;
+      const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : Infinity;
+      const oracle: RepairOracle = {
+        inconsistent: quads => this._boundedInconsistencyCheck(quads, deadline),
+        explain: (quads, max) => this._explainInconsistencyQuadsDirect(quads, max, deadline),
+      };
+      let out: RepairResult;
+      try {
+        out = await computeRepairs({ store, base, graphsToIgnore, oracle, opts, deadline });
+      } finally {
+        // sub-calls replaced the WASM state: every generation-keyed cache is stale
+        this._classifyCache = null;
+        this._materializeCache = null;
+        this._classifyPropertiesCache = null;
+        this._consistencyCache = null;
+        this._lastExplBuffer = null;
+        this._lastPropertyExplBuffer = null;
+      }
+      if (out.incomplete && out.reason === "explain-failed") {
+        // A trap leaves the Worker unusable (the next call would hang): replace it now.
+        await this._recycleWorkerInSlot().catch(() => {});
+      }
+      return out;
+    });
+    this._queue = result.then(() => {}, () => {});
+    return result;
+  }
+
+  /**
    * Like `explainInconsistency`, but each justification is grouped into OWL axioms (a restriction axiom is
    * one unit of several triples) and declarations (`C a owl:Class`, ...) are returned separately in `context`
    * instead of as removable members. Every returned quad is an exact instance from the store; `Axiom.quads`
@@ -1723,6 +1773,34 @@ export class RdfReasoner {
     const justifications = await this.explainInconsistency(store, opts);
     const ignore = new Set<string>([opts?.inferredGraph ?? INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI]);
     return justifications.map(j => groupJustification(j, store, ignore));
+  }
+
+  /**
+   * Slot-held consistency check of an explicit quad set, bounded by an absolute deadline.
+   * Races the WASM call against a per-call timer so a hung tableau (infinite expansion for certain partial TBox
+   * subsets) can be interrupted: on timeout the Worker is terminated and recreated and "aborted" is returned.
+   * Also recycles the Worker first when the WASM heap passed the recycle threshold (every reload retains ~20 MB;
+   * a long search would otherwise hit the 4 GiB wasm32 ceiling and trap). Returns true when INCONSISTENT.
+   */
+  private async _boundedInconsistencyCheck(quads: Quad[], deadline: number): Promise<boolean | "aborted"> {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return "aborted";
+    if (this._recycleHeapBytes > 0 && this._lastHeapBytes > this._recycleHeapBytes) await this._recycleWorkerInSlot();
+    const perCallMs = Math.min(remaining + 1_000, 30_000);
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    const timerPromise = new Promise<"aborted">(resolve => {
+      timeoutHandle = setTimeout(() => resolve("aborted"), perCallMs);
+    });
+    try {
+      const result = await Promise.race([
+        this._checkInconsistencyDirect(quads).then(r => r as boolean | "aborted"),
+        timerPromise,
+      ]);
+      if (result === "aborted") await this._reinitForBisection();
+      return result;
+    } finally {
+      clearTimeout(timeoutHandle);
+    }
   }
 
   /**
@@ -1749,31 +1827,7 @@ export class RdfReasoner {
     const isExpired = () => Date.now() >= deadline;
     const justifications: Quad[][] = [];
 
-    // Race each WASM call against a per-call timer so a hung tableau
-    // (infinite expansion for certain partial TBox subsets) can be
-    // interrupted.  On timeout the Worker is terminated and recreated.
-    const checkOrAbort = async (quads: Quad[]): Promise<boolean | "aborted"> => {
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) return "aborted";
-      // Every reload retains ~20 MB of WASM heap (measured on PMDco); a long search would hit the 4 GiB wasm32
-      // ceiling and trap. Recycle the Worker between calls once the heap passes the recycle threshold.
-      if (this._recycleHeapBytes > 0 && this._lastHeapBytes > this._recycleHeapBytes) await this._recycleWorkerInSlot();
-      const perCallMs = Math.min(remaining + 1_000, 30_000);
-      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-      const timerPromise = new Promise<"aborted">(resolve => {
-        timeoutHandle = setTimeout(() => resolve("aborted"), perCallMs);
-      });
-      try {
-        const result = await Promise.race([
-          this._checkInconsistencyDirect(quads).then(r => r as boolean | "aborted"),
-          timerPromise,
-        ]);
-        if (result === "aborted") await this._reinitForBisection();
-        return result;
-      } finally {
-        clearTimeout(timeoutHandle);
-      }
-    };
+    const checkOrAbort = (quads: Quad[]): Promise<boolean | "aborted"> => this._boundedInconsistencyCheck(quads, deadline);
 
     // QuickXplain (Junker 2004): a minimal inconsistent subset in about 2*k*log2(n/k) consistency checks for a
     // justification of size k. The previous halve-then-delete-one-by-one search degenerated to n checks
