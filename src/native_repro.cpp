@@ -247,8 +247,13 @@ int main(int argc, char** argv) {
             }
             begin("seq-sync #" + std::to_string(n) + " " + step);
             auto t0 = std::chrono::steady_clock::now();
+            mem("before-sync");
             int sy = r.syncNTriplesStr(content);
-            bool ok = op == 'm' ? r.realization() : r.classification();
+            mem("after-sync");
+            bool ok = op == 'm' ? r.realization() : op == 'k' ? r.consistency() : r.classification();
+            mem("after-op");
+            if (getenv("REPRO_FLUSH")) { KonPoolStats::requestPoolFlush(); std::this_thread::sleep_for(std::chrono::milliseconds(400)); mem("after-flush"); }
+            if (!ok && !r.stalled() && getenv("REPRO_CONTINUE")) { fprintf(stderr, "    step %d: not ok (inconsistent/failed), continuing\n", n); continue; }
             if (!ok) { fprintf(stderr, r.stalled() ? "STALL detected by KonStall\n" : "step failed\n"); rc = r.stalled() ? 3 : 1; break; }
             std::string out = collect(r);
             double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();

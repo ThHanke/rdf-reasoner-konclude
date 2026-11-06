@@ -1,0 +1,29 @@
+--- a/Source/Reasoner/Generator/CConcreteOntologyRedlandTriplesDataExpressionMapper.cpp
++++ b/Source/Reasoner/Generator/CConcreteOntologyRedlandTriplesDataExpressionMapper.cpp
+@@ -53,8 +53,13 @@
+ 
+ 					librdf_stream* stream = librdf_model_find_statements(model, partial_statement);
+ 					if (!stream) {
++						librdf_free_statement(partial_statement);
+ 						return false;
+ 					} else {
++						// only an existence probe: a stream left open pins the model's storage, so the whole Redland
++						// model would survive librdf_free_model (per-ontology leak of the triple hashes)
++						librdf_free_stream(stream);
++						librdf_free_statement(partial_statement);
+ 						newTriplesMapped = true;
+ 
+ 						//unsigned char* modelString = librdf_model_to_string(redlandTriplesData->getRedlandIndexedModel(), nullptr, "turtle", nullptr, nullptr);
+@@ -66,9 +71,10 @@
+ 						initTripleDataProcessing(redlandTriplesData);
+ 
+ 						cint64 count = 0;
+-						getOWLClassInstanceNodesStream()->forEach([&](librdf_node* node) {
++						// the wrapper owns an open librdf stream that pins the model storage: release it
++						releaseRedlandNodeStreamWrapper(getOWLClassInstanceNodesStream()->forEach([&](librdf_node* node) {
+ 							count++;
+-						});
++						}));
+ 
+ 
+ 						loadExistingEntities(updateConcreteOntology->getBuildData(), redlandTriplesData);
