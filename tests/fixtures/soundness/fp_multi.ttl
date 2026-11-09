@@ -1,0 +1,10 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix ex: <http://ex.org/> .
+<http://ex.org/o> a owl:Ontology .
+ex:B a owl:Class . ex:D a owl:Class . ex:E a owl:Class . ex:p a owl:ObjectProperty , owl:FunctionalProperty .
+ex:B rdfs:subClassOf ex:D . ex:E owl:equivalentClass [ a owl:Restriction ; owl:onProperty ex:q ; owl:someValuesFrom ex:B ] . ex:q a owl:ObjectProperty .
+ex:a a owl:NamedIndividual . ex:c1 a owl:NamedIndividual . ex:c2 a owl:NamedIndividual . ex:z a owl:NamedIndividual .
+ex:a ex:p ex:c1 . ex:a ex:p ex:c2 . ex:c1 a ex:B .
+ex:z ex:q ex:c2 .

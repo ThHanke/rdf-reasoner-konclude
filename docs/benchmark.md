@@ -1,5 +1,7 @@
 ## Benchmark Results
 
+Latency and robustness of `repair()` (inconsistency repair) on ontologies from 312 to 100k quads: [`benchmark-repair.md`](benchmark-repair.md).
+
 ```
 Date:      2026-10-16
 Package:   rdf-reasoner-konclude 0.8.0  (git b928e4c; vendor/konclude 056334ad)

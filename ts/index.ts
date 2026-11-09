@@ -24,14 +24,19 @@ import { Store, DataFactory } from "n3";
 import { encodeToBuffers, decodeBuffers } from "./intern.js";
 
 
-export type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions, LaconicPart, LaconicJustification, LaconicExplainOptions } from "./types.js";
+export type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions, LaconicPart, LaconicJustification, LaconicExplainOptions, Axiom, AxiomJustification, RepairOptions, Repair, RepairResult, Edit, DisjointPair, AssessEditOptions, EditAssessment, WeakenOptions, Weakening, WeakenResult, InconsistencyGuardOptions } from "./types.js";
 export { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, KJ_NS, KJ_JUSTIFICATION, KJ_JUSTIFIES, KJ_AXIOM } from "./types.js";
 export { createInlineWorker } from "./inlineWorker.js";
 export { createManagedStore } from "./n3Inject.js";
-import type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions, LaconicPart, LaconicJustification, LaconicExplainOptions } from "./types.js";
-import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, KJ_JUSTIFIES, KJ_AXIOM, ReasonerStalledError } from "./types.js";
-export { ReasonerStalledError } from "./types.js";
+import type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions, LaconicPart, LaconicJustification, LaconicExplainOptions, Axiom, AxiomJustification, RepairOptions, Repair, RepairResult, Edit, DisjointPair, AssessEditOptions, EditAssessment, WeakenOptions, Weakening, WeakenResult, InconsistencyGuardOptions } from "./types.js";
+import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, KJ_JUSTIFIES, KJ_AXIOM, ReasonerStalledError, InconsistentOntologyError } from "./types.js";
+export { ReasonerStalledError, InconsistentOntologyError } from "./types.js";
 import { injectExplanationsFromBuffer, encodeStoreToBuffers, existsInSourceGraphs, clearGraph, createManagedStore, getRawStore } from "./n3Inject.js";
+import { groupJustification, partitionIntoUnits } from "./axiomGrouping.js";
+import { dropAnnotationTriples } from "./annotations.js";
+import { computeRepairs, REPAIR_DEFAULT_TIMEOUT_MS, type RepairOracle } from "./repair.js";
+import { computeAssessment, probeQuads, PROBE_NS, type AssessOracle } from "./assessEdit.js";
+import { computeWeakenings } from "./weaken.js";
 import { buildEntailmentProbe, classifyAxiom, tripleKey as probeTripleKey } from "./entailmentProbe.js";
 import { computeLaconicAsync, groupQuadsIntoAxioms, splitAxiom, axiomKey } from "./laconicJustification.js";
 
@@ -479,6 +484,7 @@ export class RdfReasoner {
     const wantExplanations = opts?.explanations === true;
     const result = this._queue.then(async () => {
       const gen = await this._syncForOp(store, opts?.inferredGraph);
+      await this._guardConsistent(gen, opts);
       // Cache hit: same store instance with same content as last classify call
       if (this._classifyCache !== null && this._classifyCache.gen === gen && this._classifyCache.store === store) {
         if (wantExplanations) {
@@ -557,7 +563,7 @@ export class RdfReasoner {
         return this._consistencyCache.result;
       }
 
-      await this._call("classification", []);
+      // consistency() runs the classification pipeline itself (see _checkInconsistencyDirect).
       const consistent = (await this._call("consistency", [])) as boolean;
 
       // Caches of other content generations are stale; caches of THIS generation stay valid.
@@ -619,6 +625,7 @@ export class RdfReasoner {
         opts?.inferredGraph ?? INFERRED_GRAPH_IRI,
       );
       const gen = await this._syncForOp(store, opts?.inferredGraph);
+      await this._guardConsistent(gen, opts);
 
       // Cache hit: same store instance with same content as last materialize call
       if (this._materializeCache !== null && this._materializeCache.gen === gen && this._materializeCache.store === store) {
@@ -725,6 +732,7 @@ export class RdfReasoner {
     const wantExplanations = opts?.explanations === true;
     const result = this._queue.then(async () => {
       const gen = await this._syncForOp(store, opts?.inferredGraph);
+      await this._guardConsistent(gen, opts);
       // Cache hit: same store instance with same content as last classifyProperties call
       if (this._classifyPropertiesCache !== null && this._classifyPropertiesCache.gen === gen && this._classifyPropertiesCache.store === store) {
         if (wantExplanations) {
@@ -853,8 +861,9 @@ export class RdfReasoner {
    * writes inferred triples into the store on cache miss (same invariant as
    * _classifyInline).  Must be called from inside a _queue slot only.
    */
-  private async _getUnsatisfiableClassesInternal(store: Store, inferredGraph?: string): Promise<string[]> {
+  private async _getUnsatisfiableClassesInternal(store: Store, inferredGraph?: string, guard?: { failOnInconsistent?: boolean }): Promise<string[]> {
     const gen = await this._sync(store, inferredGraph, true);
+    await this._guardConsistent(gen, guard, true);
     if (this._classifyCache?.gen !== gen || this._classifyCache.store !== store) {
       const rawStore = getRawStore(store);
       const ig = DataFactory.namedNode(inferredGraph ?? INFERRED_GRAPH_IRI);
@@ -878,9 +887,9 @@ export class RdfReasoner {
   /** Return the IRIs of all classes that are unsatisfiable (equivalent to
    *  owl:Nothing) in the ontology.  owl:Nothing itself is excluded.
    *  Classes absent from the taxonomy are NOT included (open-world). */
-  getUnsatisfiableClasses(store: Store): Promise<string[]> {
+  getUnsatisfiableClasses(store: Store, opts?: InconsistencyGuardOptions): Promise<string[]> {
     const result = this._queue.then(async () =>
-      this._getUnsatisfiableClassesInternal(store),
+      this._getUnsatisfiableClassesInternal(store, opts?.inferredGraph, opts),
     );
     this._queue = result.then(() => {}, () => {});
     return result;
@@ -889,10 +898,10 @@ export class RdfReasoner {
   /** Return `false` if `classIRI` is equivalent to owl:Nothing in the ontology.
    *  Returns `true` for any class absent from the taxonomy (open-world assumption).
    *  owl:Nothing is always unsatisfiable; returns `false` without a Worker call. */
-  isSatisfiable(store: Store, classIRI: string): Promise<boolean> {
+  isSatisfiable(store: Store, classIRI: string, opts?: InconsistencyGuardOptions): Promise<boolean> {
     if (classIRI === OWL_NOTHING) return Promise.resolve(false);
     const result = this._queue.then(async () => {
-      const unsatSet = await this._getUnsatisfiableClassesInternal(store);
+      const unsatSet = await this._getUnsatisfiableClassesInternal(store, opts?.inferredGraph, opts);
       return !unsatSet.includes(classIRI);
     });
     this._queue = result.then(() => {}, () => {});
@@ -905,15 +914,15 @@ export class RdfReasoner {
   /** Check whether a single axiom is entailed by the store's ontology. Returns
    *  null for unsupported predicates (a warning is logged). Triggers reasoning
    *  internally if the store has changed since the last call. */
-  isEntailed(store: Store, axiom: Quad, opts?: { inferredGraph?: string }): Promise<boolean | null>;
+  isEntailed(store: Store, axiom: Quad, opts?: InconsistencyGuardOptions): Promise<boolean | null>;
   /** Check whether each axiom in a batch is entailed. Returns null for
    *  individual unsupported predicates. Reasoning is triggered at most once
    *  per required operation type. */
-  isEntailed(store: Store, axioms: Quad[], opts?: { inferredGraph?: string }): Promise<(boolean | null)[]>;
+  isEntailed(store: Store, axioms: Quad[], opts?: InconsistencyGuardOptions): Promise<(boolean | null)[]>;
   isEntailed(
     store: Store,
     axiomOrAxioms: Quad | Quad[],
-    opts?: { inferredGraph?: string },
+    opts?: InconsistencyGuardOptions,
   ): Promise<boolean | null> | Promise<(boolean | null)[]> {
     const isBatch = Array.isArray(axiomOrAxioms);
     const axioms: Quad[] = isBatch ? (axiomOrAxioms as Quad[]) : [axiomOrAxioms as Quad];
@@ -922,7 +931,7 @@ export class RdfReasoner {
     // Fast-path unsupported check for single axiom (no queue entry needed)
     if (!isBatch) {
       const op = this._opForPredicate((axiomOrAxioms as Quad).predicate.value);
-      if (op === null) {
+      if (op === null && !this._isDisjointAxiom(axiomOrAxioms as Quad)) {
         console.warn(`isEntailed: unsupported predicate <${(axiomOrAxioms as Quad).predicate.value}>`);
         return Promise.resolve(null);
       }
@@ -931,6 +940,7 @@ export class RdfReasoner {
     const result = this._queue.then(async () => {
       const ig = DataFactory.namedNode(igIri);
       const gen = await this._sync(store, igIri);
+      await this._guardConsistent(gen, opts);
 
       // Determine which operations are needed
       const needsClassify = axioms.some(a => this._opForPredicate(a.predicate.value) === "classify");
@@ -973,9 +983,19 @@ export class RdfReasoner {
         }
       }
 
+      // owl:disjointWith between named classes: decided in one probe batch (after the other operations; it replaces the WASM state)
+      const disjointAxioms = axioms.filter(a => this._isDisjointAxiom(a));
+      const disjointResults = new Map<Quad, boolean | null>();
+      if (disjointAxioms.length > 0) {
+        const res = await this._disjointEntailmentsDirect(store, igIri, disjointAxioms);
+        disjointAxioms.forEach((a, i) => disjointResults.set(a, res[i].entailed));
+        this._invalidateResultCaches();
+      }
+
       // Assemble results
       if (!isBatch) {
         const axiom = axioms[0];
+        if (this._isDisjointAxiom(axiom)) return disjointResults.get(axiom) ?? null;
         const op = this._opForPredicate(axiom.predicate.value);
         if (op === "classify") return classifyResults.get(axiom) ?? false;
         if (op === "materialize") return materializeResults.get(axiom) ?? false;
@@ -984,6 +1004,7 @@ export class RdfReasoner {
       }
 
       return axioms.map(a => {
+        if (this._isDisjointAxiom(a)) return disjointResults.get(a) ?? null;
         const op = this._opForPredicate(a.predicate.value);
         if (op === null) {
           console.warn(`isEntailed: unsupported predicate <${a.predicate.value}>`);
@@ -1055,6 +1076,10 @@ export class RdfReasoner {
       // Encode and run the full materialize pipeline
       const { tripleBuffer, strTableBuffer } = encodeToBuffers(hypothetical);
       await this._call("sync", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
+      if (opts?.failOnInconsistent && !((await this._call("consistency", [])) as boolean)) {
+        this._invalidateResultCaches(); // the WASM state holds the hypothetical content
+        throw new InconsistentOntologyError("The hypothetical ontology (the store plus the additions, minus the removals) is inconsistent.");
+      }
       await this._call("realization", []);
       const buf = (await this._call("getInferredTripleBuffer", [])) as ArrayBuffer;
       const afterQuads = decodeBuffers(buf);
@@ -1180,7 +1205,8 @@ export class RdfReasoner {
   private async _checkInconsistencyDirect(candidates: Quad[]): Promise<boolean> {
     const { tripleBuffer, strTableBuffer } = encodeToBuffers(candidates);
     await this._callDirect("sync", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
-    await this._callDirect("classification", []);
+    // consistency() runs the classification pipeline itself; a separate classification call first would make an
+    // inconsistent set (failed pipeline, marked for retry) pay for a second full rebuild (measured: 480 -> 265 ms on PMDco).
     const consistent = (await this._callDirect("consistency", [])) as boolean;
     return !consistent;
   }
@@ -1440,29 +1466,8 @@ export class RdfReasoner {
       }
     }
 
-    // Reverse someValuesFrom: subject is the FILLER, not the restriction owner.
-    const propUsages = allBase.filter(q => q.object.value === subjectIri && q.predicate.value !== RDF_TYPE);
-    for (const usage of propUsages) {
-      const ownerIri = usage.subject.value;
-      const propIri = usage.predicate.value;
-      const ownerTypes = [
-        ...allBase.filter(q => q.subject.value === ownerIri && q.predicate.value === RDF_TYPE).map(q => q.object.value),
-        ...store.getQuads(DataFactory.namedNode(ownerIri), DataFactory.namedNode(RDF_TYPE), null, DataFactory.namedNode(ig)).map(q => q.object.value),
-      ];
-      for (const ownerType of ownerTypes) {
-        const links = allBase.filter(q =>
-          q.subject.value === ownerType &&
-          (q.predicate.value === OWL_EQUIV || q.predicate.value === RDFS_SUBCLASS));
-        for (const link of links) {
-          const bn = link.object.value;
-          const onProp = allBase.find(q => q.subject.value === bn && q.predicate.value === OWL_ON_PROP && q.object.value === propIri);
-          if (!onProp) continue;
-          const some = allBase.find(q => q.subject.value === bn && q.predicate.value === OWL_SOME && q.object.value === classIri);
-          if (!some) continue;
-          return [usage, link, onProp, some];
-        }
-      }
-    }
+    // No reverse-someValuesFrom synthesis: [p(x,y), x:C, C ≡/⊑ ∃p.F] does not entail y:F (the witness may be another
+    // individual), so it is never a justification for y:F.
 
     return null;
   }
@@ -1649,10 +1654,11 @@ export class RdfReasoner {
     const result = this._queue.then(async () => {
       const ig = opts?.inferredGraph ?? INFERRED_GRAPH_IRI;
       // Build base quads (exclude inferred/hypothetical graphs)
-      const allBase = store.getQuads(null, null, null, null).filter(q => {
+      // Annotation assertions never affect consistency (OWL 2 DL): leave them out of every check.
+      const allBase = dropAnnotationTriples(store.getQuads(null, null, null, null).filter(q => {
         const g = q.graph.value;
         return g !== ig && g !== HYPOTHETICAL_IRI;
-      });
+      }));
 
       // Fast-path: check consistency using existing cache or direct Worker call
       const gen = await this._sync(store, ig);
@@ -1680,12 +1686,12 @@ export class RdfReasoner {
       // Unlike explain(), we do NOT apply _isBuiltInDeclaration here because
       // rdf:type owl:Class declarations are semantically meaningful for
       // ABox inconsistency (Konclude requires them to recognize disjoint classes).
-      const allCandidates = store.getQuads(null, null, null, null).filter(q => {
+      const allCandidates = dropAnnotationTriples(store.getQuads(null, null, null, null).filter(q => {
         const g = q.graph.value;
         if (g === ig || g === HYPOTHETICAL_IRI) return false;
         if (opts?.axiomFilter && !opts.axiomFilter(q)) return false;
         return true;
-      });
+      }));
 
       const timeoutMs = opts?.timeout ?? 180_000;
       const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : Infinity;
@@ -1706,103 +1712,396 @@ export class RdfReasoner {
         if (!(await this._checkInconsistencyDirect(allCandidates))) return [];
       }
 
-      const justifications: Quad[][] = [];
-
-      // Race each WASM call against a per-call timer so a hung tableau
-      // (infinite expansion for certain partial TBox subsets) can be
-      // interrupted.  On timeout the Worker is terminated and recreated.
-      const checkOrAbort = async (quads: Quad[]): Promise<boolean | "aborted"> => {
-        const remaining = deadline - Date.now();
-        if (remaining <= 0) return "aborted";
-        const perCallMs = Math.min(remaining + 1_000, 30_000);
-        let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-        const timerPromise = new Promise<"aborted">(resolve => {
-          timeoutHandle = setTimeout(() => resolve("aborted"), perCallMs);
-        });
-        try {
-          const result = await Promise.race([
-            this._checkInconsistencyDirect(quads).then(r => r as boolean | "aborted"),
-            timerPromise,
-          ]);
-          if (result === "aborted") await this._reinitForBisection();
-          return result;
-        } finally {
-          clearTimeout(timeoutHandle);
-        }
-      };
-
-      const findOneJustification = async (candidates: Quad[]): Promise<Quad[] | null> => {
-        let working = [...candidates];
-        let changed = true;
-        while (changed && working.length > 1) {
-          if (isExpired()) return working;
-          changed = false;
-          const mid = Math.floor(working.length / 2);
-          const firstHalf = working.slice(0, mid);
-          const secondHalf = working.slice(mid);
-          const fhResult = await checkOrAbort(firstHalf);
-          if (fhResult === "aborted") return working;
-          if (fhResult) { working = firstHalf; changed = true; continue; }
-          if (isExpired()) return working;
-          const shResult = await checkOrAbort(secondHalf);
-          if (shResult === "aborted") return working;
-          if (shResult) { working = secondHalf; changed = true; continue; }
-          break;
-        }
-        let i = 0;
-        while (i < working.length) {
-          if (isExpired()) return working;
-          if (working.length === 1) break;
-          const without = [...working.slice(0, i), ...working.slice(i + 1)];
-          const r = await checkOrAbort(without);
-          if (r === "aborted") return working;
-          if (r) { working = without; } else { i++; }
-        }
-        return working;
-      };
-
-      const j1 = await findOneJustification(allCandidates);
-      if (!j1 || j1.length === 0) return [];
-      justifications.push(j1);
-
-      if (!isExpired() && maxJustifications > 1) {
-        // HSDAG queue: pairs of (excluded set, justification to expand from)
-        const hsQueue: Array<{ excluded: Set<string>; justification: Quad[] }> = [
-          { excluded: new Set(), justification: j1 },
-        ];
-        const exploredExclusions = new Set<string>();
-        while (!isExpired() && hsQueue.length > 0 && justifications.length < maxJustifications) {
-          const { excluded, justification: currentJ } = hsQueue.shift()!;
-          const excludedKey = [...excluded].sort().join("|");
-          if (exploredExclusions.has(excludedKey)) continue;
-          exploredExclusions.add(excludedKey);
-          for (const axiomInJ of currentJ) {
-            if (isExpired()) break;
-            const newExcluded = new Set(excluded);
-            const axKey = `${axiomInJ.subject.value}\0${axiomInJ.predicate.value}\0${axiomInJ.object.value}`;
-            newExcluded.add(axKey);
-            const newExcludedKey = [...newExcluded].sort().join("|");
-            if (exploredExclusions.has(newExcludedKey)) continue;
-            const reduced = allCandidates.filter(q => !newExcluded.has(`${q.subject.value}\0${q.predicate.value}\0${q.object.value}`));
-            const rCheck = await checkOrAbort(reduced);
-            if (rCheck === "aborted" || !rCheck) continue;
-            const jNew = await findOneJustification(reduced);
-            if (!jNew || jNew.length === 0) continue;
-            const jKey = jNew.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`).sort().join("|");
-            const alreadyFound = justifications.some(j => j.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`).sort().join("|") === jKey);
-            if (!alreadyFound) {
-              justifications.push(jNew);
-              if (justifications.length >= maxJustifications) break;
-              hsQueue.push({ excluded: newExcluded, justification: jNew });
-            }
-          }
-        }
-      }
-
-      return justifications;
+      return this._explainInconsistencyQuadsDirect(allCandidates, maxJustifications, deadline);
     });
     this._queue = result.then(() => {}, () => {});
     return result;
+  }
+
+  /**
+   * Weaken a culprit `rdfs:subClassOf` axiom instead of deleting it. `culprit` is an `Axiom` from `repair()` or
+   * `explainInconsistencyAxioms()`. Supported (v1): `X subClassOf Y` and `X subClassOf (B1 and ... and Bn)` with named
+   * classes; anything else returns `reason: 'unsupported-axiom'`.
+   *
+   * Offers, most specific first: a conjunct generalized to a named superclass (only the most specific working ones; the
+   * superclasses form a DAG and everything above a working one is pruned), a conjunct dropped, and finally the deletion.
+   * Every weakening is verified on a copy: the edited ontology is consistent and the target class stays satisfiable.
+   * Candidates already entailed without the culprit are skipped. Never mutates the store and never throws for a deadline
+   * (`incomplete: true`). The reasoner's own state is left on the last edited copy, so the next normal call reloads once.
+   */
+  weaken(store: Store, culprit: Axiom, opts?: WeakenOptions): Promise<WeakenResult> {
+    if (typeof (store as { getQuads?: unknown } | null)?.getQuads !== "function") {
+      return Promise.reject(new TypeError("weaken: store must be an N3 Store"));
+    }
+    if (!culprit || typeof culprit !== "object" || !culprit.principal || !Array.isArray(culprit.quads)) {
+      return Promise.reject(new TypeError("weaken: culprit must be an Axiom ({ principal, quads })"));
+    }
+    const result = this._queue.then(async () => {
+      const ig = opts?.inferredGraph ?? INFERRED_GRAPH_IRI;
+      const graphsToIgnore = new Set<string>([ig, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI]);
+      const base = store.getQuads(null, null, null, null).filter(q => !graphsToIgnore.has(q.graph.value));
+      const timeoutMs = opts?.timeout ?? 180_000;
+      const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : Infinity;
+      const oracle: AssessOracle = {
+        inconsistent: quads => this._boundedInconsistencyCheck(quads, deadline),
+        unsatisfiable: quads => this._unsatisfiableClassesDirect(quads, deadline),
+        subClassPairs: quads => this._subClassPairsDirect(quads, deadline),
+      };
+      try {
+        return await computeWeakenings({ base, culprit, oracle, deadline });
+      } finally {
+        // sub-calls replaced the WASM state: every generation-keyed cache is stale
+        this._classifyCache = null;
+        this._materializeCache = null;
+        this._classifyPropertiesCache = null;
+        this._consistencyCache = null;
+        this._lastExplBuffer = null;
+        this._lastPropertyExplBuffer = null;
+      }
+    });
+    this._queue = result.then(() => {}, () => {});
+    return result;
+  }
+
+  /**
+   * What does a proposed edit cost? Applies `edit` (removals by exact quad identity, then additions) to a copy and
+   * reports whether the result is consistent and which asserted class-disjointness pairs are no longer entailed.
+   *
+   * The pairs to protect are the asserted disjointness pairs of the unedited store (`owl:disjointWith`,
+   * `owl:AllDisjointClasses`, `owl:disjointUnionOf`, named classes), read syntactically, so this works on an inconsistent
+   * store (the typical input: the edit is a repair). They are tested after the edit in one batch with probe classes.
+   * `lostDisjointPairs` is `null` when the edited ontology is itself inconsistent. Never mutates the caller's store and
+   * never throws for a deadline (`incomplete: true`, `reason: 'deadline'`). The reasoner's own state is left on the edited
+   * copy, so the caller's next normal call reloads once.
+   */
+  assessEdit(store: Store, edit: Edit, opts?: AssessEditOptions): Promise<EditAssessment> {
+    if (typeof (store as { getQuads?: unknown } | null)?.getQuads !== "function") {
+      return Promise.reject(new TypeError("assessEdit: store must be an N3 Store"));
+    }
+    if (edit === null || typeof edit !== "object") return Promise.reject(new TypeError("assessEdit: edit must be an object"));
+    const result = this._queue.then(async () => {
+      const ig = opts?.inferredGraph ?? INFERRED_GRAPH_IRI;
+      const graphsToIgnore = new Set<string>([ig, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI]);
+      const base = store.getQuads(null, null, null, null).filter(q => !graphsToIgnore.has(q.graph.value));
+      const timeoutMs = opts?.timeout ?? 180_000;
+      const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : Infinity;
+      const oracle: AssessOracle = {
+        inconsistent: quads => this._boundedInconsistencyCheck(quads, deadline),
+        unsatisfiable: quads => this._unsatisfiableClassesDirect(quads, deadline),
+        subClassPairs: quads => this._subClassPairsDirect(quads, deadline),
+      };
+      try {
+        return await computeAssessment({ base, edit, opts, oracle });
+      } finally {
+        // sub-calls replaced the WASM state: every generation-keyed cache is stale
+        this._classifyCache = null;
+        this._materializeCache = null;
+        this._classifyPropertiesCache = null;
+        this._consistencyCache = null;
+        this._lastExplBuffer = null;
+        this._lastPropertyExplBuffer = null;
+      }
+    });
+    this._queue = result.then(() => {}, () => {});
+    return result;
+  }
+
+  /**
+   * Compute repairs for an inconsistent store: complete sets of axioms whose removal restores consistency.
+   *
+   * Lazy candidate / verify / refine loop (see ts/repair.ts): explain the inconsistency, take the minimal hitting
+   * sets of the justifications as candidates, verify each on an edited copy, and when a candidate still fails
+   * explain the edited copy to discover more justifications. Every verified set is inclusion-minimal.
+   * Never mutates the caller's store and never throws for a deadline (`incomplete: true` with a `reason`).
+   * A kernel trap during explanation recycles the Worker and returns `reason: 'explain-failed'`.
+   *
+   * The reasoner's own state is left on the last edited copy, so the caller's next normal call reloads once
+   * (about 0.6 s on PMDco). Result order of `repairs` is by cost then size (size only without `cost`), ties unspecified.
+   * Quads inside axioms are equal by value to those in the store (N3 creates quad objects on demand).
+   */
+  repair(store: Store, opts?: RepairOptions): Promise<RepairResult> {
+    if (typeof (store as { getQuads?: unknown } | null)?.getQuads !== "function") {
+      return Promise.reject(new TypeError("repair: store must be an N3 Store"));
+    }
+    const result = this._queue.then(async () => {
+      const ig = opts?.inferredGraph ?? INFERRED_GRAPH_IRI;
+      const graphsToIgnore = new Set<string>([ig, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI]);
+      // Annotation assertions never affect consistency (OWL 2 DL): leave them out of every check.
+      const base = dropAnnotationTriples(store.getQuads(null, null, null, null).filter(q => !graphsToIgnore.has(q.graph.value)));
+      const timeoutMs = opts?.timeout ?? REPAIR_DEFAULT_TIMEOUT_MS;
+      const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : Infinity;
+      const oracle: RepairOracle = {
+        inconsistent: quads => this._boundedInconsistencyCheck(quads, deadline),
+        explain: (quads, max) => this._explainInconsistencyQuadsDirect(quads, max, deadline),
+      };
+      let out: RepairResult;
+      try {
+        out = await computeRepairs({ store, base, graphsToIgnore, oracle, opts, deadline });
+      } finally {
+        // sub-calls replaced the WASM state: every generation-keyed cache is stale
+        this._classifyCache = null;
+        this._materializeCache = null;
+        this._classifyPropertiesCache = null;
+        this._consistencyCache = null;
+        this._lastExplBuffer = null;
+        this._lastPropertyExplBuffer = null;
+      }
+      if (out.incomplete && out.reason === "explain-failed") {
+        // A trap leaves the Worker unusable (the next call would hang): replace it now.
+        await this._recycleWorkerInSlot().catch(() => {});
+      }
+      return out;
+    });
+    this._queue = result.then(() => {}, () => {});
+    return result;
+  }
+
+  /**
+   * Like `explainInconsistency`, but each justification is grouped into OWL axioms (a restriction axiom is
+   * one unit of several triples) and declarations (`C a owl:Class`, ...) are returned separately in `context`
+   * instead of as removable members. Every returned quad is an exact instance from the store; `Axiom.quads`
+   * includes every graph copy of each triple. Same options as `explainInconsistency`. Result order is unspecified.
+   */
+  async explainInconsistencyAxioms(store: Store, opts?: ExplainOptions): Promise<AxiomJustification[]> {
+    const justifications = await this.explainInconsistency(store, opts);
+    const ignore = new Set<string>([opts?.inferredGraph ?? INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI]);
+    return justifications.map(j => groupJustification(j, store, ignore));
+  }
+
+  /**
+   * Slot-held consistency check of an explicit quad set, bounded by an absolute deadline.
+   * Races the WASM call against a per-call timer so a hung tableau (infinite expansion for certain partial TBox
+   * subsets) can be interrupted: on timeout the Worker is terminated and recreated and "aborted" is returned.
+   * Also recycles the Worker first when the WASM heap passed the recycle threshold (every reload retains ~20 MB;
+   * a long search would otherwise hit the 4 GiB wasm32 ceiling and trap). Returns true when INCONSISTENT.
+   */
+  private async _boundedInconsistencyCheck(quads: Quad[], deadline: number): Promise<boolean | "aborted"> {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return "aborted";
+    if (this._recycleHeapBytes > 0 && this._lastHeapBytes > this._recycleHeapBytes) await this._recycleWorkerInSlot();
+    const perCallMs = Math.min(remaining + 1_000, 30_000);
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    const timerPromise = new Promise<"aborted">(resolve => {
+      timeoutHandle = setTimeout(() => resolve("aborted"), perCallMs);
+    });
+    try {
+      const result = await Promise.race([
+        this._checkInconsistencyDirect(quads).then(r => r as boolean | "aborted"),
+        timerPromise,
+      ]);
+      if (result === "aborted") await this._reinitForBisection();
+      return result;
+    } finally {
+      clearTimeout(timeoutHandle);
+    }
+  }
+
+  /**
+   * Slot-held opt-in guard (`failOnInconsistent`): throws InconsistentOntologyError when the content synced last (generation
+   * `gen`) is inconsistent. The consistency result is memoised per generation; `direct` selects the slot-held call path.
+   */
+  private async _guardConsistent(gen: number, opts?: { failOnInconsistent?: boolean }, direct = false): Promise<void> {
+    if (!opts?.failOnInconsistent) return;
+    let consistent: boolean;
+    if (this._consistencyCache !== null && this._consistencyCache.gen === gen) consistent = this._consistencyCache.result;
+    else {
+      consistent = (await (direct ? this._callDirect("consistency", []) : this._call("consistency", []))) as boolean;
+      this._consistencyCache = { gen, result: consistent };
+    }
+    if (!consistent) throw new InconsistentOntologyError();
+  }
+
+  /** `X owl:disjointWith Y` between two named classes. */
+  private _isDisjointAxiom(q: Quad): boolean {
+    return q.predicate.value === "http://www.w3.org/2002/07/owl#disjointWith" && q.subject.termType === "NamedNode" && q.object.termType === "NamedNode";
+  }
+
+  /**
+   * Slot-held: are the class pairs of these `owl:disjointWith` axioms entailed disjoint by the store's ontology? Decided in one
+   * batch with probe classes (`P rdfs:subClassOf A, B` is unsatisfiable exactly when A and B are disjoint, or an endpoint is
+   * unsatisfiable, in which case the disjointness holds vacuously and `vacuous` is set). `entailed: null` for every axiom when the ontology is inconsistent
+   * (every pair is then vacuously entailed, which says nothing). The probe load replaces the WASM state: the caller invalidates caches.
+   */
+  private async _disjointEntailmentsDirect(store: Store, inferredGraph: string, axioms: Quad[]): Promise<Array<{ entailed: boolean | null; vacuous: boolean }>> {
+    const ignore = new Set<string>([inferredGraph, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI]);
+    const base = dropAnnotationTriples(store.getQuads(null, null, null, null).filter(q => !ignore.has(q.graph.value)));
+    const inconsistent = await this._boundedInconsistencyCheck(base, Infinity);
+    if (inconsistent !== false) return axioms.map(() => ({ entailed: null, vacuous: false }));
+    const pairOf = (a: Quad): string => (a.subject.value < a.object.value ? `${a.subject.value}\0${a.object.value}` : `${a.object.value}\0${a.subject.value}`);
+    const index = new Map<string, number>();
+    const pairs: DisjointPair[] = [];
+    for (const a of axioms) {
+      const k = pairOf(a);
+      if (index.has(k)) continue;
+      index.set(k, pairs.length);
+      pairs.push(a.subject.value < a.object.value ? { a: a.subject.value, b: a.object.value } : { a: a.object.value, b: a.subject.value });
+    }
+    const unsat = await this._unsatisfiableClassesDirect([...base, ...probeQuads(pairs)], Infinity);
+    if (unsat === "aborted") return axioms.map(() => ({ entailed: null, vacuous: false }));
+    return axioms.map(a => {
+      const entailed = unsat.has(`${PROBE_NS}${index.get(pairOf(a))}`);
+      return { entailed, vacuous: entailed && (unsat.has(a.subject.value) || unsat.has(a.object.value)) };
+    });
+  }
+
+  /** Every generation-keyed result cache is stale (sub-calls replaced the WASM state). */
+  private _invalidateResultCaches(): void {
+    this._classifyCache = null;
+    this._materializeCache = null;
+    this._classifyPropertiesCache = null;
+    this._consistencyCache = null;
+    this._lastExplBuffer = null;
+    this._lastPropertyExplBuffer = null;
+  }
+
+  /**
+   * Run slot-held reasoner work bounded by an absolute deadline: "aborted" when the deadline is (about to be) reached.
+   * On a timeout the hung Worker is replaced (as in _boundedInconsistencyCheck). Heap-recycles the Worker first.
+   */
+  private async _withDeadline<T>(work: () => Promise<T>, deadline: number): Promise<T | "aborted"> {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return "aborted";
+    if (this._recycleHeapBytes > 0 && this._lastHeapBytes > this._recycleHeapBytes) await this._recycleWorkerInSlot();
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    const timer = new Promise<"aborted">(resolve => {
+      timeoutHandle = setTimeout(() => resolve("aborted"), Math.min(remaining + 1_000, 120_000));
+    });
+    try {
+      const result = await Promise.race([work(), timer]);
+      if (result === "aborted") await this._reinitForBisection();
+      return result;
+    } finally {
+      clearTimeout(timeoutHandle);
+    }
+  }
+
+  /** Slot-held: IRIs of the unsatisfiable classes of an explicit (consistent) quad set. */
+  private _unsatisfiableClassesDirect(quads: Quad[], deadline: number): Promise<Set<string> | "aborted"> {
+    return this._withDeadline(async () => {
+      const { tripleBuffer, strTableBuffer } = encodeToBuffers(quads);
+      await this._callDirect("sync", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
+      await this._callDirect("classification", []);
+      const raw = (await this._callDirect("getUnsatisfiableClassBuffer", [])) as string;
+      return new Set(raw.split("\n").filter(Boolean));
+    }, deadline);
+  }
+
+  /** Slot-held: entailed named rdfs:subClassOf pairs [sub, super] of an explicit (consistent) quad set. */
+  private _subClassPairsDirect(quads: Quad[], deadline: number): Promise<Array<[string, string]> | "aborted"> {
+    return this._withDeadline(async () => {
+      const { tripleBuffer, strTableBuffer } = encodeToBuffers(quads);
+      await this._callDirect("sync", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
+      await this._callDirect("classification", []);
+      const buf = (await this._callDirect("getInferredTripleBuffer", [])) as ArrayBuffer;
+      return decodeBuffers(buf)
+        .filter(q => q.predicate.value === RDFS_SUB_CLASS_OF && q.subject.termType === "NamedNode" && q.object.termType === "NamedNode")
+        .map(q => [q.subject.value, q.object.value] as [string, string]);
+    }, deadline);
+  }
+
+  /**
+   * Replace the Worker from inside a _queue slot (heap recycle). Each check re-syncs the full quad set, so no WASM
+   * state needs replaying; the slot's queue position is preserved.
+   */
+  private async _recycleWorkerInSlot(): Promise<void> {
+    const queue = this._queue;
+    await this._reinitForBisection();
+    this._queue = queue;
+    this._lastHeapBytes = 0;
+  }
+
+  /**
+   * Slot-held MIPS search over an explicit quad set that is already known to be inconsistent.
+   * Must be called from inside a _queue slot (uses _callDirect only; never the public methods).
+   * `deadline` is an absolute Date.now() value (Infinity = none). Returns [] when no justification is found.
+   *
+   * The search runs over AXIOM UNITS, not triples (see ts/axiomGrouping.ts): a triple-level subset can contain part
+   * of an RDF list or a restriction, which is a different, stronger axiom for the reasoner and yields false
+   * justifications. Declaration triples are fixed background of every check. A justification whose search was cut
+   * short by the deadline is dropped (it would not be minimal). Each returned justification carries the declarations
+   * of the entities it mentions.
+   */
+  private async _explainInconsistencyQuadsDirect(
+    allCandidates: Quad[],
+    maxJustifications: number,
+    deadline: number,
+  ): Promise<Quad[][]> {
+    const isExpired = () => Date.now() >= deadline;
+    const { units, background } = partitionIntoUnits(allCandidates);
+    const checkOrAbort = (idx: readonly number[]): Promise<boolean | "aborted"> =>
+      this._boundedInconsistencyCheck([...idx.flatMap(i => units[i]), ...background], deadline);
+    const idKey = (idx: Iterable<number>): string => [...idx].sort((x, y) => x - y).join(",");
+
+    // QuickXplain (Junker 2004): a minimal inconsistent set of units in about 2*k*log2(n/k) consistency checks for a
+    // justification of k units.
+    const ABORT = Symbol("explain-abort");
+    const findOneJustification = async (candidates: number[]): Promise<number[] | null> => {
+      if (candidates.length === 0) return [];
+      const inconsistent = async (set: number[]): Promise<boolean> => {
+        const r = await checkOrAbort(set);
+        if (r === "aborted") throw ABORT;
+        return r;
+      };
+      const qx = async (bg: number[], hasDelta: boolean, c: number[]): Promise<number[]> => {
+        if (hasDelta && (await inconsistent(bg))) return [];
+        if (c.length === 1) return c;
+        const k = c.length >> 1;
+        const c1 = c.slice(0, k);
+        const c2 = c.slice(k);
+        const d2 = await qx([...bg, ...c1], c1.length > 0, c2);
+        const d1 = await qx([...bg, ...d2], d2.length > 0, c1);
+        return [...d1, ...d2];
+      };
+      try {
+        return await qx([], false, candidates);
+      } catch (e) {
+        if (e === ABORT) return null;
+        throw e;
+      }
+    };
+
+    const all = units.map((_, i) => i);
+    const found: number[][] = [];
+    const foundKeys = new Set<string>();
+    const j1 = await findOneJustification(all);
+    if (!j1 || j1.length === 0) return [];
+    found.push(j1);
+    foundKeys.add(idKey(j1));
+
+    if (!isExpired() && maxJustifications > 1) {
+      // HSDAG queue: pairs of (excluded units, justification to expand from)
+      const hsQueue: Array<{ excluded: Set<number>; justification: number[] }> = [{ excluded: new Set(), justification: j1 }];
+      const explored = new Set<string>();
+      while (!isExpired() && hsQueue.length > 0 && found.length < maxJustifications) {
+        const { excluded, justification: currentJ } = hsQueue.shift()!;
+        const excludedKey = idKey(excluded);
+        if (explored.has(excludedKey)) continue;
+        explored.add(excludedKey);
+        for (const u of currentJ) {
+          if (isExpired()) break;
+          const newExcluded = new Set(excluded).add(u);
+          if (explored.has(idKey(newExcluded))) continue;
+          const reduced = all.filter(i => !newExcluded.has(i));
+          const rCheck = await checkOrAbort(reduced);
+          if (rCheck === "aborted" || !rCheck) continue;
+          const jNew = await findOneJustification(reduced);
+          if (!jNew || jNew.length === 0) continue;
+          const k = idKey(jNew);
+          if (foundKeys.has(k)) continue;
+          foundKeys.add(k);
+          found.push(jNew);
+          if (found.length >= maxJustifications) break;
+          hsQueue.push({ excluded: newExcluded, justification: jNew });
+        }
+      }
+    }
+
+    return found.map(idx => {
+      const quads = idx.flatMap(i => units[i]);
+      const iris = new Set<string>();
+      for (const q of quads) for (const t of [q.subject, q.predicate, q.object]) if (t.termType === "NamedNode") iris.add(t.value);
+      return [...quads, ...background.filter(d => iris.has(d.subject.value))];
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -2283,27 +2582,6 @@ export class RdfReasoner {
           }
         }
 
-        // Reverse someValuesFrom filler typing: Y rdf:type restrictionClass,
-        // Y <prop> indi, restrictionClass equiv someValuesFrom prop targetClass → indi rdf:type target
-        const svfFillerRestrictions = store.getQuads(null, OWL_SOME_VALUES_FROM, objectIri, null);
-        for (const svfQ of svfFillerRestrictions) {
-          const rBnode = svfQ.subject;
-          const opQ = store.getQuads(rBnode, OWL_ON_PROPERTY, null, null);
-          if (opQ.length === 0) continue;
-          const propIri2 = opQ[0].object.value;
-          const ecQuads = store.getQuads(null, OWL_EQUIVALENT_CLASS, rBnode, null);
-          for (const ecQ of ecQuads) {
-            const rClassName = ecQ.subject.value;
-            const pointingToIndi = store.getQuads(null, propIri2, subjectIri, null);
-            for (const ptQ of pointingToIndi) {
-              const yTypes = store.getQuads(ptQ.subject, RDF_TYPE, rClassName, null);
-              if (yTypes.length > 0) {
-                return { isEntailed: true, justifications: [[ptQ as Quad, yTypes[0] as Quad]] };
-              }
-            }
-          }
-        }
-
         // Subclass chain from inferred type: indi rdf:type A (inferred), A ⊑ target
         // Derive A's justification from domain/range in input
         for (const inferredType of inferredTypes) {
@@ -2484,21 +2762,34 @@ export class RdfReasoner {
       }
 
       if (probeKind === "disjointWith") {
+        // An asserted axiom is trivially entailed (also in an inconsistent ontology) and is its own justification.
         const just = this._synthesizeDisjointWithJustification(allBase, subjectIri, objectIri);
         if (just) return { isEntailed: true, justifications: [just] };
 
-        // Native classification cache: disjointness stored as Classification entries
-        const hasNative = await this._hasJustificationByTypeDirect(
-          subjectIri, objectIri, RdfReasoner._ET_CLASSIFICATION);
-        if (hasNative) {
-          const ntriples = await this._getJustificationByTypeDirect(
-            subjectIri, objectIri, RdfReasoner._ET_CLASSIFICATION);
-          const justQuads = this._parseNTriplesJustification(ntriples);
-          if (justQuads.length > 0) {
-            return { isEntailed: true, justifications: [justQuads] };
-          }
+        // Derived disjointness: the entailment is decided by the same probe batch as isEntailed (the kernel does not emit
+        // disjointness, it only uses the axioms inside reasoning); explaining only adds the flags. No axiom-level justification
+        // is computed for a derived pair. (The "native classification cache" is not consulted: its justifications are
+        // subsumptions, not disjointness, and made `C disjointWith A` look entailed for any `C subClassOf A`.)
+        const [res] = await this._disjointEntailmentsDirect(store, ig, [DataFactory.quad(DataFactory.namedNode(subjectIri), DataFactory.namedNode(predicateIri), DataFactory.namedNode(objectIri))]);
+        this._invalidateResultCaches();
+        if (res.entailed === null) {
+          return {
+            isEntailed: null as boolean | null,
+            justifications: [] as Quad[][],
+            ontologyInconsistent: true,
+            reason: "Ontology is already inconsistent; entailment is vacuous.",
+          };
         }
-        return { isEntailed: false, justifications: [] as Quad[][] };
+        if (!res.entailed) return { isEntailed: false, justifications: [] as Quad[][] };
+        if (res.vacuous) {
+          return {
+            isEntailed: true as boolean | null,
+            justifications: [] as Quad[][],
+            vacuous: true,
+            reason: "A class of the pair is unsatisfiable; the disjointness holds vacuously.",
+          };
+        }
+        return { isEntailed: true, justifications: [] as Quad[][] };
       }
 
       if (probeKind === "dataProperty") {

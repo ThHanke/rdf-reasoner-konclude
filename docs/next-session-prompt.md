@@ -16,5 +16,7 @@ Prompt cache expires after 5 min idle: background anything >1 min (setsid nohup 
 3. Still open: `make repro-wasm` oracle check; WASM 4 GiB heap exhaustion / stall net; ~100x slowdown vs upstream; MALLOC_PERTURB_ sweep for other uninitialized reads.
 4. (done) native bulk role realization timed against UNMODIFIED Konclude via config key `RoleInstances=true`: 38.1 s vs WASM 27.5 s on Roberts (`docs/solutions/performance-issues/native-bulk-role-realization-timing-2026-10.md`).
 
+5. **Patch layout before tagging 0.9.0 (decided 2026-11-09).** Keep vendor patches 005-009 as separate files while testing (bisectable). Before the tag: fold 005-008 into `004-memory-lifecycle` and 009 into `002-realizer-kernel-correctness` (008 only after it is tested; it is still uncommitted WIP), verify the resulting vendor tree is byte-identical to the sequential application (git diff hash, as for 0.8.0), move the originals to `patches/archive/`, update `patches/README.md` (old-number mapping) and `patches/ENABLED`, then `make reset-patches` and rebuild native + WASM.
+
 ## Resolved (no further action)
 - Worker-recycle slow call: not recycle-related (`tests/bench/recycle-probe.mjs`; see `docs/solutions/performance-issues/ts-runner-in-process-slow-runs-2026-10.md`). Same variance as item 2.

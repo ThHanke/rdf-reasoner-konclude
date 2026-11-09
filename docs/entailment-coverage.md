@@ -16,7 +16,7 @@ Validated by: `tests/integration/entailment-coverage.test.ts`,
 | 3 | `owl:disjointWith` | Native (classification cache) | A | `disjointWith: not entailed for non-disjoint` |
 | 4 | `rdf:type` (subClassOf chain) | Native (classification + asserted type) | A | `rdf:type via subClassOf chain` |
 | 5 | `rdf:type` (realization) | Native (clash-path hook) | A | via roberts-family materialize |
-| 6 | `rdf:type` (someValuesFrom) | Synthesized (restriction + role scan) | B+1 | `rex rdf:type Dog via PetOwner ≡ ∃hasAnimal.Dog` |
+| 6 | `rdf:type` (someValuesFrom) | Synthesized (restriction + role scan) | B+1 | `alice PetOwner ≡ ∃hasAnimal.Dog`: `rex rdf:type Dog` is NOT entailed (2026-11-09 correction) |
 | 7 | `rdf:type` (minCardinality) | Synthesized (restriction + filler count) | B+1 | `dave rdf:type AtLeastOneHobby` |
 | 8 | Object property assertions | Asserted lookup (returns triple) | B | `asserted object property returns entailed` |
 | 9 | `owl:sameAs` (native) | Native (realization cache) | A | `sameAs: not entailed for distinct individuals` |

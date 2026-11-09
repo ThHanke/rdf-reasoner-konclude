@@ -1,0 +1,143 @@
+# Realizer/kernel correctness: merging-limit precedence, role-message trace (native diag), late role candidate requeue, dependency-node init, transitive sub-role inversion, queued-flag init, basement prev-build flag (old 017-021, 027, 034).
+# Aggregated from the per-fix patches; see patches/README.md for the old-number mapping.
+diff --git a/Source/Reasoner/Kernel/Process/Dependency/CDependencyNode.cpp b/Source/Reasoner/Kernel/Process/Dependency/CDependencyNode.cpp
+index 46c4602e..ead1f1c9 100644
+--- a/Source/Reasoner/Kernel/Process/Dependency/CDependencyNode.cpp
++++ b/Source/Reasoner/Kernel/Process/Dependency/CDependencyNode.cpp
+@@ -35,6 +35,9 @@ namespace Konclude {
+ 					CDependencyNode::CDependencyNode(CProcessContext* processContext) : CProcessingTag(processContext->getUsedProcessTagger()->getCurrentProcessingTagAndInc()) {
+ 						mProcessContext = processContext;
+ 						mDepNodeType = DNTUNDEFINED;
++						mDepTrackPoint = nullptr;
++						mConceptDescriptor = nullptr;
++						mIndividualNode = nullptr;
+ 						//mAdditionalAheadDepLinker = nullptr;
+ 						mAdditionalAfterDepLinker = nullptr;
+ 					}
+diff --git a/Source/Reasoner/Ontology/COntologyDataBoxes.cpp b/Source/Reasoner/Ontology/COntologyDataBoxes.cpp
+index 67fe9b4a..4bb00f73 100644
+--- a/Source/Reasoner/Ontology/COntologyDataBoxes.cpp
++++ b/Source/Reasoner/Ontology/COntologyDataBoxes.cpp
+@@ -125,6 +125,9 @@ namespace Konclude {
+ 
+ 			COntologyDataBoxes* COntologyDataBoxes::setBasicBuild(bool basicBuild) {
+ 				mBasicBuild = basicBuild;
++				if (basicBuild) {
++					mPrevOntBasicBuild = true;
++				}
+ 				return this;
+ 			}
+ 
+diff --git a/Source/Reasoner/Realizer/COptimizedKPSetRoleInstancesItem.cpp b/Source/Reasoner/Realizer/COptimizedKPSetRoleInstancesItem.cpp
+index 73dee09a..79e374d3 100644
+--- a/Source/Reasoner/Realizer/COptimizedKPSetRoleInstancesItem.cpp
++++ b/Source/Reasoner/Realizer/COptimizedKPSetRoleInstancesItem.cpp
+@@ -47,6 +47,7 @@ namespace Konclude {
+ 				mAllSuccProcessedFlag = false;
+ 				mToProcessFlag = false;
+ 				mPossibleProcessingQueuedFlag = false;
++				mComplexCandidateProcessingQueuedFlag = false;
+ 				mSelfSuccsCompletedFlag = false;
+ 				mRequiresCandidateInitializationFlag = true;
+ 				mUninitializedSuccItemCount = 0;
+@@ -788,7 +789,7 @@ namespace Konclude {
+ 
+ 			COptimizedKPSetIndividualItemReferencePair COptimizedKPSetRoleInstancesItem::takeNextTestingComplexInstanceCandidate() {
+ 				COptimizedKPSetIndividualItemReferencePair nextItem = COptimizedKPSetIndividualItemReferencePair(CRealizationIndividualInstanceItemReference(), CRealizationIndividualInstanceItemReference());
+-				if (hasPossibleInstances()) {
++				if (hasComplexInstanceCandidates()) {
+ 					QSet<COptimizedKPSetIndividualItemReferencePair>::iterator it = mComplexRoleCandidateInstancesSet.begin();
+ 					nextItem = *it;
+ 					mComplexRoleCandidateInstancesSet.erase(it);
+diff --git a/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp b/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp
+index 3c0cbade..0ce99cd7 100644
+--- a/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp
++++ b/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp
+@@ -1715,7 +1715,7 @@ namespace Konclude {
+ 
+ 
+ 			bool COptimizedRepresentativeKPSetOntologyRealizingThread::checkTrivialInstanceConceptRepresentativeCacheBasedMerging(COptimizedRepresentativeKPSetOntologyRealizingItem* reqConfPreCompItem, CConcept* concept, bool conceptNegation, CBackendRepresentativeMemoryCacheIndividualAssociationData* assData, bool* mergableFlag, bool* unmergableFlag, cint64* mergingOperationLimit) {
+-				if (mergingOperationLimit && *mergingOperationLimit-- <= 0) {
++				if (mergingOperationLimit && (*mergingOperationLimit)-- <= 0) {
+ 					return false;
+ 				}
+ 
+@@ -1828,7 +1828,7 @@ namespace Konclude {
+ 								++succCount;
+ 
+ 
+-								if (mergingOperationLimit && *mergingOperationLimit-- <= 0) {
++								if (mergingOperationLimit && (*mergingOperationLimit)-- <= 0) {
+ 									cancled = true;
+ 									return false;
+ 								}
+@@ -1877,7 +1877,7 @@ namespace Konclude {
+ 							}
+ 
+ 
+-							if (mergingOperationLimit && *mergingOperationLimit-- <= 0) {
++							if (mergingOperationLimit && (*mergingOperationLimit)-- <= 0) {
+ 								cancled = true;
+ 								return false;
+ 							}
+@@ -1920,7 +1920,7 @@ namespace Konclude {
+ 									}
+ 								}
+ 
+-								if (mergingOperationLimit && *mergingOperationLimit-- <= 0) {
++								if (mergingOperationLimit && (*mergingOperationLimit)-- <= 0) {
+ 									cancled = true;
+ 									return false;
+ 								}
+@@ -1983,7 +1983,7 @@ namespace Konclude {
+ 
+ 
+ 			bool COptimizedRepresentativeKPSetOntologyRealizingThread::checkTrivialInstanceConceptCachedCompletionGraphBasedMerging(COptimizedRepresentativeKPSetOntologyRealizingItem* reqConfPreCompItem, CConcept* concept, bool conceptNegation, CIndividualProcessNode* indiNode, CIndividualProcessNodeVector* indiProcVector, bool* mergableFlag, bool* unmergableFlag, cint64* mergingOperationLimit) {
+-				if (mergingOperationLimit && *mergingOperationLimit-- <= 0) {
++				if (mergingOperationLimit && (*mergingOperationLimit)-- <= 0) {
+ 					return false;
+ 				}
+ 
+@@ -2787,7 +2787,7 @@ namespace Konclude {
+ 								COptimizedKPSetIndividualComplexRoleData* indiComplexSubRoleData = subRoleInstancesItem->getIndividualIdComplexRoleData(indiId, true);
+ 								COptimizedKPSetIndividualComplexRoleExplicitIndirectLinksData* indiExplicitIndirectLinkComplexRoleRepresentationData = (COptimizedKPSetIndividualComplexRoleExplicitIndirectLinksData*)indiComplexRoleData;
+ 								COptimizedKPSetIndividualComplexRoleExplicitIndirectLinksData* indiExplicitIndirectLinkComplexSubRoleRepresentationData = (COptimizedKPSetIndividualComplexRoleExplicitIndirectLinksData*)indiComplexSubRoleData;
+-								COptimizedKPSetRoleInstancesHash* subRoleComplexInstancesHash = indiExplicitIndirectLinkComplexSubRoleRepresentationData->getRoleNeighbourInstancesHash(inversed, true);
++								COptimizedKPSetRoleInstancesHash* subRoleComplexInstancesHash = indiExplicitIndirectLinkComplexSubRoleRepresentationData->getRoleNeighbourInstancesHash(subRoleItemInversed, true);
+ 								for (QHash<cint64, COptimizedKPSetRoleInstancesHashData>::const_iterator it = subRoleComplexInstancesHash->constBegin(), itEnd = subRoleComplexInstancesHash->constEnd(); it != itEnd; ++it) {
+ 									cint64 succIndiId = it.key();
+ 									CRealizationIndividualInstanceItemReference succIndiItemRef = reqConfPreCompItem->getInstanceItemReference(succIndiId, true);
+@@ -3547,6 +3547,7 @@ namespace Konclude {
+ 											workTestCreated = createNextRoleComplexCandidateConfirmationTest(reqConfPreCompItem, nextCandidateConfirmationRoleItem, candidatePair);
+ 										}
+ 										if (!nextCandidateConfirmationRoleItem->hasComplexInstanceCandidates()) {
++											nextCandidateConfirmationRoleItem->setComplexCandidateProcessingQueuedFlag(false);
+ 											candidateConfirmationRoleInstancesItemList->removeFirst();
+ 										}
+ 										checkFinishRoleInstancesProcessing(reqConfPreCompItem, nextCandidateConfirmationRoleItem);
+@@ -4638,6 +4639,10 @@ namespace Konclude {
+ 						// add to testing queue
+ 						roleInstItem->addComplexCandidateInstance(COptimizedKPSetIndividualItemReferencePair(indiRealItemRef, CRealizationIndividualInstanceItemReference(neighbourIndi, realItem->getIndividualInstantiatedItem(neighbourIndi.getIndividual(), false))), inversed);
+ 					}
++					if (!instanceData->mKnownInstance && roleInstItem->hasToProcessPossibleInstancesFlag()) {
++						// late candidate: make sure the (already marked) role item is queued for confirmation
++						realItem->addRoleInstanceItemToProcessComplexCandidateInstances(roleInstItem);
++					}
+ 					if (wasAlreadyPossibleMarked && instanceData->mKnownInstance) {
+ 						// remove from testing queue
+ 						roleInstItem->removeComplexCandidateInstance(COptimizedKPSetIndividualItemReferencePair(indiRealItemRef, CRealizationIndividualInstanceItemReference(neighbourIndi, realItem->getIndividualInstantiatedItem(neighbourIndi.getIndividual(), false))), inversed);
+@@ -4689,6 +4694,14 @@ namespace Konclude {
+ 							addComplexRoleExplicitIndirectNeighbourLink(roleInstItem, inversed, indiRealItemRef, indiExplicitIndirectLinkComplexRepresentationData, indiRoleNeighbourHashData, combinedNeighbourCacheLabelItemData, assNeighbourRoleSetHash, candIndi, nullptr, deterministic, realItem);
+ 						};
+ 
++#ifdef NATIVE_DEBUG_BUILD
++						{
++							cint64 dN = 0, nN = 0;
++							for (CXLinker<CIndividualReference>* l = rmcmd->getDeterministicIndividualReferenceLinker(); l; l = l->getNext()) { ++dN; }
++							for (CXLinker<CIndividualReference>* l = rmcmd->getNondeterministicIndividualReferenceLinker(); l; l = l->getNext()) { ++nN; }
++							fprintf(stderr, "RMSG indi=%lld role=%lld inv=%d det=%lld ndet=%lld\n", (long long)individualReference.getIndividualID(), (long long)roleInstItem->getRole()->getRoleTag(), (int)inversed, (long long)dN, (long long)nN);
++						}
++#endif // NATIVE_DEBUG_BUILD
+ 						CXLinker<CIndividualReference>* detIndiLinker = rmcmd->getDeterministicIndividualReferenceLinker();
+ 						for (CXLinker<CIndividualReference>* detIndiLinkerIt = detIndiLinker; detIndiLinkerIt; detIndiLinkerIt = detIndiLinkerIt->getNext()) {
+ 							CIndividualReference candIndi = detIndiLinkerIt->getData();

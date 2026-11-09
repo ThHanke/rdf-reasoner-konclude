@@ -146,6 +146,7 @@ export function createInlineWorker(koncludeModuleUrl: string | URL): Worker {
           break;
         case "consistency":
           result = r.consistency();
+          if (r.stalled?.()) throw new Error("KONCLUDE_STALLED");
           break;
         case "getInferredTripleBuffer": {
           const withExpl = (args[0] as boolean) ?? false;
@@ -211,7 +212,7 @@ export function createInlineWorker(koncludeModuleUrl: string | URL): Worker {
           return;
       }
       console.debug("[inlineWorker] response id:", id, "method:", method);
-      emit("message", { data: { id, result, heapBytes: (method === "classification" || method === "realization") ? (m as { HEAPU8: Uint8Array }).HEAPU8.byteLength : undefined } });
+      emit("message", { data: { id, result, heapBytes: (method === "classification" || method === "realization" || method === "consistency") ? (m as { HEAPU8: Uint8Array }).HEAPU8.byteLength : undefined } });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       console.error("[inlineWorker] handleMessage error:", method, message);

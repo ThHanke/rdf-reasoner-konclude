@@ -1,7 +1,36 @@
-# Realizer/kernel correctness: merging-limit precedence, role-message trace (native diag), late role candidate requeue, dependency-node init, transitive sub-role inversion, queued-flag init, basement prev-build flag (old 017-021, 027, 034).
+# Realizer/kernel correctness: merging-limit precedence, role-message trace (native diag), late role candidate requeue, dependency-node init, transitive sub-role inversion, queued-flag init, basement prev-build flag, KPSet registration of items created by the init-message flush (old 017-021, 027, 034; 009 of the 0.9.0 series).
 # Aggregated from the per-fix patches; see patches/README.md for the old-number mapping.
+diff --git a/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.cpp b/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.cpp
+index 084bb7c..014e3dd 100644
+--- a/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.cpp
++++ b/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.cpp
+@@ -966,6 +966,24 @@ namespace Konclude {
+ 								// are fully constructed.
+ 								flushPendingInitMessages(optKPSetClassificationItem);
+ 
++								// The flush created possible-subsumption maps after the collection loop above had run: register the
++								// items of those maps for testing too, otherwise their open candidates are never tested.
++								{
++									QSet<COptimizedKPSetClassTestingItem*> collectedItemSet;
++									foreach (COptimizedKPSetClassTestingItem* collectedItem, resevePossSubsumClassList) {
++										collectedItemSet.insert(collectedItem);
++									}
++									foreach (COptimizedKPSetClassTestingItem* lateItem, classList) {
++										COptimizedKPSetClassPossibleSubsumptionMap* lateSubsumMap = lateItem->getPossibleSubsumptionMap(false);
++										if (lateSubsumMap && lateSubsumMap->hasRemainingPossibleSubsumptions() && !collectedItemSet.contains(lateItem)) {
++											if (mConfPossSubsumCalcOrderTopDown) {
++												nextItemList->append(lateItem);
++												remTestingSet->insert(lateItem);
++											}
++											resevePossSubsumClassList.append(lateItem);
++										}
++									}
++								}
+ 
+ 								foreach (COptimizedKPSetClassTestingItem* item, classList) {
+ 									COptimizedKPSetClassPossibleSubsumptionMap* possSubsumMap = item->getPossibleSubsumptionMap(false);
 diff --git a/Source/Reasoner/Kernel/Process/Dependency/CDependencyNode.cpp b/Source/Reasoner/Kernel/Process/Dependency/CDependencyNode.cpp
-index 46c4602e..ead1f1c9 100644
+index 46c4602..ead1f1c 100644
 --- a/Source/Reasoner/Kernel/Process/Dependency/CDependencyNode.cpp
 +++ b/Source/Reasoner/Kernel/Process/Dependency/CDependencyNode.cpp
 @@ -35,6 +35,9 @@ namespace Konclude {
@@ -15,7 +44,7 @@ index 46c4602e..ead1f1c9 100644
  						mAdditionalAfterDepLinker = nullptr;
  					}
 diff --git a/Source/Reasoner/Ontology/COntologyDataBoxes.cpp b/Source/Reasoner/Ontology/COntologyDataBoxes.cpp
-index 67fe9b4a..4bb00f73 100644
+index 67fe9b4..4bb00f7 100644
 --- a/Source/Reasoner/Ontology/COntologyDataBoxes.cpp
 +++ b/Source/Reasoner/Ontology/COntologyDataBoxes.cpp
 @@ -125,6 +125,9 @@ namespace Konclude {
@@ -29,7 +58,7 @@ index 67fe9b4a..4bb00f73 100644
  			}
  
 diff --git a/Source/Reasoner/Realizer/COptimizedKPSetRoleInstancesItem.cpp b/Source/Reasoner/Realizer/COptimizedKPSetRoleInstancesItem.cpp
-index 73dee09a..79e374d3 100644
+index 73dee09..79e374d 100644
 --- a/Source/Reasoner/Realizer/COptimizedKPSetRoleInstancesItem.cpp
 +++ b/Source/Reasoner/Realizer/COptimizedKPSetRoleInstancesItem.cpp
 @@ -47,6 +47,7 @@ namespace Konclude {
@@ -50,7 +79,7 @@ index 73dee09a..79e374d3 100644
  					nextItem = *it;
  					mComplexRoleCandidateInstancesSet.erase(it);
 diff --git a/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp b/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp
-index 3c0cbade..0ce99cd7 100644
+index 3c0cbad..0ce99cd 100644
 --- a/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp
 +++ b/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp
 @@ -1715,7 +1715,7 @@ namespace Konclude {

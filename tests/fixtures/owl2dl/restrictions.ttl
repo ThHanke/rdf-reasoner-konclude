@@ -28,8 +28,9 @@ ex:Bob   a owl:NamedIndividual, ex:C .
 #
 # alice:PetOwner, alice hasAnimal rex.
 # rex is given only as owl:NamedIndividual (NOT explicitly typed Dog).
-# Under OWL-DL: since alice is in PetOwner (≡ ∃hasAnimal.Dog) and rex is the
-# only hasAnimal filler, Konclude should infer rex:Dog.
+# Under OWL-DL rex:Dog is NOT entailed: alice may have another animal that is
+# the Dog (hasAnimal is not functional). Only the backward direction holds
+# (a hasAnimal filler typed Dog makes its owner a PetOwner).
 # ---------------------------------------------------------------------------
 
 ex:Dog a owl:Class .

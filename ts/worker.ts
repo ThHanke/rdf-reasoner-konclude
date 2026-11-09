@@ -175,7 +175,10 @@ export async function handleMessage(
         break;
       }
       case "consistency": {
+        // consistency() runs the classification pipeline itself when it has not run yet (and reports an
+        // inconsistent ontology as a failed pipeline), so callers do not need a separate classification call.
         result = reasoner.consistency();
+        if (reasoner.stalled?.()) throw new Error("KONCLUDE_STALLED");
         break;
       }
       case "getInferredTripleBuffer": {
@@ -263,7 +266,7 @@ export async function handleMessage(
     }
 
     const response: WorkerResponse = { id, result };
-    if (method === "classification" || method === "realization") response.heapBytes = mod.HEAPU8.byteLength;
+    if (method === "classification" || method === "realization" || method === "consistency") response.heapBytes = mod.HEAPU8.byteLength;
     self.postMessage(response);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);

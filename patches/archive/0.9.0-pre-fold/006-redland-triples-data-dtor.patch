@@ -1,0 +1,17 @@
+--- a/Source/Reasoner/Triples/CRedlandStoredTriplesData.cpp
++++ b/Source/Reasoner/Triples/CRedlandStoredTriplesData.cpp
+@@ -39,6 +39,14 @@
+ 			}
+ 
+ 			CRedlandStoredTriplesData::~CRedlandStoredTriplesData() {
++				// statement copies kept for indexing (the indexer frees them and clears the linker once it ran);
++				// they belong to this data's world, so free them before the world
++				while (mStatementLinker) {
++					librdf_free_statement(mStatementLinker->getData());
++					CXLinker<librdf_statement*>* tmpStatementLinker = mStatementLinker;
++					mStatementLinker = mStatementLinker->getNext();
++					delete tmpStatementLinker;
++				}
+ 				if (mIndexedModel && (!mLastSharingTripleData || mLastSharingTripleData->mIndexedModel != mIndexedModel)) {
+ 					librdf_free_model(mIndexedModel);
+ 				}

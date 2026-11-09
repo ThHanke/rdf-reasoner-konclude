@@ -354,7 +354,7 @@ describe("RdfReasoner", () => {
       const methods = mocks.workerPostMessage.mock.calls.map(
         (c) => (c[0] as { method: string }).method,
       );
-      expect(methods).toEqual(["sync", "classification", "consistency"]);
+      expect(methods).toEqual(["sync", "consistency"]);
     });
 
     it("returns false for an inconsistent ontology", async () => {

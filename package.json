@@ -1,6 +1,6 @@
 {
   "name": "rdf-reasoner-konclude",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "OWL-DL tableau reasoning via Konclude compiled to WebAssembly. Async TypeScript API — pass an N3.js Store, get inferred triples back. Uses RDF.js Quad types throughout.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -42,6 +42,7 @@
     "patch-wasm": "bash scripts/patch-konclude-mjs.sh",
     "bench": "node --expose-gc tests/bench/bench.mjs 2>&1 | tee bench-results.md",
     "test:browser": "playwright test",
+    "bench:repair": "node tests/bench/repair-bench.mjs --out /tmp/repair-bench.jsonl && node tests/bench/repair-bench.mjs --report /tmp/repair-bench.jsonl",
     "bench:quick": "node --expose-gc tests/bench/bench.mjs --quick 2>&1 | tee bench-results.md"
   },
   "dependencies": {

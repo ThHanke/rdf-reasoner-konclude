@@ -1,0 +1,102 @@
+--- a/Source/Reasoner/Kernel/Cache/CSaturationNodeAssociatedExpansionCacheContext.h
++++ b/Source/Reasoner/Kernel/Cache/CSaturationNodeAssociatedExpansionCacheContext.h
+@@ -79,6 +79,8 @@
+ 
+ 						cint64 getMemoryConsumption();
+ 						CSaturationNodeAssociatedExpansionCacheContext* releaseTemporaryMemoryPools(CMemoryPool* memoryPools);
++						// give all arena memory back (only valid when no live node still refers to cache entries allocated here)
++						CSaturationNodeAssociatedExpansionCacheContext* resetArena();
+ 						
+ 						
+ 						
+--- a/Source/Reasoner/Kernel/Cache/CSaturationNodeAssociatedExpansionCacheContext.cpp
++++ b/Source/Reasoner/Kernel/Cache/CSaturationNodeAssociatedExpansionCacheContext.cpp
+@@ -72,6 +72,15 @@
+ 				}
+ 
+ 
++				CSaturationNodeAssociatedExpansionCacheContext* CSaturationNodeAssociatedExpansionCacheContext::resetArena() {
++					mMemMan->releaseAllMemory();
++					mMemMan->flushFreePools();
++					mConSatUpdateLinker = nullptr;
++					mAddRelMemory = 0;
++					return this;
++				}
++
++
+ 				CIndividualSaturationProcessNodeStatusUpdateLinker* CSaturationNodeAssociatedExpansionCacheContext::getIndividualSaturationUpdateLinker(bool create) {
+ 					CIndividualSaturationProcessNodeStatusUpdateLinker* conSatUpdateLinker = mConSatUpdateLinker;
+ 					if (!conSatUpdateLinker && create) {
+--- a/Source/Reasoner/Kernel/Cache/CSaturationNodeAssociatedExpansionCache.h
++++ b/Source/Reasoner/Kernel/Cache/CSaturationNodeAssociatedExpansionCache.h
+@@ -117,6 +117,7 @@
+ 
+ 
+ 						virtual bool processCustomsEvents(QEvent::Type type, CCustomEvent *event);
++						CSaturationNodeAssociatedExpansionCacheContext* selectContext();
+ 
+ 					// protected variables
+ 					protected:
+@@ -132,6 +133,12 @@
+ 
+ 						CCacheStatistics mCacheStat;
+ 						CSaturationNodeAssociatedExpansionCacheContext mContext;
++						// second arena: the cache entries hang off saturation nodes of one ontology and were allocated from one
++						// never-freed arena, so every ontology leaked its entries. Arenas alternate per ontology epoch; the arena
++						// of the ontology two generations back (dead by then) is reset on the first write of a new epoch.
++						CSaturationNodeAssociatedExpansionCacheContext mContext2;
++						CSaturationNodeAssociatedExpansionCacheContext* mCurrentContext;
++						long long mContextEpoch;
+ 
+ 						bool mConfDirectUpdateSynchronization;
+ 						QMutex mDirectUpdateSyncMutex;
+--- a/Source/Reasoner/Kernel/Cache/CSaturationNodeAssociatedExpansionCache.cpp
++++ b/Source/Reasoner/Kernel/Cache/CSaturationNodeAssociatedExpansionCache.cpp
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include "CSaturationNodeAssociatedExpansionCache.h"
++#include "KonPoolStats.h"
+ #include "CSaturationNodeAssociatedExpansionCacheWriter.h"
+ 
+ 
+@@ -38,6 +39,8 @@
+ 
+ 					CMemoryAllocationManager* memMan = mContext.getMemoryAllocationManager();
+ 					mSaturationNodeCacheUpdate = new CSaturationNodeCacheUpdater(&mContext);
++					mCurrentContext = &mContext;
++					mContextEpoch = KonPoolStats::gOntologyEpoch.load();
+ 
+ 					mConfAllowedNonDetExpansionCount = 1;
+ 					if (config) {
+@@ -241,6 +244,18 @@
+ 
+ 
+ 
++				CSaturationNodeAssociatedExpansionCacheContext* CSaturationNodeAssociatedExpansionCache::selectContext() {
++					long long epoch = KonPoolStats::gOntologyEpoch.load(std::memory_order_acquire);
++					if (epoch != mContextEpoch) {
++						mContextEpoch = epoch;
++						mCurrentContext = (epoch & 1) ? &mContext2 : &mContext;
++						mCurrentContext->resetArena();
++					}
++					return mCurrentContext;
++				}
++
++
++
+ 				bool CSaturationNodeAssociatedExpansionCache::processCustomsEvents(QEvent::Type type, CCustomEvent *event) {
+ 					if (CThread::processCustomsEvents(type,event)) {
+ 						return true;
+@@ -248,8 +263,9 @@
+ 						CWriteSaturationCacheDataEvent* wscde = (CWriteSaturationCacheDataEvent*)event;
+ 						CMemoryPool* memoryPools = wscde->getMemoryPools();
+ 						CSaturationNodeAssociatedExpansionCacheWriteData* writeData = wscde->getWriteData();
+-						installWriteCacheData(writeData,&mContext);
+-						mContext.getMemoryPoolAllocationManager()->releaseTemporaryMemoryPools(memoryPools);
++						CSaturationNodeAssociatedExpansionCacheContext* context = selectContext();
++						installWriteCacheData(writeData,context);
++						context->getMemoryPoolAllocationManager()->releaseTemporaryMemoryPools(memoryPools);
+ 						return true;
+ 
+ 					}

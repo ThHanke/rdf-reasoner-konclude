@@ -100,6 +100,8 @@ _:b2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/0
 
 ### R5 — someValuesFrom filler type propagation
 
+> **Correction (2026-11-09):** the expectation below is wrong. `alice : PetOwner`, `PetOwner ≡ ∃hasAnimal.Dog`, `hasAnimal(alice, rex)` does not entail `rex : Dog` (alice's dog may be another individual); native Konclude was right not to emit it. The "fix path" (post-process filler types) was unsound and is removed; see `docs/solutions/logic-errors/unsound-restriction-workarounds-2026-11-09.md`.
+
 **Command:** `realization -i /data/r5.nt -o /data/r5_out.owl`
 
 **Input:**

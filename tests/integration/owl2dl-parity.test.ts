@@ -104,15 +104,84 @@ describe.skipIf(!wasmExists)("Restriction constructs", () => {
 
   // ── someValuesFrom ─────────────────────────────────────────────────────────
 
-  it("someValuesFrom — materialize: alice:PetOwner, alice hasAnimal rex → rex rdf:type Dog", async () => {
+  it("someValuesFrom — materialize: alice:PetOwner, alice hasAnimal rex does NOT entail rex rdf:type Dog", async () => {
+    // PetOwner ≡ ∃hasAnimal.Dog says alice has SOME dog; hasAnimal is not functional, so it need not be rex.
+    // (An earlier version of this test expected rex:Dog; that is unsound and HermiT/native Konclude do not derive it.)
     const materializeStore = new Store(quads);
     await reasoner.materialize(materializeStore);
     const inferred = materializeStore.getQuads(null, null, null, DataFactory.namedNode(INFERRED_GRAPH_IRI));
     expect(
       hasTriple(inferred, EX("rex"), RDF_TYPE, EX("Dog")),
-      "rex rdf:type Dog should be inferred via someValuesFrom but is not emitted by Konclude v0.7.0",
-    ).toBe(true);
+      "rex rdf:type Dog is not entailed by PetOwner ≡ ∃hasAnimal.Dog and hasAnimal(alice, rex)",
+    ).toBe(false);
   }, 30_000);
+
+  // ── Soundness of restriction handling (coworker evaluation 2026-11-07) ────
+  // Each fixture in tests/fixtures/soundness/ is one tiny ontology; the expected set is what HermiT entails (new
+  // rdf:type assertions about the test classes A/B/D/E, owl:sameAs, and p-role assertions). Names: <restriction>_<fwd|bwd>_<sub|eq>:
+  // sub = C ⊑ restriction (only the ⊑ direction holds), eq = C ≡ restriction; fwd/bwd = which side is asserted.
+
+  const SOUND = (local: string) => `http://ex.org/${local}`;
+  const OWL_SAME = "http://www.w3.org/2002/07/owl#sameAs";
+  // Cases in `incompleteCases` are known to miss entailments (the result must still be a SUBSET of the correct set, i.e. sound):
+  //  - svf_fwd_functional: upstream Konclude hangs in precomputation on this input (expressiveness SIF); the port returns
+  //    without c:B. HermiT derives it.
+  //  - fp_multi: the FP declaration of a multi-filler property is dropped before reasoning (ALIF+ hang prevention, see
+  //    docs/solutions/logic-errors/unsound-restriction-workarounds-2026-11-09.md), so types do not propagate through the
+  //    merged individuals; only sameAs and c1:D are returned.
+  const incompleteCases = new Set(["svf_fwd_functional", "fp_multi"]);
+  const soundnessCases: Record<string, string[]> = {
+    // A ⊑/≡ ∃p.B, a:A, p(a,c): c:B is NOT entailed (the existential may be witnessed by another individual).
+    svf_fwd_sub: [],
+    svf_fwd_eq: [],
+    // ... unless p is functional: then c is the only possible witness.
+    svf_fwd_functional: ["c a B"],
+    // p(a,c), c:B: a:A only for ≡.
+    svf_bwd_sub: [],
+    svf_bwd_eq: ["a a A"],
+    // A ⊑/≡ ∃p.Self with p(a,a): a:A only for ≡.
+    self_bwd_sub: [],
+    self_bwd_eq: ["a a A"],
+    // a:A, A ⊑/≡ ∃p.Self, p(a,a) asserted: nothing new.
+    self_fwd_sub: [],
+    self_fwd_eq: [],
+    // A ⊑/≡ ∃p.{c}: a:A entails p(a,c); p(a,c) entails a:A only for ≡.
+    hv_fwd_sub: ["a p c"],
+    hv_fwd_eq: ["a p c"],
+    hv_bwd_sub: [],
+    hv_bwd_eq: ["a a A"],
+    // A ⊑/≡ ≥2 p with two distinct fillers: a:A only for ≡.
+    mincard_sub: [],
+    mincard_eq: ["a a A"],
+    // p functional, p(a,c1), p(a,c2): c1 = c2, so types propagate through the merge.
+    fp_multi: ["c1 a D", "c2 a B", "c2 a D", "z a E", "c1 sameAs c2", "c2 sameAs c1"],
+  };
+
+  for (const [name, expected] of Object.entries(soundnessCases)) {
+    const incomplete = incompleteCases.has(name);
+    it(`soundness ${name}: ${incomplete ? "sound subset of" : "exactly"} [${expected.join("; ")}]`, async () => {
+      const fixture = new URL(`../../tests/fixtures/soundness/${name}.ttl`, import.meta.url).pathname;
+      const store = new Store(parseTurtle(readFileSync(fixture, "utf-8")));
+      await reasoner.materialize(store);
+      const interesting = new Set(["A", "B", "D", "E"].map(SOUND));
+      const short = (iri: string) => iri.replace("http://ex.org/", "");
+      const got = store
+        .getQuads(null, null, null, DataFactory.namedNode(INFERRED_GRAPH_IRI))
+        .filter(
+          (q) =>
+            (q.predicate.value === RDF_TYPE && interesting.has(q.object.value)) ||
+            q.predicate.value === OWL_SAME ||
+            q.predicate.value === SOUND("p"),
+        )
+        .map((q) => `${short(q.subject.value)} ${q.predicate.value === RDF_TYPE ? "a" : q.predicate.value === OWL_SAME ? "sameAs" : "p"} ${short(q.object.value)}`)
+        .sort();
+      if (incomplete) {
+        expect(got.filter((t) => !expected.includes(t)), "unsound: not entailed").toEqual([]);
+      } else {
+        expect(got).toEqual([...expected].sort());
+      }
+    }, 60_000);
+  }
 
   // ── allValuesFrom ──────────────────────────────────────────────────────────
 

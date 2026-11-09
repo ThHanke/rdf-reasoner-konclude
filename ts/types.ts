@@ -32,6 +32,125 @@ export interface ExplainOptions {
   timeout?: number;
 }
 
+/** One OWL axiom as it is stored: all triples that make it up. A restriction axiom is several triples. */
+export interface Axiom {
+  /** The triple that names the axiom (for a subclass-of-restriction axiom: `C rdfs:subClassOf _:b`). Exact instance from the store. */
+  principal: Quad;
+  /** All triples of the axiom including `principal`, every graph copy of each; remove them together. */
+  quads: Quad[];
+}
+
+export interface AxiomJustification {
+  /** Logical axioms that together cause the clash. Declarations are never in this list. */
+  axioms: Axiom[];
+  /** Declaration triples (`C a owl:Class`, `p a owl:ObjectProperty`, ...) the justification needs but that are not candidates for removal. */
+  context: Quad[];
+}
+
+export interface RepairOptions {
+  /** Justifications to collect per explanation round. Default 3. */
+  maxJustifications?: number;
+  /** Stop after this many repair sets (`reason: 'solution-cap'`). Default 10. */
+  maxRepairs?: number;
+  /** Safety net on refine rounds (an extra explanation call each); refinement normally ends when a candidate verifies, the deadline hits, or a round finds no new justification. Default 10. */
+  maxRounds?: number;
+  /** Lower cost = preferred to remove. When given, repair sets are ordered by total cost, then size. Default: ordered by size. */
+  cost?: (axiom: Axiom) => number;
+  /** Check each repair set by removing it from a copy and testing consistency. Default true. */
+  verify?: boolean;
+  /** Wall-clock budget in ms for the whole call, 0 = none. Default 300000. */
+  timeout?: number;
+  /** Named graph IRI that holds inferred triples in the store (excluded from the ontology). Default `INFERRED_GRAPH_IRI`. */
+  inferredGraph?: string;
+}
+
+export interface Repair {
+  /** Axioms to remove together (every graph copy of every triple, see `Axiom.quads`). */
+  remove: Axiom[];
+  /** Indices into `RepairResult.justifications` that this set hits. */
+  covers: number[];
+  /** Removing exactly `remove` leaves a consistent ontology. `null`: not checked (`verify: false`, deadline or failed check). */
+  verifiedConsistent: boolean | null;
+  /** Inclusion-minimal: no proper subset restores consistency. True whenever the set is a verified minimal hitting set of the known justifications (removing any member leaves a known justification intact). `null` when not verified. */
+  minimal: boolean | null;
+}
+
+export interface RepairResult {
+  /** True when the input was already consistent; then `repairs` is empty. */
+  consistent: boolean;
+  /** The justifications the repairs were built from. */
+  justifications: AxiomJustification[];
+  repairs: Repair[];
+  incomplete: boolean;
+  reason?: 'deadline' | 'round-cap' | 'solution-cap' | 'explain-failed' | 'verify-failed';
+}
+
+export interface Edit {
+  /** Quads to remove, by exact identity (graph included). Quads that are not in the store are reported in `unmatchedRemovals`. */
+  remove?: Quad[];
+  /** Quads to add. */
+  add?: Quad[];
+}
+
+/** Two named classes, `a < b` lexicographically. */
+export interface DisjointPair {
+  a: string;
+  b: string;
+}
+
+export interface AssessEditOptions {
+  /** Class pairs to protect. Default: the asserted disjointness pairs of the unedited store (`owl:disjointWith`, `owl:AllDisjointClasses`, `owl:disjointUnionOf`, expanded, named classes only), read syntactically so an inconsistent store works. */
+  pairs?: DisjointPair[];
+  /** Also protect the pairs formed by descendants of the asserted endpoints (entailed by monotonicity; needs a consistent unedited store, otherwise ignored). Default false. */
+  deriveFromHierarchy?: boolean;
+  /** Wall-clock budget in ms for the whole call, 0 = none. Default 180000. */
+  timeout?: number;
+  /** Named graph IRI that holds inferred triples in the store (excluded from the ontology). Default `INFERRED_GRAPH_IRI`. */
+  inferredGraph?: string;
+}
+
+export interface EditAssessment {
+  /** The ontology after the edit is consistent. */
+  consistent: boolean;
+  /** Pairs that were asserted (or derived) disjoint before the edit and are no longer entailed disjoint after it. A pair whose endpoint became unsatisfiable still counts as disjoint. `null` when the edited ontology is inconsistent or the check was cut short. */
+  lostDisjointPairs: DisjointPair[] | null;
+  /** The pairs that were tested. */
+  pairsChecked: DisjointPair[];
+  /** Requested removals that matched no quad of the store (the edit did nothing for them). */
+  unmatchedRemovals: Quad[];
+  /** The call stopped early (`reason` says why); what is set is still valid. */
+  incomplete: boolean;
+  /** `deadline` and `pair-cap` (more than 5000 pairs) set `incomplete`; `edited-inconsistent` is informational (the edit does not restore consistency, so disjointness cannot be judged). */
+  reason?: 'deadline' | 'pair-cap' | 'edited-inconsistent';
+}
+
+export interface WeakenOptions {
+  /** Wall-clock budget in ms for the whole call, 0 = none. Default 180000. */
+  timeout?: number;
+  /** Named graph IRI that holds inferred triples in the store (excluded from the ontology). Default `INFERRED_GRAPH_IRI`. */
+  inferredGraph?: string;
+}
+
+export interface Weakening {
+  strategy: 'generalize' | 'dropConjunct' | 'delete';
+  /** Triples to remove: every triple of the culprit axiom (all graph copies). */
+  remove: Quad[];
+  /** Triples of the weaker replacement axiom (empty for 'delete'); fresh blank nodes for an intersection. */
+  add: Quad[];
+  /** Removing `remove` and adding `add` leaves a consistent ontology in which the target class is satisfiable. Every returned weakening was verified. */
+  verifiedConsistent: boolean | null;
+  /** What changed: a conjunct generalized to a named superclass (`to`), or dropped (`to: null`). Absent for 'delete'. */
+  change?: { from: string; to: string | null };
+}
+
+export interface WeakenResult {
+  /** The most specific working generalizations first, then dropped conjuncts, ending with 'delete' (the order within a group is unspecified). Empty when `reason` explains why no weakening is offered. */
+  weakenings: Weakening[];
+  incomplete: boolean;
+  /** `deadline` sets `incomplete` (what was found is still valid, 'delete' is included when verified). The others mean no weakening is offered. */
+  reason?: 'deadline' | 'culprit-not-in-store' | 'removal-does-not-restore-consistency' | 'unsupported-axiom';
+}
+
 /**
  * Named graph IRI used to hold hypothetical (what-if) triples.
  * Quads in this graph are excluded from store fingerprints.
@@ -90,6 +209,9 @@ export interface StoreReasoningOptions extends ReasoningOptions {
    */
   inferredGraph?: string;
 
+  /** Reject with `InconsistentOntologyError` when the ontology is inconsistent (default false: an empty result, no signal). Costs one consistency check per changed content; for `materialize` one extra rebuild (the realization variant differs from the consistency one). */
+  failOnInconsistent?: boolean;
+
   /**
    * When `true`, justifications are serialized as RDF-star triples into the
    * `urn:konclude:explanations` named graph. Query via `store.getQuads()`.
@@ -125,6 +247,9 @@ export interface MaterializeStoreOptions extends MaterializeOptions {
    */
   inferredGraph?: string;
 
+  /** Reject with `InconsistentOntologyError` when the ontology is inconsistent (default false: an empty result, no signal). Costs one consistency check per changed content; for `materialize` one extra rebuild (the realization variant differs from the consistency one). */
+  failOnInconsistent?: boolean;
+
   /**
    * When `true`, the returned Promise resolves to `{ delta: InferenceDelta }`
    * containing the quads added and removed from the inferred graph compared
@@ -153,6 +278,9 @@ export interface ClassifyPropertiesStoreOptions {
    */
   inferredGraph?: string;
 
+  /** Reject with `InconsistentOntologyError` when the ontology is inconsistent (default false: an empty result, no signal). Costs one consistency check per changed content; for `materialize` one extra rebuild (the realization variant differs from the consistency one). */
+  failOnInconsistent?: boolean;
+
   /**
    * When `true`, justifications are serialized as RDF-star triples into the
    * `urn:konclude:explanations` named graph. Query via `store.getQuads()`.
@@ -169,6 +297,9 @@ export interface WhatIfOptions {
   /** Named graph IRI where hypothetical inferences are written in the store.
    *  Must not equal INFERRED_GRAPH_IRI or HYPOTHETICAL_IRI (throws if equal). */
   outputGraph?: string;
+
+  /** Reject with `InconsistentOntologyError` when the ontology is inconsistent (default false: an empty result, no signal; the check applies to the hypothetical ontology). Costs one consistency check per changed content; for `materialize` one extra rebuild (the realization variant differs from the consistency one). */
+  failOnInconsistent?: boolean;
 }
 
 /**
@@ -275,6 +406,26 @@ export class ReasonerStalledError extends Error {
     super(idleMs > 0 ? `Reasoner call "${method}" made no progress for ${Math.round(idleMs / 1000)} s` : `Reasoner "${method}" stalled (no task or event activity)`);
     this.name = "ReasonerStalledError";
   }
+}
+
+/**
+ * Thrown by the reasoning methods that accept `failOnInconsistent: true` when the ontology (or, for `whatIf`, the
+ * hypothetical ontology) is inconsistent. Without the option those methods return empty results for an inconsistent
+ * ontology without any signal: check `checkConsistency` first, or pass the option.
+ */
+export class InconsistentOntologyError extends Error {
+  constructor(message = "The ontology is inconsistent; results of this call would be empty or meaningless.") {
+    super(message);
+    this.name = "InconsistentOntologyError";
+  }
+}
+
+/** Options shared by the methods that can signal an inconsistent ontology. */
+export interface InconsistencyGuardOptions {
+  /** Named graph IRI that holds inferred triples in the store (excluded from the ontology). Default `INFERRED_GRAPH_IRI`. */
+  inferredGraph?: string;
+  /** Reject with `InconsistentOntologyError` when the ontology is inconsistent (default false: an empty result, no signal). Costs one consistency check per changed content; for `materialize` and `whatIf` one extra rebuild (the realization variant differs from the consistency one). */
+  failOnInconsistent?: boolean;
 }
 
 /**

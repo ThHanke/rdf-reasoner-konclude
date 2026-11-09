@@ -453,11 +453,6 @@ struct KoncludeReasoner::Impl {
     // Unit 1: FP/IFP multi-filler sameAs pairs
     std::vector<std::pair<std::string,std::string>> mFpIfpSameAsPairs;
 
-    // Unit 2: someValuesFrom post-processing data
-    struct SvfEntry { std::string property; std::string fillerClass; };
-    std::unordered_map<std::string, std::vector<SvfEntry>> mSvfIndex;     // classIri → entries
-    std::unordered_map<std::string, std::vector<std::string>> mSvfRoleAssertions; // "subj\0prop" → [objs]
-    std::vector<std::pair<std::string,std::string>> mSvfABoxTypes;       // (indiIri, classIri)
 
     // Unit 3: disjointUnionOf memberships
     std::vector<std::pair<std::string,std::string>> mDisjointUnionOf;    // (classIri, memberIri)
@@ -548,13 +543,31 @@ struct KoncludeReasoner::Impl {
         mReasonerManager->setClassificationManager(mClassManager);
     }
 
+    // ~COntologyTriplesData never deletes the CTriplesData objects it lists (upstream is a one-shot
+    // process), so every ontology leaked its Redland world/storage/model (~1 KB per triple). Each
+    // ontology built here owns its triples data exclusively unless it is part of an incremental
+    // revision chain (native prototype), whose members share data: those are left alone.
+    void freeOntology(CConcreteOntology* ont) {
+        if (!ont) return;
+        std::vector<CRedlandStoredTriplesData*> owned;
+        if (mRevisionChain.empty()) {
+            if (COntologyTriplesData* otd = ont->getOntologyTriplesData()) {
+                for (CTriplesData* t : *otd->getAllTriplesData()) {
+                    if (auto* rt = dynamic_cast<CRedlandStoredTriplesData*>(t)) owned.push_back(rt);
+                }
+            }
+        }
+        delete ont;
+        for (CRedlandStoredTriplesData* rt : owned) delete rt;
+    }
+
     ~Impl() {
         // Stop all threads BEFORE freeing the ontology.
         // threadStopped() (overridden) joins the realizer and BackendAssCache threads.
         delete mReasonerManager; // joins CReasonerManagerThread; threadStopped() runs
         delete mClassManager;
-        delete mPreviousOntology;
-        delete mOntology;        // safe: all background threads have stopped
+        freeOntology(mPreviousOntology);
+        freeOntology(mOntology); // safe: all background threads have stopped
         delete mConfigProvider;
     }
 
@@ -599,9 +612,10 @@ struct KoncludeReasoner::Impl {
         ++mResetCount;
         // The previous call's result has been read; free its realization data now (thread objects stay).
         if (mReasonerManager) mReasonerManager->releaseStoppedRealizerItems();
-        delete mPreviousOntology;
+        freeOntology(mPreviousOntology);
         mPreviousOntology = mOntology;
         mOntology = nullptr;
+        KonPoolStats::gOntologyEpoch.fetch_add(1, std::memory_order_acq_rel);
         buildFreshOntology();
         mClassified         = false;
         mLoadError          = false;
@@ -611,9 +625,6 @@ struct KoncludeReasoner::Impl {
         mEquivPropPairs.clear();
         mTriviallyInconsistent = false;
         mFpIfpSameAsPairs.clear();
-        mSvfIndex.clear();
-        mSvfRoleAssertions.clear();
-        mSvfABoxTypes.clear();
         mDisjointUnionOf.clear();
         mOneOfMemberships.clear();
         mMinCardRestrictions.clear();
@@ -1237,7 +1248,9 @@ void KoncludeReasoner::buildOntology(const void* triplePtr, int tripleCount, con
                             mImpl->mWorkaroundJustifications[Impl::wkJustKey(b, owlSameAs, a)] = just;
                         }
                 }
-                if (hasMulti)
+                // KON_NO_FPIFP_SKIP=1 (debug/experiments): keep the FP/IFP declaration so the kernel itself merges the
+                // individuals. Default stays "skip" (ALIF+ hang prevention) until the hang is shown to be gone.
+                if (hasMulti && !getenv("KON_NO_FPIFP_SKIP"))
                     fpIfpDeclSkipSet.insert(
                         (static_cast<uint64_t>(propIdx) << 32) | typeTermIdx);
             };
@@ -1388,19 +1401,22 @@ void KoncludeReasoner::buildOntology(const void* triplePtr, int tripleCount, con
                 if (svfIdx != UINT32_MAX && p == svfIdx && isNamedNode(triples[i*3+2])) restrMap[s].svfClassIdx = o & 0x3FFFFFFFu;
             }
 
-            // classIri → restrictionNode (via equivalentClass or subClassOf)
-            std::unordered_map<uint32_t, std::vector<uint32_t>> classToRestr;
+            // classIri → restrictionNode (via equivalentClass or subClassOf); `second` = the link is an equivalence.
+            // Only C ≡ R lets a member of R be recognised as a member of C (R ⊑ C); C ⊑ R gives just C ⊑ R, so the
+            // "indi satisfies R → indi : C" rules below (hasValue, hasSelf, someValuesFrom backward) require an equivalence.
+            std::unordered_map<uint32_t, std::vector<std::pair<uint32_t, bool>>> classToRestr;
             for (int i = 0; i < tripleCount; ++i) {
                 uint32_t s = triples[i*3+0] & 0x3FFFFFFFu, p = triples[i*3+1], o = triples[i*3+2] & 0x3FFFFFFFu;
-                if ((eqCIdx != UINT32_MAX && p == eqCIdx) || (scIdx != UINT32_MAX && p == scIdx)) {
-                    if (restrMap.count(o)) classToRestr[s].push_back(o);
+                bool isEqLink = eqCIdx != UINT32_MAX && p == eqCIdx;
+                if (isEqLink || (scIdx != UINT32_MAX && p == scIdx)) {
+                    if (restrMap.count(o)) classToRestr[s].push_back({o, isEqLink});
                 }
             }
 
             // For each class with restrictions, check individual role assertions
             for (auto& [classIdx, rNodes] : classToRestr) {
                 std::string classIri(terms[classIdx].ptr, terms[classIdx].len);
-                for (uint32_t rIdx : rNodes) {
+                for (const auto& [rIdx, isEqLink] : rNodes) {
                     auto& ri = restrMap[rIdx];
                     if (ri.propIdx == UINT32_MAX) continue;
                     std::string propIri(terms[ri.propIdx].ptr, terms[ri.propIdx].len);
@@ -1408,7 +1424,7 @@ void KoncludeReasoner::buildOntology(const void* triplePtr, int tripleCount, con
                     // hasValue: indi <prop> <value> → indi rdf:type classIri
                     // Also handles inverse: if prop has inverse invProp,
                     // then <value> <invProp> <indi> also satisfies the restriction.
-                    if (ri.hvIdx != UINT32_MAX) {
+                    if (ri.hvIdx != UINT32_MAX && isEqLink) {
                         std::string valIri(terms[ri.hvIdx].ptr, terms[ri.hvIdx].len);
                         // Direct: indi <prop> value
                         for (int i = 0; i < tripleCount; ++i) {
@@ -1443,7 +1459,7 @@ void KoncludeReasoner::buildOntology(const void* triplePtr, int tripleCount, con
                     }
 
                     // hasSelf: indi <prop> indi → indi rdf:type classIri
-                    if (ri.hasSelf) {
+                    if (ri.hasSelf && isEqLink) {
                         for (int i = 0; i < tripleCount; ++i) {
                             uint32_t s = triples[i*3+0], p = triples[i*3+1], o = triples[i*3+2];
                             if (!isNamedNode(s) || (p & 0x3FFFFFFFu) != ri.propIdx) continue;
@@ -1488,7 +1504,7 @@ void KoncludeReasoner::buildOntology(const void* triplePtr, int tripleCount, con
                     //   → indi rdf:type classIri
                     // Also handles inverse: if prop has inverse invProp,
                     //   target <invProp> indi also satisfies the restriction.
-                    if (ri.svfClassIdx != UINT32_MAX && rdfTIdx != UINT32_MAX) {
+                    if (ri.svfClassIdx != UINT32_MAX && rdfTIdx != UINT32_MAX && isEqLink) {
                         std::string svfIri(terms[ri.svfClassIdx].ptr, terms[ri.svfClassIdx].len);
                         // Collect targets typed as the filler class
                         std::unordered_set<uint32_t> fillerTyped;
@@ -1733,7 +1749,6 @@ void KoncludeReasoner::buildOntology(const void* triplePtr, int tripleCount, con
         static const char sRdfType[]   = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
         static const char sRestrict[]  = "http://www.w3.org/2002/07/owl#Restriction";
         static const char sOnProp[]    = "http://www.w3.org/2002/07/owl#onProperty";
-        static const char sSvf[]       = "http://www.w3.org/2002/07/owl#someValuesFrom";
         static const char sEquivCls[]  = "http://www.w3.org/2002/07/owl#equivalentClass";
         static const char sSubCls[]    = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
         static const char sDisjUn[]    = "http://www.w3.org/2002/07/owl#disjointUnionOf";
@@ -1747,7 +1762,6 @@ void KoncludeReasoner::buildOntology(const void* triplePtr, int tripleCount, con
         uint32_t rdfTypeIdx = findTerm(sRdfType,  sizeof(sRdfType)  - 1);
         uint32_t restrictIdx= findTerm(sRestrict,  sizeof(sRestrict)  - 1);
         uint32_t onPropIdx  = findTerm(sOnProp,    sizeof(sOnProp)    - 1);
-        uint32_t svfIdx     = findTerm(sSvf,       sizeof(sSvf)       - 1);
         uint32_t equivClsIdx= findTerm(sEquivCls,  sizeof(sEquivCls)  - 1);
         uint32_t subClsIdx  = findTerm(sSubCls,    sizeof(sSubCls)    - 1);
         uint32_t disjUnIdx  = findTerm(sDisjUn,    sizeof(sDisjUn)    - 1);
@@ -1758,10 +1772,9 @@ void KoncludeReasoner::buildOntology(const void* triplePtr, int tripleCount, con
         uint32_t minQCardIdx= findTerm(sMinQCard,  sizeof(sMinQCard)  - 1);
         uint32_t onClassIdx = findTerm(sOnClass,   sizeof(sOnClass)   - 1);
 
-        // Unit 2: someValuesFrom blank-node structures
+        // Restriction blank-node structures (minCardinality, below)
         std::unordered_set<uint32_t> svfRestBnodes;          // encoded blank node IDs (typeTag=1)
         std::unordered_map<uint32_t, uint32_t> svfOnPropMap; // bnodeEncId → propTermIdx
-        std::unordered_map<uint32_t, uint32_t> svfSvfMap;    // bnodeEncId → fillerTermIdx
         // Unit 3: RDF list traversal maps
         std::unordered_map<uint32_t, uint32_t> rdfFirstMap;  // bnodeEncId → memberTermIdx
         std::unordered_map<uint32_t, uint32_t> rdfRestMap;   // bnodeEncId → nextEncId
@@ -1780,8 +1793,6 @@ void KoncludeReasoner::buildOntology(const void* triplePtr, int tripleCount, con
                 if (restrictIdx != UINT32_MAX && oi == restrictIdx) svfRestBnodes.insert(sId);
             } else if (onPropIdx != UINT32_MAX && pId == onPropIdx && (sId >> 30) == 1 && (oId >> 30) == 0) {
                 svfOnPropMap[sId] = oId & 0x3FFFFFFFu;
-            } else if (svfIdx != UINT32_MAX && pId == svfIdx && (sId >> 30) == 1 && (oId >> 30) == 0) {
-                svfSvfMap[sId] = oId & 0x3FFFFFFFu;
             } else if (rdfFirstIdx != UINT32_MAX && pId == rdfFirstIdx && (sId >> 30) == 1 && (oId >> 30) == 0) {
                 rdfFirstMap[sId] = oId & 0x3FFFFFFFu;
             } else if (rdfRestIdx != UINT32_MAX && pId == rdfRestIdx && (sId >> 30) == 1) {
@@ -1794,79 +1805,6 @@ void KoncludeReasoner::buildOntology(const void* triplePtr, int tripleCount, con
                 minQCardValueMap[sId] = oId;
             } else if (onClassIdx != UINT32_MAX && pId == onClassIdx && (sId >> 30) == 1 && (oId >> 30) == 0) {
                 onClassMap[sId] = oId & 0x3FFFFFFFu;
-            }
-        }
-
-        // Unit 2: build mSvfIndex (classIri → [{property, fillerClass}])
-        {
-            std::unordered_map<uint32_t, std::pair<uint32_t,uint32_t>> confirmedRestrictions;
-            for (uint32_t bn : svfRestBnodes) {
-                auto pit = svfOnPropMap.find(bn);
-                auto fit = svfSvfMap.find(bn);
-                if (pit != svfOnPropMap.end() && fit != svfSvfMap.end())
-                    confirmedRestrictions[bn] = {pit->second, fit->second};
-            }
-            if (!confirmedRestrictions.empty()) {
-                for (int i = 0; i < tripleCount; ++i) {
-                    uint32_t sId = triples[i*3+0], pId = triples[i*3+1], oId = triples[i*3+2];
-                    bool isEquiv = (equivClsIdx != UINT32_MAX && pId == equivClsIdx);
-                    bool isSub   = (subClsIdx   != UINT32_MAX && pId == subClsIdx);
-                    if (!isEquiv && !isSub) continue;
-                    auto addEntry = [&](uint32_t classEncId, uint32_t bnodeEncId) {
-                        auto rit = confirmedRestrictions.find(bnodeEncId);
-                        if (rit == confirmedRestrictions.end()) return;
-                        uint32_t classIdx = classEncId & 0x3FFFFFFFu;
-                        uint32_t propIdx  = rit->second.first;
-                        uint32_t fillIdx  = rit->second.second;
-                        if (classIdx >= count || propIdx >= count || fillIdx >= count) return;
-                        std::string cls(terms[classIdx].ptr,  terms[classIdx].len);
-                        std::string prop(terms[propIdx].ptr,  terms[propIdx].len);
-                        std::string fill(terms[fillIdx].ptr,  terms[fillIdx].len);
-                        auto& vec = mImpl->mSvfIndex[cls];
-                        if (!std::any_of(vec.begin(), vec.end(),
-                                [&](const Impl::SvfEntry& e){ return e.property == prop && e.fillerClass == fill; }))
-                            vec.push_back({prop, fill});
-                    };
-                    if ((sId >> 30) == 0 && (oId >> 30) == 1) addEntry(sId, oId);  // C subClassOf/equivClass _:r
-                    if (isEquiv && (sId >> 30) == 1 && (oId >> 30) == 0) addEntry(oId, sId);  // _:r equivClass C
-                }
-            }
-        }
-
-        // Unit 2: role assertions for SvF properties
-        if (!mImpl->mSvfIndex.empty()) {
-            std::unordered_set<uint32_t> svfPropTermIdxs;
-            for (const auto& [cls, entries] : mImpl->mSvfIndex)
-                for (const auto& e : entries)
-                    for (uint32_t i = 0; i < count; ++i)
-                        if (terms[i].len == e.property.size() &&
-                                memcmp(terms[i].ptr, e.property.c_str(), e.property.size()) == 0) {
-                            svfPropTermIdxs.insert(i); break;
-                        }
-            if (!svfPropTermIdxs.empty()) {
-                for (int i = 0; i < tripleCount; ++i) {
-                    uint32_t sId = triples[i*3+0], pId = triples[i*3+1], oId = triples[i*3+2];
-                    if ((sId >> 30) != 0 || (oId >> 30) != 0 || !svfPropTermIdxs.count(pId)) continue;
-                    uint32_t si = sId & 0x3FFFFFFFu, oi = oId & 0x3FFFFFFFu;
-                    if (si >= count || oi >= count) continue;
-                    std::string sIri(terms[si].ptr, terms[si].len);
-                    std::string pIri(terms[pId].ptr, terms[pId].len);
-                    std::string oIri(terms[oi].ptr, terms[oi].len);
-                    mImpl->mSvfRoleAssertions[sIri + '\0' + pIri].push_back(oIri);
-                }
-            }
-        }
-
-        // Unit 2: ABox type assertions (needed for fixpoint at build time)
-        if (!mImpl->mSvfIndex.empty() && rdfTypeIdx != UINT32_MAX) {
-            for (int i = 0; i < tripleCount; ++i) {
-                uint32_t sId = triples[i*3+0], pId = triples[i*3+1], oId = triples[i*3+2];
-                if (pId != rdfTypeIdx || (sId >> 30) != 0 || (oId >> 30) != 0) continue;
-                uint32_t si = sId & 0x3FFFFFFFu, oi = oId & 0x3FFFFFFFu;
-                if (si >= count || oi >= count) continue;
-                mImpl->mSvfABoxTypes.push_back({
-                    std::string(terms[si].ptr, terms[si].len),
-                    std::string(terms[oi].ptr, terms[oi].len)});
             }
         }
 
@@ -1926,9 +1864,9 @@ void KoncludeReasoner::buildOntology(const void* triplePtr, int tripleCount, con
             if (!confirmedMinCards.empty()) {
                 for (int i = 0; i < tripleCount; ++i) {
                     uint32_t sId = triples[i*3+0], pId = triples[i*3+1], oId = triples[i*3+2];
+                    // C ≡ (≥ n p) only: with C ⊑ (≥ n p) a member of the restriction need not be a member of C.
                     bool isEquiv = (equivClsIdx != UINT32_MAX && pId == equivClsIdx);
-                    bool isSub   = (subClsIdx   != UINT32_MAX && pId == subClsIdx);
-                    if (!isEquiv && !isSub) continue;
+                    if (!isEquiv) continue;
                     auto addEntry = [&](uint32_t classEncId, uint32_t bnodeEncId) {
                         auto rit = confirmedMinCards.find(bnodeEncId);
                         if (rit == confirmedMinCards.end()) return;
@@ -2140,7 +2078,7 @@ bool KoncludeReasoner::runPipeline(KoncludeReasoner::Impl* impl, bool includeRea
     // per-ontology items lazily when they first see the new one). Keeping it until the next reset()
     // doubled the retained heap between calls. REPRO_KEEP_PREV=1 restores the old lifetime (A/B tests).
     if (impl->mPreviousOntology && !getenv("REPRO_KEEP_PREV")) {
-        delete impl->mPreviousOntology;
+        impl->freeOntology(impl->mPreviousOntology);
         impl->mPreviousOntology = nullptr;
     }
 
@@ -3401,53 +3339,6 @@ int KoncludeReasoner::buildInferredTripleBuffer(bool withExplanations) {
         uint32_t pSameAs = intern.intern(owlSameAs);
         for (const auto& [s, o] : mImpl->mFpIfpSameAsPairs) {
             emitTriple(intern.intern(s), pSameAs, intern.intern(o));
-        }
-    }
-
-    // Unit 2: someValuesFrom fixpoint — propagate rdf:type to restriction fillers
-    if (!mImpl->mSvfIndex.empty()) {
-        static const std::string rdfType = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
-        uint32_t pType = intern.intern(rdfType);
-
-        // Collect all type assertions: ABox input + WASM-inferred output
-        std::unordered_map<std::string, std::unordered_set<std::string>> allTypes;
-        for (const auto& [indi, cls] : mImpl->mSvfABoxTypes)
-            allTypes[indi].insert(cls);
-        // Scan output buffer for rdf:type triples
-        for (size_t i = 0; i + 2 < tripleIds.size(); i += 3) {
-            if (tripleIds[i+1] != pType) continue;
-            uint32_t si = tripleIds[i]   & 0x3FFFFFFFu;
-            uint32_t oi = tripleIds[i+2] & 0x3FFFFFFFu;
-            if (si < intern.strings.size() && oi < intern.strings.size())
-                allTypes[intern.strings[si]].insert(intern.strings[oi]);
-        }
-
-        // Fixpoint: emit new rdf:type triples until stable
-        bool changed = true;
-        while (changed) {
-            changed = false;
-            // Snapshot current types to avoid modifying while iterating
-            std::vector<std::pair<std::string,std::string>> snapshot;
-            for (const auto& [indi, types] : allTypes)
-                for (const auto& cls : types)
-                    snapshot.push_back({indi, cls});
-            for (const auto& [indiIri, classIri] : snapshot) {
-                auto sit = mImpl->mSvfIndex.find(classIri);
-                if (sit == mImpl->mSvfIndex.end()) continue;
-                for (const auto& entry : sit->second) {
-                    const std::string& prop = entry.property;
-                    const std::string& filler = entry.fillerClass;
-                    std::string roleKey = indiIri + '\0' + prop;
-                    auto rit = mImpl->mSvfRoleAssertions.find(roleKey);
-                    if (rit == mImpl->mSvfRoleAssertions.end()) continue;
-                    for (const std::string& fillerIri : rit->second) {
-                        if (allTypes[fillerIri].insert(filler).second) {
-                            emitTriple(intern.intern(fillerIri), pType, intern.intern(filler));
-                            changed = true;
-                        }
-                    }
-                }
-            }
         }
     }
 

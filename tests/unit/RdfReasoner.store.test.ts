@@ -351,7 +351,7 @@ describe("RdfReasoner — Store API", () => {
       const methods = mocks.workerPostMessage.mock.calls.map(
         (c) => (c[0] as { method: string }).method,
       );
-      expect(methods).toEqual(["sync", "classification", "consistency"]);
+      expect(methods).toEqual(["sync", "consistency"]);
       expect(methods).not.toContain("getInferredTripleBuffer");
     });
 
@@ -513,7 +513,7 @@ describe("RdfReasoner — Store API", () => {
       const methods = mocks.workerPostMessage.mock.calls.map((c) => (c[0] as { method: string }).method);
       // Every call syncs (C++ decides validity); the second one finds unchanged content and runs no reasoning.
       expect(methods.filter((m) => m === "sync")).toHaveLength(2);
-      expect(methods.filter((m) => m === "realization" || m === "classification")).toHaveLength(1);
+      expect(methods.filter((m) => m === "realization" || m === "classification" || m === "consistency")).toHaveLength(1);
     });
 
     it("checkConsistency(store) and classify(store) with same store → each triggers own Worker call (separate slots)", async () => {
