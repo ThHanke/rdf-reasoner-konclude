@@ -1,12 +1,7 @@
 # Vendor patches applied to vendor/konclude (order = filename order; each is written against the post-previous state).
-# Aggregated 2026-10-15 from the per-fix patches 000-041 (originals: patches/archive/per-fix/, mapping: patches/README.md).
+# Aggregated 2026-10-15 from the per-fix patches 000-041; 0.9.0 patches 005-009 folded into 002/004 (see patches/README.md).
 000  # Qt type substitutions
 001  # WASM port base (compile prereqs, pthread core, cache sync, perf, conformance, KPSet classifier, drain-loop/processing-set fixes)
 002  # Realizer/kernel correctness fixes
 003  # Stall detection hooks
 004  # Per-call memory lifecycle (pool/item/cache release, virtual dtors) + diagnostic counters
-005  # Release pseudo-model pool container of KPSet class/role classification items in their dtor
-006  # ~CRedlandStoredTriplesData frees the remaining statement-linker copies
-007  # mapTriples: free the find_statements probe stream + partial statement (pinned the whole Redland model)
-008  # Saturation-node expansion cache: alternating per-ontology-epoch arenas (entries leaked per ontology)
-009  # KPSet: register items whose possible-subsumption maps the init-message flush creates (classification lost subsumptions, PMDco)

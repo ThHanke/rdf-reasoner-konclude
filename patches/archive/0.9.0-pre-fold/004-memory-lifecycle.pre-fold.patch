@@ -1,0 +1,1065 @@
+# Per-call memory lifecycle: task/pool release, pool reserve + flush, reader/item/job/context release, virtual destructors, hash init context, classifier stale-item flush, adopted write pools; includes diagnostic counters (KonPoolStats, pool-site registry) (old 023-026, 028-033, 035-041).
+# Aggregated from the per-fix patches; see patches/README.md for the old-number mapping.
+diff --git a/Source/Reasoner/Classifier/CIncrementalKPSetClassSubsumptionClassifierThread.cpp b/Source/Reasoner/Classifier/CIncrementalKPSetClassSubsumptionClassifierThread.cpp
+index fc4acc88..2a3cd6b7 100644
+--- a/Source/Reasoner/Classifier/CIncrementalKPSetClassSubsumptionClassifierThread.cpp
++++ b/Source/Reasoner/Classifier/CIncrementalKPSetClassSubsumptionClassifierThread.cpp
+@@ -52,6 +52,8 @@ namespace Konclude {
+ 
+ 
+ 			CSubsumptionClassifierThread *CIncrementalKPSetClassSubsumptionClassifierThread::scheduleOntologyClassification(CConcreteOntology *ontology, CClassificationCalculationSupport *classificationSupport, CConfigurationBase *config) {
++				for (auto* stale : mStaleClassItems) { delete stale; }
++				mStaleClassItems.clear();
+ 
+ 
+ 				CTaxonomy *taxonomy = createEmptyTaxonomyForOntology(ontology,config);
+diff --git a/Source/Reasoner/Classifier/COptimizedClassExtractedSaturationSubsumptionClassifierThread.cpp b/Source/Reasoner/Classifier/COptimizedClassExtractedSaturationSubsumptionClassifierThread.cpp
+index 418e6d98..87305f6c 100644
+--- a/Source/Reasoner/Classifier/COptimizedClassExtractedSaturationSubsumptionClassifierThread.cpp
++++ b/Source/Reasoner/Classifier/COptimizedClassExtractedSaturationSubsumptionClassifierThread.cpp
+@@ -57,6 +57,8 @@ namespace Konclude {
+ 
+ 			
+ 			CSubsumptionClassifierThread *COptimizedClassExtractedSaturationSubsumptionClassifierThread::scheduleOntologyClassification(CConcreteOntology *ontology, CClassificationCalculationSupport *classificationSupport, CConfigurationBase *config) {
++				for (auto* stale : mStaleClassItems) { delete stale; }
++				mStaleClassItems.clear();
+ 
+ 				CTaxonomy *taxonomy = createEmptyTaxonomyForOntology(ontology,config);
+ 				COptimizedClassExtractedSaturationOntologyClassificationItem *ontClassItem = new COptimizedClassExtractedSaturationOntologyClassificationItem(config,statistics);
+diff --git a/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.cpp b/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.cpp
+index 084bb7cd..a0b6898f 100644
+--- a/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.cpp
++++ b/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.cpp
+@@ -150,6 +150,8 @@ namespace Konclude {
+ 
+ 			
+ 			CSubsumptionClassifierThread *COptimizedKPSetClassSubsumptionClassifierThread::scheduleOntologyClassification(CConcreteOntology *ontology, CClassificationCalculationSupport *classificationSupport, CConfigurationBase *config) {
++				for (auto* stale : mStaleClassItems) { delete stale; }
++				mStaleClassItems.clear();
+ 
+ 
+ 				CTaxonomy *taxonomy = createEmptyTaxonomyForOntology(ontology,config);
+diff --git a/Source/Reasoner/Classifier/COptimizedKPSetRoleOntologyClassificationItem.cpp b/Source/Reasoner/Classifier/COptimizedKPSetRoleOntologyClassificationItem.cpp
+index 0a87afe1..87855db1 100644
+--- a/Source/Reasoner/Classifier/COptimizedKPSetRoleOntologyClassificationItem.cpp
++++ b/Source/Reasoner/Classifier/COptimizedKPSetRoleOntologyClassificationItem.cpp
+@@ -62,6 +62,9 @@ namespace Konclude {
+ 			}
+ 
+ 			COptimizedKPSetRoleOntologyClassificationItem::~COptimizedKPSetRoleOntologyClassificationItem() {
++				if (mTmpRoleClassificationOnt) {
++					mTmpRoleClassificationOnt->setConsistence(nullptr);
++				}
+ 				delete mTmpRoleClassificationOnt;
+ 				for (auto* item : mSatTestItemContainer) { delete item; }
+ 			}
+diff --git a/Source/Reasoner/Classifier/COptimizedKPSetRoleSubsumptionClassifierThread.cpp b/Source/Reasoner/Classifier/COptimizedKPSetRoleSubsumptionClassifierThread.cpp
+index 48133731..c658e155 100644
+--- a/Source/Reasoner/Classifier/COptimizedKPSetRoleSubsumptionClassifierThread.cpp
++++ b/Source/Reasoner/Classifier/COptimizedKPSetRoleSubsumptionClassifierThread.cpp
+@@ -347,6 +347,8 @@ namespace Konclude {
+ 
+ 			
+ 			CSubsumptionClassifierThread *COptimizedKPSetRoleSubsumptionClassifierThread::scheduleOntologyClassification(CConcreteOntology *ontology, CClassificationCalculationSupport *classificationSupport, CConfigurationBase *config) {
++				for (auto* stale : mStaleClassItems) { delete stale; }
++				mStaleClassItems.clear();
+ 
+ 
+ 				CRolePropertiesHierarchy* hierarchy = createInitialHierarchyForOntology(ontology,config);
+diff --git a/Source/Reasoner/Classifier/COptimizedSubClassSubsumptionClassifierThread.cpp b/Source/Reasoner/Classifier/COptimizedSubClassSubsumptionClassifierThread.cpp
+index 1238a68e..75b1d58e 100644
+--- a/Source/Reasoner/Classifier/COptimizedSubClassSubsumptionClassifierThread.cpp
++++ b/Source/Reasoner/Classifier/COptimizedSubClassSubsumptionClassifierThread.cpp
+@@ -107,6 +107,8 @@ namespace Konclude {
+ 
+ 			
+ 			CSubsumptionClassifierThread *COptimizedSubClassSubsumptionClassifierThread::scheduleOntologyClassification(CConcreteOntology *ontology, CClassificationCalculationSupport *classificationSupport, CConfigurationBase *config) {
++				for (auto* stale : mStaleClassItems) { delete stale; }
++				mStaleClassItems.clear();
+ 
+ 				CTaxonomy *taxonomy = createEmptyTaxonomyForOntology(ontology,config);
+ 				COptimizedSubClassOntologyClassificationItem *ontClassItem = new COptimizedSubClassOntologyClassificationItem(config,statistics);
+diff --git a/Source/Reasoner/Consistiser/COntologyPrecomputationItem.h b/Source/Reasoner/Consistiser/COntologyPrecomputationItem.h
+index 56f98eba..95fb63b5 100644
+--- a/Source/Reasoner/Consistiser/COntologyPrecomputationItem.h
++++ b/Source/Reasoner/Consistiser/COntologyPrecomputationItem.h
+@@ -76,6 +76,9 @@ namespace Konclude {
+ 					//! Constructor
+ 					COntologyPrecomputationItem();
+ 
++					//! Virtual: deleted through this base class
++					virtual ~COntologyPrecomputationItem() {}
++
+ 					COntologyPrecomputationItem* initPrecomputationItem(CConcreteOntology* ontology, CConfigurationBase* config);
+ 
+ 					virtual COntologyPrecomputationItem* addPrecomputationRequirement(COntologyProcessingRequirement* ontoRequirement);
+diff --git a/Source/Reasoner/Consistiser/CPrecomputationTestingItem.h b/Source/Reasoner/Consistiser/CPrecomputationTestingItem.h
+index 6e04061f..63bbd077 100644
+--- a/Source/Reasoner/Consistiser/CPrecomputationTestingItem.h
++++ b/Source/Reasoner/Consistiser/CPrecomputationTestingItem.h
+@@ -58,6 +58,9 @@ namespace Konclude {
+ 					//! Constructor
+ 					CPrecomputationTestingItem(COntologyPrecomputationItem* preCompItem, CConsistenceCalculationStatisticsCollection* statisticCollection = nullptr);
+ 
++					//! Virtual: deleted through this base class
++					virtual ~CPrecomputationTestingItem() {}
++
+ 					enum PRECOMPUTATIONTYPE {
+ 						CONSISTENCEPRECOMPUTATIONTYPE, CONCEPTSATURATIONPRECOMPUTATIONTYPE, INDIVIDUALSATURATIONPRECOMPUTATIONTYPE, CONCEPTCYCLEPRECOMPUTATIONTYPE, INDIVIDUALPRECOMPUTATIONTYPE, OCCURRENCESTATISTICSSATURATIONPRECOMPUTATIONTYPE
+ 					};
+diff --git a/Source/Reasoner/Consistiser/CTotallyOntologyPrecomputationItem.cpp b/Source/Reasoner/Consistiser/CTotallyOntologyPrecomputationItem.cpp
+index 363f9c57..c72e2734 100644
+--- a/Source/Reasoner/Consistiser/CTotallyOntologyPrecomputationItem.cpp
++++ b/Source/Reasoner/Consistiser/CTotallyOntologyPrecomputationItem.cpp
+@@ -197,6 +197,7 @@ namespace Konclude {
+ 					}
+ 					delete mAllAssertionIndividual;
+ 				}
++				for (CSaturationData* satData : mSaturDataList) { if (satData != mLastSaturData) delete satData; }
+ 				for (auto* item : mSatItemContainer) { delete item; }
+ 				for (auto it = mSatIDIndividualItemsHash.begin(); it != mSatIDIndividualItemsHash.end(); ++it) {
+ 					CSaturationIndividualDataItem* chainItem = it.value();
+diff --git a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.cpp b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.cpp
+index e228eae7..68ef7a02 100644
+--- a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.cpp
++++ b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.cpp
+@@ -19,6 +19,8 @@
+  */
+ 
+ #include "CBackendRepresentativeMemoryCache.h"
++#include <unordered_set>
++#include "KonPoolStats.h"
+ #include "CBackendRepresentativeMemoryCacheWriter.h"
+ 
+ 
+@@ -151,6 +153,62 @@ namespace Konclude {
+ 
+ 
+ 
++
++				// Versions evicted for good (no newer version of their ontology identifier) that were still referenced by a reader slot
++				// and are released later by cleanUnusedSlots. Cache thread only.
++				static std::unordered_set<CBackendRepresentativeMemoryCacheOntologyData*> sFinalOntologyDataVersions;
++
++				// Memory pools received with association write messages, adopted by the cache; per ontology identifier. Cache thread only.
++				static std::unordered_map<cint64, CMemoryPool*> sAdoptedWritePools;
++				static void releaseAdoptedWritePools(cint64 ontologyIdentifier, CMemoryPoolAllocationManager* memMan) {
++					std::unordered_map<cint64, CMemoryPool*>::iterator it = sAdoptedWritePools.find(ontologyIdentifier);
++					if (it != sAdoptedWritePools.end()) {
++						CMemoryPool* pools = it->second;
++						sAdoptedWritePools.erase(it);
++						if (pools) {
++							memMan->releaseTemporaryMemoryPools(pools);
++						}
++					}
++				}
++
++
++				static void releaseAllIndividualAssociationContexts(CBackendRepresentativeMemoryCacheOntologyData* ontologyData, CMemoryPoolAllocationManager* memMan) {
++					std::unordered_set<CBackendRepresentativeMemoryCacheIndividualAssociationContext*> contexts;
++					CBackendRepresentativeMemoryCacheIndividualAssociationData** vec = ontologyData->getIndividualIdAssoiationDataVector();
++					cint64 vecSize = ontologyData->getIndividualIdAssoiationDataVectorSize();
++					if (vec) {
++						for (cint64 i = 0; i < vecSize; ++i) {
++							if (vec[i]) {
++								CBackendRepresentativeMemoryCacheIndividualAssociationContext* ctx = vec[i]->getIndividualAssociationMemoryContext();
++								if (ctx) {
++									contexts.insert(ctx);
++								}
++							}
++						}
++					}
++					for (CBackendRepresentativeMemoryCacheIndividualAssociationContext* it = ontologyData->getReleaseQueuedIndividualAssociationContextLinker(); it; it = it->getNext()) {
++						contexts.insert(it);
++					}
++					CCACHINGMAP<cint64, CBackendRepresentativeMemoryCacheIndividualAssociationContext*>* releasingMap = ontologyData->getRecomputationIdReleasingIndividualAssociationContextMap();
++					if (releasingMap) {
++						for (CCACHINGMAP<cint64, CBackendRepresentativeMemoryCacheIndividualAssociationContext*>::const_iterator it = releasingMap->constBegin(), itEnd = releasingMap->constEnd(); it != itEnd; ++it) {
++							for (CBackendRepresentativeMemoryCacheIndividualAssociationContext* l = it.value(); l; l = l->getNext()) {
++								contexts.insert(l);
++							}
++						}
++					}
++					std::unordered_set<CMemoryPool*> poolLists;
++					for (CBackendRepresentativeMemoryCacheIndividualAssociationContext* ctx : contexts) {
++						CMemoryPool* pools = ctx->getMemoryPoolContainer()->getMemoryPools();
++						if (pools) {
++							poolLists.insert(pools);
++						}
++					}
++					for (CMemoryPool* pools : poolLists) {
++						memMan->releaseTemporaryMemoryPools(pools);
++					}
++				}
++
+ 				void CBackendRepresentativeMemoryCache::deleteExpiredIndividualAssociationMemoryContexts(CBackendRepresentativeMemoryCacheOntologyData* ontologyData, CBackendRepresentativeMemoryCacheBaseContext* context) {
+ 					CBackendRepresentativeMemoryCacheContext* ontologyContext = ontologyData->getOntologyContext();
+ 					if (ontologyData->isBasicPrecomputationMode()) {
+@@ -360,11 +418,13 @@ namespace Konclude {
+ 
+ 
+ 				CBackendRepresentativeMemoryCacheOntologyData* CBackendRepresentativeMemoryCache::prepareOntologyDataUpdate(cint64 ontologyIdentifier, cint64 minIndiCount) {
++					drainFixedReaderReleases();
+ 					CBackendRepresentativeMemoryCacheOntologyData*& ontologyData = (*mOntologyIdentifierDataHash)[ontologyIdentifier];
+ 					if (!ontologyData || ontologyData->isSlotUpdateIntegrated()) {
+ 						CBackendRepresentativeMemoryCacheOntologyData* prevOntologyData = ontologyData;
+ 
+ 						ontologyData = new CBackendRepresentativeMemoryCacheOntologyData(&mContext);
++						KonPoolStats::gOntDataCreated.fetch_add(1, std::memory_order_relaxed);
+ 						ontologyData->initOntologyData(ontologyIdentifier, !mConfLateIndividualLabelAssociationIndexing);
+ 
+ 
+@@ -422,6 +482,8 @@ namespace Konclude {
+ 											if (staleData->getRecomputationReferenceLinker()) {
+ 												staleData->getRecomputationReferenceLinker()->setOntologyDataInactive();
+ 											}
++											releaseAllIndividualAssociationContexts(staleData, evictMemMan);
++											releaseAdoptedWritePools(staleId, evictMemMan);
+ 											CBackendRepresentativeMemoryCacheOntologyContext* staleOntCtx = staleData->getOntologyContext();
+ 											if (staleOntCtx) {
+ 												CMemoryPool* staleOntCtxPools = staleOntCtx->getMemoryPoolContainer()->getMemoryPools();
+@@ -434,7 +496,12 @@ namespace Konclude {
+ 											if (staleTmpPools) {
+ 												evictMemMan->releaseTemporaryMemoryPools(staleTmpPools);
+ 											}
++											KonPoolStats::gOntDataFreed.fetch_add(1, std::memory_order_relaxed);
+ 											delete staleData;
++											evictMemMan->flushFreePools();
++										} else {
++											KonPoolStats::gOntDataStaleKept.fetch_add(1, std::memory_order_relaxed);
++											sFinalOntologyDataVersions.insert(staleData);
+ 										}
+ 									}
+ 								}
+@@ -503,6 +570,7 @@ namespace Konclude {
+ 								CMemoryPoolAllocationManager* memMan = mContext.getMemoryPoolAllocationManager();
+ 								CMemoryPool* memoryPools = prevOntologyData->getTemporaryContext()->getMemoryPoolContainer()->getMemoryPools();
+ 								memMan->releaseTemporaryMemoryPools(memoryPools);
++								KonPoolStats::gOntDataFreed.fetch_add(1, std::memory_order_relaxed);
+ 								delete prevOntologyData;
+ 							}
+ 
+@@ -544,8 +612,21 @@ namespace Konclude {
+ 
+ 									ontologyData->getRecomputationReferenceLinker()->setOntologyDataInactive();
+ 
++									if (sFinalOntologyDataVersions.erase(ontologyData) > 0) {
++										releaseAllIndividualAssociationContexts(ontologyData, memMan);
++										releaseAdoptedWritePools(ontologyData->getOntologyIdentifer(), memMan);
++										CBackendRepresentativeMemoryCacheOntologyContext* finalOntCtx = ontologyData->getOntologyContext();
++										if (finalOntCtx) {
++											CMemoryPool* finalOntCtxPools = finalOntCtx->getMemoryPoolContainer()->getMemoryPools();
++											if (finalOntCtxPools) {
++												memMan->releaseTemporaryMemoryPools(finalOntCtxPools);
++											}
++											delete finalOntCtx;
++										}
++									}
+ 									CMemoryPool* memoryPools = ontologyData->getTemporaryContext()->getMemoryPoolContainer()->getMemoryPools();
+ 									memMan->releaseTemporaryMemoryPools(memoryPools);
++									KonPoolStats::gOntDataFreed.fetch_add(1, std::memory_order_relaxed);
+ 									delete ontologyData;
+ 								}
+ 							}
+@@ -580,6 +661,9 @@ namespace Konclude {
+ 						ontologyData->incUsageCount();
+ 					}
+ 					reader->fixOntologyData(ontologyData);
++					if (ontologyData) {
++						reader->setFixedReleaseCache(this);
++					}
+ 					mFixedOntologyIdentifierDataHashLock.unlock();
+ 					if (ontologyData) {
+ 						ontologyData->waitIndividualLabelAssociationIndexed();
+@@ -588,6 +672,52 @@ namespace Konclude {
+ 				}
+ 
+ 
++				void CBackendRepresentativeMemoryCache::queueFixedReaderRelease(CBackendRepresentativeMemoryCacheOntologyData* ontologyData) {
++					mPendingFixedReleasesMutex.lock();
++					mPendingFixedReleases.append(ontologyData);
++					KonPoolStats::gReaderReleasesQueued.fetch_add(1, std::memory_order_relaxed);
++					mPendingFixedReleasesMutex.unlock();
++				}
++
++
++				void CBackendRepresentativeMemoryCache::drainFixedReaderReleases() {
++					QList<CBackendRepresentativeMemoryCacheOntologyData*> pending;
++					mPendingFixedReleasesMutex.lock();
++					pending.swap(mPendingFixedReleases);
++					mPendingFixedReleasesMutex.unlock();
++					if (pending.isEmpty()) {
++						return;
++					}
++					CMemoryPoolAllocationManager* memMan = mContext.getMemoryPoolAllocationManager();
++					for (CBackendRepresentativeMemoryCacheOntologyData* data : pending) {
++						data->decUsageCount();
++						KonPoolStats::gReaderReleasesDrained.fetch_add(1, std::memory_order_relaxed);
++						KonPoolStats::gReaderDrainLastUsage.store(data->getUsageCount(), std::memory_order_relaxed);
++						if (data->getUsageCount() <= 0) {
++							++mOntologyDataReleasedCount;
++							if (data->getRecomputationReferenceLinker()) {
++								data->getRecomputationReferenceLinker()->setOntologyDataInactive();
++							}
++							CBackendRepresentativeMemoryCacheOntologyContext* ontCtx = data->getOntologyContext();
++							if (ontCtx) {
++								CMemoryPool* ontCtxPools = ontCtx->getMemoryPoolContainer()->getMemoryPools();
++								if (ontCtxPools) {
++									memMan->releaseTemporaryMemoryPools(ontCtxPools);
++								}
++								delete ontCtx;
++							}
++							CMemoryPool* tmpPools = data->getTemporaryContext()->getMemoryPoolContainer()->getMemoryPools();
++							if (tmpPools) {
++								memMan->releaseTemporaryMemoryPools(tmpPools);
++							}
++							KonPoolStats::gOntDataFreed.fetch_add(1, std::memory_order_relaxed);
++							KonPoolStats::gOntDataReaderReleased.fetch_add(1, std::memory_order_relaxed);
++							delete data;
++						}
++					}
++				}
++
++
+ 				CBackendRepresentativeMemoryCacheWriter* CBackendRepresentativeMemoryCache::createCacheWriter() {
+ 					CBackendRepresentativeMemoryCacheWriter* writer = new CBackendRepresentativeMemoryCacheWriter(this);
+ 					return writer;
+@@ -3836,6 +3966,10 @@ namespace Konclude {
+ 						CBackendRepresentativeMemoryCacheWriteData* dataLinkerIt = newWriteData;
+ 
+ 						cint64 ontologyIdentifier = dataLinkerIt->getOntologyIdentifier();
++						if (memoryPools) {
++							CMemoryPool*& adoptedPools = sAdoptedWritePools[ontologyIdentifier];
++							adoptedPools = memoryPools->append(adoptedPools);
++						}
+ 
+ 						CBackendRepresentativeMemoryCacheOntologyData* ontologyData = mOntologyIdentifierDataHash->value(ontologyIdentifier);
+ 						mLastHandledOntologyContext = ontologyData;
+diff --git a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.h b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.h
+index d637c566..a5a612f7 100644
+--- a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.h
++++ b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.h
+@@ -112,6 +112,9 @@ namespace Konclude {
+ 
+ 						CBackendRepresentativeMemoryCacheReader* createCacheReader();
+ 						CBackendRepresentativeMemoryCacheReader* createOntologyFixedCacheReader(cint64 ontologyIdentifier);
++						//! Thread-safe: a fixed reader gives its usage reference back (processed by drainFixedReaderReleases on the cache thread)
++						void queueFixedReaderRelease(CBackendRepresentativeMemoryCacheOntologyData* ontologyData);
++						void drainFixedReaderReleases();
+ 						CBackendRepresentativeMemoryCacheWriter* createCacheWriter();
+ 
+ 
+@@ -246,6 +249,8 @@ namespace Konclude {
+ 						CCACHINGHASH<cint64, CBackendRepresentativeMemoryCacheOntologyData*>* mOntologyIdentifierDataHash;
+ 						QHash<cint64, CBackendRepresentativeMemoryCacheOntologyData*> mFixedOntologyIdentifierDataHash;
+ 						QReadWriteLock mFixedOntologyIdentifierDataHashLock;
++						QMutex mPendingFixedReleasesMutex;
++						QList<CBackendRepresentativeMemoryCacheOntologyData*> mPendingFixedReleases;
+ 
+ 
+ 						//CCACHINGHASH<cint64,CBackendRepresentativeMemoryLabelSignatureResolveCacheItem>* mSigLabelItemHash[CBackendRepresentativeMemoryLabelCacheItem::LABEL_CACHE_ITEM_TYPE_COUNT];
+diff --git a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCacheReader.cpp b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCacheReader.cpp
+index fadd0652..4b800244 100644
+--- a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCacheReader.cpp
++++ b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCacheReader.cpp
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include "CBackendRepresentativeMemoryCacheReader.h"
++#include "CBackendRepresentativeMemoryCache.h"
+ 
+ 
+ namespace Konclude {
+@@ -75,6 +76,22 @@ namespace Konclude {
+ 				}
+ 
+ 
++				CBackendRepresentativeMemoryCacheReader* CBackendRepresentativeMemoryCacheReader::setFixedReleaseCache(void* cache) {
++					mFixedReleaseCache = cache;
++					return this;
++				}
++
++
++				void CBackendRepresentativeMemoryCacheReader::releaseFixedOntologyData() {
++					if (mFixedOntologyData && mFixedReleaseCache) {
++						static_cast<CBackendRepresentativeMemoryCache*>(mFixedReleaseCache)->queueFixedReaderRelease(mFixedOntologyData);
++					}
++					mFixedOntologyData = nullptr;
++					mOntologyData = nullptr;
++					mFixedReleaseCache = nullptr;
++				}
++
++
+ 				bool CBackendRepresentativeMemoryCacheReader::hasUpdatedSlotItem() {
+                     return mUpdatedSlot.fetchAndAddRelaxed(0) != nullptr;
+ 				}
+diff --git a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCacheReader.h b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCacheReader.h
+index 9d88f50c..536321a3 100644
+--- a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCacheReader.h
++++ b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCacheReader.h
+@@ -86,6 +86,10 @@ namespace Konclude {
+ 
+ 						CBackendRepresentativeMemoryCacheReader* updateSlot(CBackendRepresentativeMemoryCacheSlotItem* updatedSlot);
+ 						CBackendRepresentativeMemoryCacheReader* fixOntologyData(CBackendRepresentativeMemoryCacheOntologyData* ontologyData);
++						//! Remember the cache that owns the fixed data's extra usage reference (set by createOntologyFixedCacheReader)
++						CBackendRepresentativeMemoryCacheReader* setFixedReleaseCache(void* cache);
++						//! Hand the fixed data's usage reference back to the cache (queued, executed on the cache thread)
++						void releaseFixedOntologyData();
+ 						CBackendRepresentativeMemoryCacheReader* checkRecomputationIdUsage(cint64 recomputationId);
+ 
+ 
+@@ -216,6 +220,7 @@ namespace Konclude {
+ 						cint64 mRecomputationId;
+ 						CBackendRepresentativeMemoryCacheOntologyData* mOntologyData;
+ 						CBackendRepresentativeMemoryCacheOntologyData* mFixedOntologyData;
++						void* mFixedReleaseCache = nullptr;
+ 
+ 
+ 					// private methods
+diff --git a/Source/Reasoner/Kernel/Process/CIndividualNodeRepresentativeMemoryBackendCacheSynchronisationData.cpp b/Source/Reasoner/Kernel/Process/CIndividualNodeRepresentativeMemoryBackendCacheSynchronisationData.cpp
+index 97934886..2d11d668 100644
+--- a/Source/Reasoner/Kernel/Process/CIndividualNodeRepresentativeMemoryBackendCacheSynchronisationData.cpp
++++ b/Source/Reasoner/Kernel/Process/CIndividualNodeRepresentativeMemoryBackendCacheSynchronisationData.cpp
+@@ -80,26 +80,26 @@ namespace Konclude {
+ 						mBackendConceptSetInitializationRequired = synchData->mBackendConceptSetInitializationRequired;
+ 						mBackendConceptSetInitializationDelayingRegistered = synchData->mBackendConceptSetInitializationDelayingRegistered;
+ 						if (synchData->mRoleNeighbourExpansionDataHash) {
+-							getRoleNeighbourExpansionDataHash()->init(synchData->mRoleNeighbourExpansionDataHash);
++							getRoleNeighbourExpansionDataHash()->init(synchData->mRoleNeighbourExpansionDataHash, mContext);
+ 						}
+ 						if (synchData->mNeighbourExpansionDataHash) {
+-							getNeighbourExpansionDataHash()->init(synchData->mNeighbourExpansionDataHash);
++							getNeighbourExpansionDataHash()->init(synchData->mNeighbourExpansionDataHash, mContext);
+ 						}
+ 						if (synchData->mNeighbourLabelExpansionDataHashArray) {
+ 							cint64 arraySize = mAssociationData->getRoleSetNeighbourArray()->getIndexData()->getArraySize();
+ 							for (cint64 i = 0; i < arraySize; ++i) {
+ 								CPROCESSHASH< CBackendRepresentativeMemoryLabelCacheItem*, CIndividualNodeRepresentativeMemoryBackendCacheSynchronisationLabelNeighbourExpansionData >* hash = synchData->mNeighbourLabelExpansionDataHashArray[i];
+-								getNeighbourLabelExpansionDataHash(i, true)->init(hash);
++								getNeighbourLabelExpansionDataHash(i, true)->init(hash, mContext);
+ 							}
+ 						}
+ 						if (synchData->mIntegratedMergedIndividualIdSet) {
+-							getIntegratedMergedIndividualIdSet()->init(synchData->mIntegratedMergedIndividualIdSet);
++							getIntegratedMergedIndividualIdSet()->init(synchData->mIntegratedMergedIndividualIdSet, mContext);
+ 						}
+ 						if (synchData->mRemainingIndirectCompatibilityMergedIndividualCheckingSet) {
+-							getRemainingIndirectCompatibilityMergedIndividualCheckingSet()->init(synchData->mRemainingIndirectCompatibilityMergedIndividualCheckingSet);
++							getRemainingIndirectCompatibilityMergedIndividualCheckingSet()->init(synchData->mRemainingIndirectCompatibilityMergedIndividualCheckingSet, mContext);
+ 						}
+ 						if (synchData->mRoleRepNeighbourCountHash) {
+-							getRoleRepresentativeNeighbourCountHash(true)->init(synchData->mRoleRepNeighbourCountHash);
++							getRoleRepresentativeNeighbourCountHash(true)->init(synchData->mRoleRepNeighbourCountHash, mContext);
+ 						}
+ 						mMergedIndividualsAllNeighbourExpanded = synchData->mMergedIndividualsAllNeighbourExpanded;
+ 						mAllNeighbourExpansion = synchData->mAllNeighbourExpansion;
+diff --git a/Source/Reasoner/Kernel/Process/CLinkedRoleSaturationSuccessorHash.cpp b/Source/Reasoner/Kernel/Process/CLinkedRoleSaturationSuccessorHash.cpp
+index 197cb33d..541a9b58 100644
+--- a/Source/Reasoner/Kernel/Process/CLinkedRoleSaturationSuccessorHash.cpp
++++ b/Source/Reasoner/Kernel/Process/CLinkedRoleSaturationSuccessorHash.cpp
+@@ -90,6 +90,7 @@ namespace Konclude {
+ 
+ 
+ 				CSaturationSuccessorData*& CLinkedRoleSaturationSuccessorHash::getLinkedRoleSuccessorData(CLinkedRoleSaturationSuccessorData*& roleSuccData, cint64 linkedIndiID, bool forceNewCreation) {
++					roleSuccData->mSuccNodeDataMap.rebindContext(mContext);
+ 					CSaturationSuccessorData*& succData = roleSuccData->mSuccNodeDataMap[linkedIndiID];
+ 					if (!succData || forceNewCreation) {
+ 						CSaturationSuccessorData* prevSuccData = succData;
+@@ -292,7 +293,7 @@ namespace Konclude {
+ 				CLinkedRoleSaturationSuccessorData*& CLinkedRoleSaturationSuccessorHash::getLinkedRoleSuccessorData(CRole* role, bool create) {
+ 					CLinkedRoleSaturationSuccessorData*& roleSuccData = mRoleSuccDataHash[role];
+ 					if (!roleSuccData) {
+-						roleSuccData = CObjectAllocator<CLinkedRoleSaturationSuccessorData>::allocateAndConstruct(mContext->getUsedMemoryAllocationManager());
++						roleSuccData = CObjectParameterizingAllocator<CLinkedRoleSaturationSuccessorData, CProcessContext*>::allocateAndConstructAndParameterize(mContext->getUsedMemoryAllocationManager(), mContext);
+ 					}
+ 					return roleSuccData;
+ 				}
+diff --git a/Source/Reasoner/Kernel/Task/CConsistenceTaskData.cpp b/Source/Reasoner/Kernel/Task/CConsistenceTaskData.cpp
+index 50324852..58260240 100644
+--- a/Source/Reasoner/Kernel/Task/CConsistenceTaskData.cpp
++++ b/Source/Reasoner/Kernel/Task/CConsistenceTaskData.cpp
+@@ -21,6 +21,10 @@
+ #include "CConsistenceTaskData.h"
+ 
+ 
++#include <algorithm>
++#include <vector>
++#include "Utilities/Memory/CNewAllocationMemoryPoolProvider.h"
++
+ namespace Konclude {
+ 
+ 	namespace Reasoner {
+@@ -29,6 +33,22 @@ namespace Konclude {
+ 
+ 			namespace Task {
+ 
++				// Release the pools of an overtaken task chain. Tasks live inside their own pools,
++				// so first collect all pool chains, then free them.
++				static void releaseTaskChainPools(const std::vector<CSatisfiableCalculationTask*>& tasks) {
++					std::vector<CMemoryPool*> pools;
++					for (CSatisfiableCalculationTask* task : tasks) {
++						CMemoryPool* pool = task->getMemoryPools();
++						if (pool && std::find(pools.begin(), pools.end(), pool) == pools.end()) {
++							pools.push_back(pool);
++						}
++					}
++					CNewAllocationMemoryPoolProvider tmpProv;
++					for (CMemoryPool* pool : pools) {
++						tmpProv.releaseMemoryPool(pool);
++					}
++				}
++
+ 				CConsistenceTaskData::CConsistenceTaskData(CSatisfiableCalculationTask* detSatTask, CSatisfiableCalculationTask* graphCachedSatTask) {
+ 					mDetSatTask = detSatTask;
+ 					mGraphCachedSatTask = graphCachedSatTask;
+@@ -36,6 +56,18 @@ namespace Konclude {
+ 
+ 
+ 				CConsistenceTaskData::~CConsistenceTaskData() {
++					if (mOvertaken) {
++						std::vector<CSatisfiableCalculationTask*> tasks;
++						if (mDetSatTask) {
++							tasks.push_back(mDetSatTask);
++						}
++						for (CSatisfiableCalculationTask* taskIt = mGraphCachedSatTask; taskIt; taskIt = (CSatisfiableCalculationTask*)taskIt->getParentTask()) {
++							tasks.push_back(taskIt);
++						}
++						mDetSatTask = nullptr;
++						mGraphCachedSatTask = nullptr;
++						releaseTaskChainPools(tasks);
++					}
+ 				}
+ 
+ 				CSatisfiableCalculationTask* CConsistenceTaskData::getDeterministicSatisfiableTask() {
+@@ -47,6 +79,7 @@ namespace Konclude {
+ 				}
+ 
+ 				bool CConsistenceTaskData::overtakeData() {
++					mOvertaken = true;
+ 					if (mDetSatTask) {
+ 						mDetSatTask->getTaskStatus()->setMemoryReleaseable(false);
+ 					}
+diff --git a/Source/Reasoner/Kernel/Task/CConsistenceTaskData.h b/Source/Reasoner/Kernel/Task/CConsistenceTaskData.h
+index f728c981..54f335b4 100644
+--- a/Source/Reasoner/Kernel/Task/CConsistenceTaskData.h
++++ b/Source/Reasoner/Kernel/Task/CConsistenceTaskData.h
+@@ -77,6 +77,7 @@ namespace Konclude {
+ 					protected:
+ 						CSatisfiableCalculationTask* mDetSatTask;
+ 						CSatisfiableCalculationTask* mGraphCachedSatTask;
++						bool mOvertaken = false;
+ 
+ 
+ 					// private methods
+diff --git a/Source/Reasoner/Kernel/Task/CSaturationTaskData.cpp b/Source/Reasoner/Kernel/Task/CSaturationTaskData.cpp
+index fcb96332..7b07d25e 100644
+--- a/Source/Reasoner/Kernel/Task/CSaturationTaskData.cpp
++++ b/Source/Reasoner/Kernel/Task/CSaturationTaskData.cpp
+@@ -21,6 +21,10 @@
+ #include "CSaturationTaskData.h"
+ 
+ 
++#include <algorithm>
++#include <vector>
++#include "Utilities/Memory/CNewAllocationMemoryPoolProvider.h"
++
+ namespace Konclude {
+ 
+ 	namespace Reasoner {
+@@ -29,12 +33,36 @@ namespace Konclude {
+ 
+ 			namespace Task {
+ 
++				// Release the pools of an overtaken task chain. Tasks live inside their own pools,
++				// so first collect all pool chains, then free them.
++				static void releaseTaskChainPools(const std::vector<CSatisfiableCalculationTask*>& tasks) {
++					std::vector<CMemoryPool*> pools;
++					for (CSatisfiableCalculationTask* task : tasks) {
++						CMemoryPool* pool = task->getMemoryPools();
++						if (pool && std::find(pools.begin(), pools.end(), pool) == pools.end()) {
++							pools.push_back(pool);
++						}
++					}
++					CNewAllocationMemoryPoolProvider tmpProv;
++					for (CMemoryPool* pool : pools) {
++						tmpProv.releaseMemoryPool(pool);
++					}
++				}
++
+ 				CSaturationTaskData::CSaturationTaskData(CSatisfiableCalculationTask* saturationTask) {
+ 					mSaturationTask = saturationTask;
+ 				}
+ 
+ 
+ 				CSaturationTaskData::~CSaturationTaskData() {
++					if (mOvertaken) {
++						std::vector<CSatisfiableCalculationTask*> tasks;
++						for (CSatisfiableCalculationTask* taskIt = mSaturationTask; taskIt; taskIt = (CSatisfiableCalculationTask*)taskIt->getParentTask()) {
++							tasks.push_back(taskIt);
++						}
++						mSaturationTask = nullptr;
++						releaseTaskChainPools(tasks);
++					}
+ 				}
+ 
+ 				CSatisfiableCalculationTask* CSaturationTaskData::getSaturationTask() {
+@@ -43,6 +71,7 @@ namespace Konclude {
+ 
+ 
+ 				bool CSaturationTaskData::overtakeData() {
++					mOvertaken = true;
+ 					if (mSaturationTask) {
+ 						mSaturationTask->getTaskStatus()->setMemoryReleaseable(false);
+ 					}
+diff --git a/Source/Reasoner/Kernel/Task/CSaturationTaskData.h b/Source/Reasoner/Kernel/Task/CSaturationTaskData.h
+index c88ec525..cdf98ece 100644
+--- a/Source/Reasoner/Kernel/Task/CSaturationTaskData.h
++++ b/Source/Reasoner/Kernel/Task/CSaturationTaskData.h
+@@ -73,6 +73,7 @@ namespace Konclude {
+ 					// protected variables
+ 					protected:
+ 						CSatisfiableCalculationTask* mSaturationTask;
++						bool mOvertaken = false;
+ 
+ 
+ 					// private methods
+diff --git a/Source/Reasoner/Ontology/CIndividualNameResolver.h b/Source/Reasoner/Ontology/CIndividualNameResolver.h
+index 64eaa777..4dc3cd23 100644
+--- a/Source/Reasoner/Ontology/CIndividualNameResolver.h
++++ b/Source/Reasoner/Ontology/CIndividualNameResolver.h
+@@ -54,6 +54,9 @@ namespace Konclude {
+ 					//! Constructor
+ 					CIndividualNameResolver();
+ 
++					//! Virtual: deleted through this base class
++					virtual ~CIndividualNameResolver() {}
++
+ 					virtual QString getIndividualName(const CIndividualReference& indiRef, bool abbreviated = false) const = 0;
+ 					virtual bool isAnonymous(const CIndividualReference& indiRef) const = 0;
+ 
+diff --git a/Source/Reasoner/Ontology/COntologyProcessingRequirement.h b/Source/Reasoner/Ontology/COntologyProcessingRequirement.h
+index dc87026c..9cb6b14b 100644
+--- a/Source/Reasoner/Ontology/COntologyProcessingRequirement.h
++++ b/Source/Reasoner/Ontology/COntologyProcessingRequirement.h
+@@ -55,6 +55,9 @@ namespace Konclude {
+ 					//! Constructor
+ 					COntologyProcessingRequirement();
+ 
++					//! Virtual: deleted through this base class
++					virtual ~COntologyProcessingRequirement() {}
++
+ 					virtual bool isRequirementSatisfied(COntology* ontology) = 0;
+ 
+ 					virtual COntologyProcessingRequirement* submitRequirementUpdate(cint64 processingFlags, cint64 errorFlags) = 0;
+diff --git a/Source/Reasoner/Preprocess/COntologyPreprocessingItem.h b/Source/Reasoner/Preprocess/COntologyPreprocessingItem.h
+index 7ac65d30..1495c109 100644
+--- a/Source/Reasoner/Preprocess/COntologyPreprocessingItem.h
++++ b/Source/Reasoner/Preprocess/COntologyPreprocessingItem.h
+@@ -68,6 +68,9 @@ namespace Konclude {
+ 					//! Constructor
+ 					COntologyPreprocessingItem();
+ 
++					//! Virtual: deleted through this base class
++					virtual ~COntologyPreprocessingItem() {}
++
+ 					COntologyPreprocessingItem* initPreprocessingItem(CConcreteOntology* ontology, CConfigurationBase* config);
+ 
+ 					virtual COntologyPreprocessingItem* addProcessingRequirement(COntologyProcessingRequirement* ontoRequirement);
+diff --git a/Source/Reasoner/Realizer/COntologyRealizingItem.h b/Source/Reasoner/Realizer/COntologyRealizingItem.h
+index 7228a083..b01d6fbf 100644
+--- a/Source/Reasoner/Realizer/COntologyRealizingItem.h
++++ b/Source/Reasoner/Realizer/COntologyRealizingItem.h
+@@ -30,6 +30,8 @@
+ 
+ // Other includes
+ #include "Reasoner/Ontology/CConcreteOntology.h"
++#include "Reasoner/Query/CSatisfiableCalculationJob.h"
++#include <vector>
+ #include "Reasoner/Ontology/COntologyProcessingRequirement.h"
+ 
+ 
+@@ -69,6 +71,25 @@ namespace Konclude {
+ 					//! Constructor
+ 					COntologyRealizingItem();
+ 
++					//! Virtual: items are deleted through this base class
++					virtual ~COntologyRealizingItem() {
++						for (Konclude::Reasoner::Query::CSatisfiableCalculationJob* job : mCompletedCalculationJobs) {
++							delete job;
++						}
++					}
++
++					//! Takes over a finished calculation job; deleted together with this item
++					void addCompletedCalculationJob(Konclude::Reasoner::Query::CSatisfiableCalculationJob* job) {
++						if (job) {
++							mCompletedCalculationJobs.push_back(job);
++						}
++					}
++
++				protected:
++					std::vector<Konclude::Reasoner::Query::CSatisfiableCalculationJob*> mCompletedCalculationJobs;
++
++				public:
++
+ 					COntologyRealizingItem* initRealizingItem(CConcreteOntology* ontology, CConfigurationBase* config);
+ 
+ 					virtual COntologyRealizingItem* addProcessingRequirement(COntologyProcessingRequirement* ontoRequirement, COntologyRealizingDynamicRequirmentProcessingData* procData);
+diff --git a/Source/Reasoner/Realizer/COptimizedKPSetIndividualComplexRoleData.h b/Source/Reasoner/Realizer/COptimizedKPSetIndividualComplexRoleData.h
+index 333d86ad..5f2523a3 100644
+--- a/Source/Reasoner/Realizer/COptimizedKPSetIndividualComplexRoleData.h
++++ b/Source/Reasoner/Realizer/COptimizedKPSetIndividualComplexRoleData.h
+@@ -56,6 +56,9 @@ namespace Konclude {
+ 					//! Constructor
+ 					COptimizedKPSetIndividualComplexRoleData();
+ 
++					//! Virtual: values are deleted through this base class
++					virtual ~COptimizedKPSetIndividualComplexRoleData() {}
++
+ 					bool isInitialized(bool inversed);
+ 					COptimizedKPSetIndividualComplexRoleData* setInitialized(bool inversed, bool initialized);
+ 
+diff --git a/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingItem.cpp b/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingItem.cpp
+index 4fa2fa0a..04c2c0e5 100644
+--- a/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingItem.cpp
++++ b/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingItem.cpp
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include "COptimizedRepresentativeKPSetOntologyRealizingItem.h"
++#include "KonPoolStats.h"
+ 
+ 
+ namespace Konclude {
+@@ -58,6 +59,12 @@ namespace Konclude {
+ 				for (auto* v : mRepresentativeCacheCombinedExistentialRoleSetLabelItemDataHash) { delete v; }
+ 				for (auto* v : mDataRoleDetCacheLabelItemSetHash) { delete v; }
+ 				for (auto* v : mDataRoleNonDetCacheLabelItemSetHash) { delete v; }
++				KonPoolStats::gRealItemsDestroyed.fetch_add(1, std::memory_order_relaxed);
++				if (mBackendAssocCacheReader) {
++					mBackendAssocCacheReader->releaseFixedOntologyData();
++					delete mBackendAssocCacheReader;
++					mBackendAssocCacheReader = nullptr;
++				}
+ 
+ 			}
+ 
+diff --git a/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp b/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp
+index 0ce99cd7..9a745f17 100644
+--- a/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp
++++ b/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include "COptimizedRepresentativeKPSetOntologyRealizingThread.h"
++#include "KonPoolStats.h"
+ 
+ 
+ namespace Konclude {
+@@ -52,6 +53,7 @@ namespace Konclude {
+ 				}
+ 
+ 				COptimizedRepresentativeKPSetOntologyRealizingItem* item = new COptimizedRepresentativeKPSetOntologyRealizingItem();
++				KonPoolStats::gRealItemsCreated.fetch_add(1, std::memory_order_relaxed);
+ 				item->initRequirementConfigRealizingItem(ontology,config, backendAssocCacheReader);
+ 
+ 				if (mTestedPossibleInstancesCount == mOpenPossibleInstancesCount) {
+diff --git a/Source/Reasoner/Realizer/CRealizerThread.cpp b/Source/Reasoner/Realizer/CRealizerThread.cpp
+index 98450852..57b66bd8 100644
+--- a/Source/Reasoner/Realizer/CRealizerThread.cpp
++++ b/Source/Reasoner/Realizer/CRealizerThread.cpp
+@@ -44,6 +44,20 @@ namespace Konclude {
+ 			}
+ 
+ 
++			CRealizerThread* CRealizerThread::releaseOntologyItems() {
++				QSet<COntologyRealizingItem*> items = mActiveOntItemSet;
++				items.unite(mInactiveOntItemSet);
++				mActiveOntItemSet.clear();
++				mInactiveOntItemSet.clear();
++				mProcessingOntItemList.clear();
++				mOntItemHash.clear();
++				for (COntologyRealizingItem* item : items) {
++					delete item;
++				}
++				return this;
++			}
++
++
+ 			bool CRealizerThread::realize(CConcreteOntology* ontology, CConfigurationBase* config, const QList<COntologyProcessingRequirement*>& requirementList, CCallbackData* callback) {
+ 				postEvent(new CRealizeOntologyEvent(ontology,config,requirementList,callback));
+ 				return true;
+@@ -239,6 +253,7 @@ namespace Konclude {
+ 					COntologyRealizingItem* ontPreproItem = testingItem->getOntologyRealizingItem();
+ 
+ 					ontPreproItem->getRealizingTestingItemSet()->remove(testingItem);
++					ontPreproItem->addCompletedCalculationJob(pcce->getSatisfiableCalculationJob());
+ 					realizingTested(ontPreproItem,testingItem,pcce);
+ 					doNextPendingTests();
+ 
+diff --git a/Source/Reasoner/Realizer/CRealizerThread.h b/Source/Reasoner/Realizer/CRealizerThread.h
+index 10227216..01597ef3 100644
+--- a/Source/Reasoner/Realizer/CRealizerThread.h
++++ b/Source/Reasoner/Realizer/CRealizerThread.h
+@@ -89,6 +89,9 @@ namespace Konclude {
+ 
+ 					virtual bool realize(CConcreteOntology* ontology, CConfigurationBase* config, const QList<COntologyProcessingRequirement*>& requirementList, CCallbackData* callback);
+ 					virtual bool realize(CConcreteOntology* ontology, CConfigurationBase* config, const QList<COntologyProcessingRequirement*>& requirementList);
++					//! Delete all realizing items of this (stopped) thread; the thread object stays valid
++					virtual CRealizerThread* releaseOntologyItems();
++
+ 					virtual bool callbackRealized(CConcreteOntology* ontology, CCallbackData* callback);
+ 
+ 					virtual CRealizationMessageObserver* tellRealizationMessage(CConcreteOntology *ontology, CRealizationMessageData* messageData, CMemoryPool* memoryPool);
+diff --git a/Source/Scheduler/CSingleThreadTaskProcessorUnit.cpp b/Source/Scheduler/CSingleThreadTaskProcessorUnit.cpp
+index efc88833..844a16ab 100644
+--- a/Source/Scheduler/CSingleThreadTaskProcessorUnit.cpp
++++ b/Source/Scheduler/CSingleThreadTaskProcessorUnit.cpp
+@@ -36,7 +36,7 @@ namespace Konclude {
+ 			if (!mMemoryPoolProvider) {
+ 				mMemoryPoolProvider = new CNewAllocationMemoryPoolProvider();
+ 			}
+-			mMemoryAllocator = new CTaskHandleLimitedReserveMemoryPoolAllocationManager(mMemoryPoolProvider,30000,30);
++			mMemoryAllocator = new CTaskHandleLimitedReserveMemoryPoolAllocationManager(mMemoryPoolProvider,1024,30);
+ 			mTaskProcessorContext = new CTaskProcessorContextBase(this,mMemoryAllocator);
+ 			mTaskHandleAlgo = taskHandleAlgo;
+ 			mProcessingBlocked = true;
+diff --git a/Source/Scheduler/CTaskProcessorCompletorThread.cpp b/Source/Scheduler/CTaskProcessorCompletorThread.cpp
+index 17fd5c52..9436437e 100644
+--- a/Source/Scheduler/CTaskProcessorCompletorThread.cpp
++++ b/Source/Scheduler/CTaskProcessorCompletorThread.cpp
+@@ -34,7 +34,7 @@ namespace Konclude {
+ 				//mMemoryPoolProvider = CConcreteMemoryPoolDistributor::createDistributionMemoryPoolProvider(mMemoryPoolReleaser);
+ 				mMemoryPoolProvider = new CNewAllocationMemoryPoolProvider();
+ 			}
+-			mMemoryAllocator = new CTaskHandleLimitedReserveMemoryPoolAllocationManager(mMemoryPoolProvider,80000,30);
++			mMemoryAllocator = new CTaskHandleLimitedReserveMemoryPoolAllocationManager(mMemoryPoolProvider,1024,30);
+ 			mTaskProcessorContext = new CTaskProcessorContextBase(this,mMemoryAllocator);
+ 
+ 			mSchedulerCommunicator = nullptr;
+diff --git a/Source/Scheduler/CTaskProcessorSchedulerThread.cpp b/Source/Scheduler/CTaskProcessorSchedulerThread.cpp
+index 4bab2d92..e15dfb76 100644
+--- a/Source/Scheduler/CTaskProcessorSchedulerThread.cpp
++++ b/Source/Scheduler/CTaskProcessorSchedulerThread.cpp
+@@ -35,7 +35,7 @@ namespace Konclude {
+ 				//mMemoryPoolProvider = distributorCompletor->createDistributionMemoryPoolProvider(mMemoryPoolReleaser);
+ 				mMemoryPoolProvider = new CNewAllocationMemoryPoolProvider();
+ 			}
+-			mMemoryAllocator = new CTaskHandleLimitedReserveMemoryPoolAllocationManager(mMemoryPoolProvider,80000,30);
++			mMemoryAllocator = new CTaskHandleLimitedReserveMemoryPoolAllocationManager(mMemoryPoolProvider,1024,30);
+ 			mTaskProcessorContext = new CTaskProcessorContextBase(this,mMemoryAllocator);
+ 
+ 
+diff --git a/Source/Scheduler/CTaskProcessorThread.cpp b/Source/Scheduler/CTaskProcessorThread.cpp
+index 17613617..426f5081 100644
+--- a/Source/Scheduler/CTaskProcessorThread.cpp
++++ b/Source/Scheduler/CTaskProcessorThread.cpp
+@@ -35,7 +35,7 @@ namespace Konclude {
+ 				//mMemoryPoolProvider = distributorCompletor->createDistributionMemoryPoolProvider(mMemoryPoolReleaser);
+ 				mMemoryPoolProvider = new CNewAllocationMemoryPoolProvider();
+ 			}
+-			mMemoryAllocator = new CTaskHandleLimitedReserveMemoryPoolAllocationManager(mMemoryPoolProvider,80000,30);
++			mMemoryAllocator = new CTaskHandleLimitedReserveMemoryPoolAllocationManager(mMemoryPoolProvider,1024,30);
+ 			mTaskProcessorContext = new CTaskProcessorContextBase(this,mMemoryAllocator);
+ 
+ 			mDispenseNotificationTag = 0;
+diff --git a/Source/Scheduler/CTaskProcessorThreadBase.cpp b/Source/Scheduler/CTaskProcessorThreadBase.cpp
+index 488e2913..dc5ecc2e 100644
+--- a/Source/Scheduler/CTaskProcessorThreadBase.cpp
++++ b/Source/Scheduler/CTaskProcessorThreadBase.cpp
+@@ -20,6 +20,8 @@
+ 
+ #include "KonStall.h"
+ #include "CTaskProcessorThreadBase.h"
++#include "KonPoolStats.h"
++#include "Utilities/Memory/CMemoryPoolAllocationManager.h"
+ 
+ 
+ namespace Konclude {
+@@ -226,6 +228,12 @@ namespace Konclude {
+ 					mLastProcessingStartedTag = mLastProcessingStartRequestTag;
+ 				}
+ 				mProcessingBlocked = false;
++				if (mSeenPoolFlushGen != KonPoolStats::gFlushGen.load(std::memory_order_acquire)) {
++					mSeenPoolFlushGen = KonPoolStats::gFlushGen.load(std::memory_order_acquire);
++					if (CMemoryPoolAllocationManager* poolMan = dynamic_cast<CMemoryPoolAllocationManager*>(mMemoryAllocator)) {
++						poolMan->flushFreePools();
++					}
++				}
+ 				eventSafeguardProcessed = false;
+ 				while (mEventSignalized) {
+ 					bool eventsProcessed = handleEvents();
+diff --git a/Source/Scheduler/CTaskProcessorThreadBase.h b/Source/Scheduler/CTaskProcessorThreadBase.h
+index 80c1bbd4..f8860453 100644
+--- a/Source/Scheduler/CTaskProcessorThreadBase.h
++++ b/Source/Scheduler/CTaskProcessorThreadBase.h
+@@ -157,6 +157,7 @@ namespace Konclude {
+ 				CTask* mTaskCompletionQueue;
+ 				CTaskProcessorContext *mTaskProcessorContext;
+ 				CTaskHandleMemoryAllocationManager *mMemoryAllocator;
++				long long mSeenPoolFlushGen = 0;
+ 				CTaskHandleAlgorithm* mTaskHandleAlgo;
+ 				CTaskStatusPropagator* mTaskStatusPropagator;
+ 				CTaskCallbackExecuter* mCallbackExecuter;
+diff --git a/Source/Scheduler/CTaskStatus.cpp b/Source/Scheduler/CTaskStatus.cpp
+index c9292ffb..ffa59c55 100644
+--- a/Source/Scheduler/CTaskStatus.cpp
++++ b/Source/Scheduler/CTaskStatus.cpp
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include "CTaskStatus.h"
++#include "KonPoolStats.h"
+ 
+ 
+ namespace Konclude {
+@@ -32,6 +33,7 @@ namespace Konclude {
+ 			mCanceledFlag = false;
+ 			mFinishedFlag = false;
+ 			mReleaseable = true;
++			KonPoolStats::gTasksCreated.fetch_add(1, std::memory_order_relaxed);
+ 			mErrorFlag = false;
+ 			mErrorCode = 0;
+ 		}
+@@ -119,6 +121,8 @@ namespace Konclude {
+ 
+ 		CTaskStatus* CTaskStatus::setTaskCOMPLETEDState() {
+ 			mTaskState = TSCOMPLETED;
++			KonPoolStats::gTasksCompleted.fetch_add(1, std::memory_order_relaxed);
++			if (!mReleaseable) KonPoolStats::gTasksKept.fetch_add(1, std::memory_order_relaxed);
+ 			return this;
+ 		}
+ 
+diff --git a/Source/Utilities/Container/CQtManagedRestrictedModificationMap.h b/Source/Utilities/Container/CQtManagedRestrictedModificationMap.h
+index 606adf5b..6b8f55e7 100644
+--- a/Source/Utilities/Container/CQtManagedRestrictedModificationMap.h
++++ b/Source/Utilities/Container/CQtManagedRestrictedModificationMap.h
+@@ -216,6 +216,12 @@ namespace Konclude {
+ 					CQtManagedRestrictedModificationMap<Key, T> &operator=(const CQtManagedRestrictedModificationMap<Key, T> &other);
+ 
+ 					CQtManagedRestrictedModificationMap<Key, T>* init(CContext* context = nullptr);
++					//! Allocate all further nodes/buckets from the given context's memory manager (existing ones keep their allocator)
++					inline void rebindContext(CContext* context) {
++						mContext = context;
++						mMemMan = CContext::getMemoryAllocationManager(mContext);
++					}
++
+ 					CQtManagedRestrictedModificationMap<Key, T>* init(const CQtManagedRestrictedModificationMap<Key, T> &other, CContext* context = nullptr);
+ 					CQtManagedRestrictedModificationMap<Key, T>* init(const CQtManagedRestrictedModificationMap<Key, T>* other, CContext* context = nullptr);
+ 
+diff --git a/Source/Utilities/Memory/CMemoryPoolAllocationManager.cpp b/Source/Utilities/Memory/CMemoryPoolAllocationManager.cpp
+index 89055845..6e0d3034 100644
+--- a/Source/Utilities/Memory/CMemoryPoolAllocationManager.cpp
++++ b/Source/Utilities/Memory/CMemoryPoolAllocationManager.cpp
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include "CMemoryPoolAllocationManager.h"
++#include "KonPoolStats.h"
+ 
+ 
+ namespace Konclude {
+@@ -183,6 +184,18 @@ namespace Konclude {
+ 
+ 
+ 
++			CMemoryTemporaryAllocationManager* CMemoryPoolAllocationManager::flushFreePools() {
++				while (mFreeMemoryPoolList) {
++					CMemoryPool* tmpMemPool = mFreeMemoryPoolList;
++					mFreeMemoryPoolList = mFreeMemoryPoolList->getNextMemoryPool();
++					tmpMemPool->clearNext();
++					mMemoryPoolProvider->releaseMemoryPool(tmpMemPool);
++				}
++				mFreeMemoryPoolCount = 0;
++				return this;
++			}
++
++
+ 			CMemoryPool* CMemoryPoolAllocationManager::acqireTemporaryMemoryPool(size_t size) {
+ 				CMemoryPool* tmpMemoryPool = nullptr;
+ 				if (mFreeMemoryPoolList) {
+@@ -236,6 +249,7 @@ namespace Konclude {
+ 
+ 			CMemoryTemporaryAllocationManager* CMemoryPoolAllocationManager::releaseMemoryPoolContainer(CMemoryPoolContainer* memoryPoolContainer) {
+ 				CMemoryPool* memoryPoolLinker = memoryPoolContainer->takeMemoryPools();
++				KonPoolStats::gContainersReleased.fetch_add(1, std::memory_order_relaxed);
+ 				return releaseTemporaryMemoryPools(memoryPoolLinker);
+ 			}
+ 
+diff --git a/Source/Utilities/Memory/CMemoryPoolAllocationManager.h b/Source/Utilities/Memory/CMemoryPoolAllocationManager.h
+index 5cfc8d98..23a902b4 100644
+--- a/Source/Utilities/Memory/CMemoryPoolAllocationManager.h
++++ b/Source/Utilities/Memory/CMemoryPoolAllocationManager.h
+@@ -67,6 +67,9 @@ namespace Konclude {
+ 
+ 					virtual CMemoryTemporaryAllocationManager* releaseAllMemory();
+ 
++					//! Return all pools of the free list to the provider (owner thread only)
++					CMemoryTemporaryAllocationManager* flushFreePools();
++
+ 					virtual CMemoryPool* acqireTemporaryMemoryPool(size_t size);
+ 					virtual CMemoryTemporaryAllocationManager* releaseTemporaryMemoryPool(CMemoryPool* memoryPool);
+ 
+diff --git a/Source/Utilities/Memory/CNewAllocationMemoryPoolProvider.cpp b/Source/Utilities/Memory/CNewAllocationMemoryPoolProvider.cpp
+index bb45e3d4..36f77a5c 100644
+--- a/Source/Utilities/Memory/CNewAllocationMemoryPoolProvider.cpp
++++ b/Source/Utilities/Memory/CNewAllocationMemoryPoolProvider.cpp
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include "CNewAllocationMemoryPoolProvider.h"
++#include "KonPoolStats.h"
+ 
+ 
+ namespace Konclude {
+@@ -59,6 +60,7 @@ namespace Konclude {
+ 					LOG(CATASTROPHIC,"::Konclude::Utilities::NewAllocationMemoryPoolProvider",logTr("Memory allocation failed."),this);
+ 				}
+ 				mStatAllocatedPoolSize += memoryBlockSize;
++				KonPoolStats::poolAlloc(memoryBlockSize, memoryPool);
+ 				mStatDiffPoolSize += memoryBlockSize;
+ 				++mStatAllocatedPoolCount;
+ 				++mStatDiffPoolCount;
+@@ -72,6 +74,7 @@ namespace Konclude {
+ 					CMemoryPool* tmpMemoryPool = memoryPool;
+ 					memoryPool = memoryPool->getNext();
+ 					mStatReleasedPoolSize += tmpMemoryPool->getMemoryBlockSize();
++					KonPoolStats::poolFree(tmpMemoryPool->getMemoryBlockSize(), tmpMemoryPool);
+ 					mStatDiffPoolSize -= tmpMemoryPool->getMemoryBlockSize();
+ 					++mStatReleasedPoolCount;
+ 					char* memoryBlock = tmpMemoryPool->getMemoryBlockData();
+diff --git a/Source/Utilities/Memory/CNewCentralizedLimitedAllocationMemoryPoolProvider.cpp b/Source/Utilities/Memory/CNewCentralizedLimitedAllocationMemoryPoolProvider.cpp
+index 8cd89dbe..db1aa881 100644
+--- a/Source/Utilities/Memory/CNewCentralizedLimitedAllocationMemoryPoolProvider.cpp
++++ b/Source/Utilities/Memory/CNewCentralizedLimitedAllocationMemoryPoolProvider.cpp
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include "CNewCentralizedLimitedAllocationMemoryPoolProvider.h"
++#include "KonPoolStats.h"
+ 
+ 
+ namespace Konclude {
+@@ -49,6 +50,7 @@ namespace Konclude {
+ 				CMemoryPool* memoryPool = new CMemoryPool();
+ 				char* memoryBlock = new char[memoryBlockSize];
+ 				mStatAllocatedPoolSize += memoryBlockSize;
++				KonPoolStats::poolAlloc(memoryBlockSize, memoryPool);
+ 				mStatDiffPoolSize += memoryBlockSize;
+ 				++mStatAllocatedPoolCount;
+ 				++mStatDiffPoolCount;
+@@ -63,6 +65,7 @@ namespace Konclude {
+ 					CMemoryPool* memoryPool = new CMemoryPool();
+ 					char* memoryBlock = new char[memoryBlockSize];
+ 					mStatAllocatedPoolSize += memoryBlockSize;
++				KonPoolStats::poolAlloc(memoryBlockSize, memoryPool);
+ 					mStatDiffPoolSize += memoryBlockSize;
+ 					++mStatAllocatedPoolCount;
+ 					++mStatDiffPoolCount;
+@@ -81,6 +84,7 @@ namespace Konclude {
+ 					CMemoryPool* tmpMemoryPool = memoryPool;
+ 					memoryPool = memoryPool->getNext();
+ 					mStatReleasedPoolSize += tmpMemoryPool->getMemoryBlockSize();
++					KonPoolStats::poolFree(tmpMemoryPool->getMemoryBlockSize(), tmpMemoryPool);
+ 					mStatDiffPoolSize -= tmpMemoryPool->getMemoryBlockSize();
+ 					mAllocLimitator->addReleasedMemorySize(tmpMemoryPool->getMemoryBlockSize()+sizeof(CMemoryPool));
+ 					++mStatReleasedPoolCount;

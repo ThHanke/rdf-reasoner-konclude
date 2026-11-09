@@ -1,7 +1,7 @@
-# Per-call memory lifecycle: task/pool release, pool reserve + flush, reader/item/job/context release, virtual destructors, hash init context, classifier stale-item flush, adopted write pools; includes diagnostic counters (KonPoolStats, pool-site registry) (old 023-026, 028-033, 035-041).
+# Per-call memory lifecycle: task/pool release, pool reserve + flush, reader/item/job/context release, virtual destructors, hash init context, classifier stale-item flush, adopted write pools, classification item pool release, Redland triples dtor, mapTriples probe stream, saturation-node expansion cache epoch arenas (old 023-026, 028-033, 035-041; 005-008 of the 0.9.0 series).
 # Aggregated from the per-fix patches; see patches/README.md for the old-number mapping.
 diff --git a/Source/Reasoner/Classifier/CIncrementalKPSetClassSubsumptionClassifierThread.cpp b/Source/Reasoner/Classifier/CIncrementalKPSetClassSubsumptionClassifierThread.cpp
-index fc4acc88..2a3cd6b7 100644
+index fc4acc8..2a3cd6b 100644
 --- a/Source/Reasoner/Classifier/CIncrementalKPSetClassSubsumptionClassifierThread.cpp
 +++ b/Source/Reasoner/Classifier/CIncrementalKPSetClassSubsumptionClassifierThread.cpp
 @@ -52,6 +52,8 @@ namespace Konclude {
@@ -14,7 +14,7 @@ index fc4acc88..2a3cd6b7 100644
  
  				CTaxonomy *taxonomy = createEmptyTaxonomyForOntology(ontology,config);
 diff --git a/Source/Reasoner/Classifier/COptimizedClassExtractedSaturationSubsumptionClassifierThread.cpp b/Source/Reasoner/Classifier/COptimizedClassExtractedSaturationSubsumptionClassifierThread.cpp
-index 418e6d98..87305f6c 100644
+index 418e6d9..87305f6 100644
 --- a/Source/Reasoner/Classifier/COptimizedClassExtractedSaturationSubsumptionClassifierThread.cpp
 +++ b/Source/Reasoner/Classifier/COptimizedClassExtractedSaturationSubsumptionClassifierThread.cpp
 @@ -57,6 +57,8 @@ namespace Konclude {
@@ -26,8 +26,32 @@ index 418e6d98..87305f6c 100644
  
  				CTaxonomy *taxonomy = createEmptyTaxonomyForOntology(ontology,config);
  				COptimizedClassExtractedSaturationOntologyClassificationItem *ontClassItem = new COptimizedClassExtractedSaturationOntologyClassificationItem(config,statistics);
+diff --git a/Source/Reasoner/Classifier/COptimizedKPSetClassOntologyClassificationItem.cpp b/Source/Reasoner/Classifier/COptimizedKPSetClassOntologyClassificationItem.cpp
+index 18a6628..3c1087f 100644
+--- a/Source/Reasoner/Classifier/COptimizedKPSetClassOntologyClassificationItem.cpp
++++ b/Source/Reasoner/Classifier/COptimizedKPSetClassOntologyClassificationItem.cpp
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include "COptimizedKPSetClassOntologyClassificationItem.h"
++#include "Utilities/Memory/CNewAllocationMemoryPoolProvider.h"
+ 
+ 
+ namespace Konclude {
+@@ -55,6 +56,11 @@ namespace Konclude {
+ 
+ 			COptimizedKPSetClassOntologyClassificationItem::~COptimizedKPSetClassOntologyClassificationItem() {
+ 				for (auto* item : mSatTestItemContainer) { delete item; }
++				// pseudo model pools collected via addMemoryPools(): nothing else frees them
++				if (CMemoryPool* pools = mMemoryPoolContainer.takeMemoryPools()) {
++					CNewAllocationMemoryPoolProvider tmpProv;
++					tmpProv.releaseMemoryPool(pools);
++				}
+ 			}
+ 
+ 
 diff --git a/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.cpp b/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.cpp
-index 084bb7cd..a0b6898f 100644
+index 014e3dd..d750010 100644
 --- a/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.cpp
 +++ b/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.cpp
 @@ -150,6 +150,8 @@ namespace Konclude {
@@ -40,10 +64,18 @@ index 084bb7cd..a0b6898f 100644
  
  				CTaxonomy *taxonomy = createEmptyTaxonomyForOntology(ontology,config);
 diff --git a/Source/Reasoner/Classifier/COptimizedKPSetRoleOntologyClassificationItem.cpp b/Source/Reasoner/Classifier/COptimizedKPSetRoleOntologyClassificationItem.cpp
-index 0a87afe1..87855db1 100644
+index 0a87afe..00a765e 100644
 --- a/Source/Reasoner/Classifier/COptimizedKPSetRoleOntologyClassificationItem.cpp
 +++ b/Source/Reasoner/Classifier/COptimizedKPSetRoleOntologyClassificationItem.cpp
-@@ -62,6 +62,9 @@ namespace Konclude {
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include "COptimizedKPSetRoleOntologyClassificationItem.h"
++#include "Utilities/Memory/CNewAllocationMemoryPoolProvider.h"
+ 
+ 
+ namespace Konclude {
+@@ -62,8 +63,16 @@ namespace Konclude {
  			}
  
  			COptimizedKPSetRoleOntologyClassificationItem::~COptimizedKPSetRoleOntologyClassificationItem() {
@@ -52,9 +84,16 @@ index 0a87afe1..87855db1 100644
 +				}
  				delete mTmpRoleClassificationOnt;
  				for (auto* item : mSatTestItemContainer) { delete item; }
++				// pseudo model pools collected via addMemoryPools(): nothing else frees them
++				if (CMemoryPool* pools = mMemoryPoolContainer.takeMemoryPools()) {
++					CNewAllocationMemoryPoolProvider tmpProv;
++					tmpProv.releaseMemoryPool(pools);
++				}
  			}
+ 
+ 
 diff --git a/Source/Reasoner/Classifier/COptimizedKPSetRoleSubsumptionClassifierThread.cpp b/Source/Reasoner/Classifier/COptimizedKPSetRoleSubsumptionClassifierThread.cpp
-index 48133731..c658e155 100644
+index 4813373..c658e15 100644
 --- a/Source/Reasoner/Classifier/COptimizedKPSetRoleSubsumptionClassifierThread.cpp
 +++ b/Source/Reasoner/Classifier/COptimizedKPSetRoleSubsumptionClassifierThread.cpp
 @@ -347,6 +347,8 @@ namespace Konclude {
@@ -67,7 +106,7 @@ index 48133731..c658e155 100644
  
  				CRolePropertiesHierarchy* hierarchy = createInitialHierarchyForOntology(ontology,config);
 diff --git a/Source/Reasoner/Classifier/COptimizedSubClassSubsumptionClassifierThread.cpp b/Source/Reasoner/Classifier/COptimizedSubClassSubsumptionClassifierThread.cpp
-index 1238a68e..75b1d58e 100644
+index 1238a68..75b1d58 100644
 --- a/Source/Reasoner/Classifier/COptimizedSubClassSubsumptionClassifierThread.cpp
 +++ b/Source/Reasoner/Classifier/COptimizedSubClassSubsumptionClassifierThread.cpp
 @@ -107,6 +107,8 @@ namespace Konclude {
@@ -80,7 +119,7 @@ index 1238a68e..75b1d58e 100644
  				CTaxonomy *taxonomy = createEmptyTaxonomyForOntology(ontology,config);
  				COptimizedSubClassOntologyClassificationItem *ontClassItem = new COptimizedSubClassOntologyClassificationItem(config,statistics);
 diff --git a/Source/Reasoner/Consistiser/COntologyPrecomputationItem.h b/Source/Reasoner/Consistiser/COntologyPrecomputationItem.h
-index 56f98eba..95fb63b5 100644
+index 56f98eb..95fb63b 100644
 --- a/Source/Reasoner/Consistiser/COntologyPrecomputationItem.h
 +++ b/Source/Reasoner/Consistiser/COntologyPrecomputationItem.h
 @@ -76,6 +76,9 @@ namespace Konclude {
@@ -94,7 +133,7 @@ index 56f98eba..95fb63b5 100644
  
  					virtual COntologyPrecomputationItem* addPrecomputationRequirement(COntologyProcessingRequirement* ontoRequirement);
 diff --git a/Source/Reasoner/Consistiser/CPrecomputationTestingItem.h b/Source/Reasoner/Consistiser/CPrecomputationTestingItem.h
-index 6e04061f..63bbd077 100644
+index 6e04061..63bbd07 100644
 --- a/Source/Reasoner/Consistiser/CPrecomputationTestingItem.h
 +++ b/Source/Reasoner/Consistiser/CPrecomputationTestingItem.h
 @@ -58,6 +58,9 @@ namespace Konclude {
@@ -108,7 +147,7 @@ index 6e04061f..63bbd077 100644
  						CONSISTENCEPRECOMPUTATIONTYPE, CONCEPTSATURATIONPRECOMPUTATIONTYPE, INDIVIDUALSATURATIONPRECOMPUTATIONTYPE, CONCEPTCYCLEPRECOMPUTATIONTYPE, INDIVIDUALPRECOMPUTATIONTYPE, OCCURRENCESTATISTICSSATURATIONPRECOMPUTATIONTYPE
  					};
 diff --git a/Source/Reasoner/Consistiser/CTotallyOntologyPrecomputationItem.cpp b/Source/Reasoner/Consistiser/CTotallyOntologyPrecomputationItem.cpp
-index 363f9c57..c72e2734 100644
+index 363f9c5..c72e273 100644
 --- a/Source/Reasoner/Consistiser/CTotallyOntologyPrecomputationItem.cpp
 +++ b/Source/Reasoner/Consistiser/CTotallyOntologyPrecomputationItem.cpp
 @@ -197,6 +197,7 @@ namespace Konclude {
@@ -119,8 +158,39 @@ index 363f9c57..c72e2734 100644
  				for (auto* item : mSatItemContainer) { delete item; }
  				for (auto it = mSatIDIndividualItemsHash.begin(); it != mSatIDIndividualItemsHash.end(); ++it) {
  					CSaturationIndividualDataItem* chainItem = it.value();
+diff --git a/Source/Reasoner/Generator/CConcreteOntologyRedlandTriplesDataExpressionMapper.cpp b/Source/Reasoner/Generator/CConcreteOntologyRedlandTriplesDataExpressionMapper.cpp
+index 46abf07..eeb20b2 100644
+--- a/Source/Reasoner/Generator/CConcreteOntologyRedlandTriplesDataExpressionMapper.cpp
++++ b/Source/Reasoner/Generator/CConcreteOntologyRedlandTriplesDataExpressionMapper.cpp
+@@ -53,8 +53,13 @@ namespace Konclude {
+ 
+ 					librdf_stream* stream = librdf_model_find_statements(model, partial_statement);
+ 					if (!stream) {
++						librdf_free_statement(partial_statement);
+ 						return false;
+ 					} else {
++						// only an existence probe: a stream left open pins the model's storage, so the whole Redland
++						// model would survive librdf_free_model (per-ontology leak of the triple hashes)
++						librdf_free_stream(stream);
++						librdf_free_statement(partial_statement);
+ 						newTriplesMapped = true;
+ 
+ 						//unsigned char* modelString = librdf_model_to_string(redlandTriplesData->getRedlandIndexedModel(), nullptr, "turtle", nullptr, nullptr);
+@@ -66,9 +71,10 @@ namespace Konclude {
+ 						initTripleDataProcessing(redlandTriplesData);
+ 
+ 						cint64 count = 0;
+-						getOWLClassInstanceNodesStream()->forEach([&](librdf_node* node) {
++						// the wrapper owns an open librdf stream that pins the model storage: release it
++						releaseRedlandNodeStreamWrapper(getOWLClassInstanceNodesStream()->forEach([&](librdf_node* node) {
+ 							count++;
+-						});
++						}));
+ 
+ 
+ 						loadExistingEntities(updateConcreteOntology->getBuildData(), redlandTriplesData);
 diff --git a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.cpp b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.cpp
-index e228eae7..68ef7a02 100644
+index e228eae..68ef7a0 100644
 --- a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.cpp
 +++ b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.cpp
 @@ -19,6 +19,8 @@
@@ -336,7 +406,7 @@ index e228eae7..68ef7a02 100644
  						CBackendRepresentativeMemoryCacheOntologyData* ontologyData = mOntologyIdentifierDataHash->value(ontologyIdentifier);
  						mLastHandledOntologyContext = ontologyData;
 diff --git a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.h b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.h
-index d637c566..a5a612f7 100644
+index d637c56..a5a612f 100644
 --- a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.h
 +++ b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.h
 @@ -112,6 +112,9 @@ namespace Konclude {
@@ -359,7 +429,7 @@ index d637c566..a5a612f7 100644
  
  						//CCACHINGHASH<cint64,CBackendRepresentativeMemoryLabelSignatureResolveCacheItem>* mSigLabelItemHash[CBackendRepresentativeMemoryLabelCacheItem::LABEL_CACHE_ITEM_TYPE_COUNT];
 diff --git a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCacheReader.cpp b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCacheReader.cpp
-index fadd0652..4b800244 100644
+index fadd065..4b80024 100644
 --- a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCacheReader.cpp
 +++ b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCacheReader.cpp
 @@ -19,6 +19,7 @@
@@ -394,7 +464,7 @@ index fadd0652..4b800244 100644
                      return mUpdatedSlot.fetchAndAddRelaxed(0) != nullptr;
  				}
 diff --git a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCacheReader.h b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCacheReader.h
-index 9d88f50c..536321a3 100644
+index 9d88f50..536321a 100644
 --- a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCacheReader.h
 +++ b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCacheReader.h
 @@ -86,6 +86,10 @@ namespace Konclude {
@@ -416,8 +486,118 @@ index 9d88f50c..536321a3 100644
  
  
  					// private methods
+diff --git a/Source/Reasoner/Kernel/Cache/CSaturationNodeAssociatedExpansionCache.cpp b/Source/Reasoner/Kernel/Cache/CSaturationNodeAssociatedExpansionCache.cpp
+index fb6ad0e..728e918 100644
+--- a/Source/Reasoner/Kernel/Cache/CSaturationNodeAssociatedExpansionCache.cpp
++++ b/Source/Reasoner/Kernel/Cache/CSaturationNodeAssociatedExpansionCache.cpp
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include "CSaturationNodeAssociatedExpansionCache.h"
++#include "KonPoolStats.h"
+ #include "CSaturationNodeAssociatedExpansionCacheWriter.h"
+ 
+ 
+@@ -38,6 +39,8 @@ namespace Konclude {
+ 
+ 					CMemoryAllocationManager* memMan = mContext.getMemoryAllocationManager();
+ 					mSaturationNodeCacheUpdate = new CSaturationNodeCacheUpdater(&mContext);
++					mCurrentContext = &mContext;
++					mContextEpoch = KonPoolStats::gOntologyEpoch.load();
+ 
+ 					mConfAllowedNonDetExpansionCount = 1;
+ 					if (config) {
+@@ -241,6 +244,18 @@ namespace Konclude {
+ 
+ 
+ 
++				CSaturationNodeAssociatedExpansionCacheContext* CSaturationNodeAssociatedExpansionCache::selectContext() {
++					long long epoch = KonPoolStats::gOntologyEpoch.load(std::memory_order_acquire);
++					if (epoch != mContextEpoch) {
++						mContextEpoch = epoch;
++						mCurrentContext = (epoch & 1) ? &mContext2 : &mContext;
++						mCurrentContext->resetArena();
++					}
++					return mCurrentContext;
++				}
++
++
++
+ 				bool CSaturationNodeAssociatedExpansionCache::processCustomsEvents(QEvent::Type type, CCustomEvent *event) {
+ 					if (CThread::processCustomsEvents(type,event)) {
+ 						return true;
+@@ -248,8 +263,9 @@ namespace Konclude {
+ 						CWriteSaturationCacheDataEvent* wscde = (CWriteSaturationCacheDataEvent*)event;
+ 						CMemoryPool* memoryPools = wscde->getMemoryPools();
+ 						CSaturationNodeAssociatedExpansionCacheWriteData* writeData = wscde->getWriteData();
+-						installWriteCacheData(writeData,&mContext);
+-						mContext.getMemoryPoolAllocationManager()->releaseTemporaryMemoryPools(memoryPools);
++						CSaturationNodeAssociatedExpansionCacheContext* context = selectContext();
++						installWriteCacheData(writeData,context);
++						context->getMemoryPoolAllocationManager()->releaseTemporaryMemoryPools(memoryPools);
+ 						return true;
+ 
+ 					}
+diff --git a/Source/Reasoner/Kernel/Cache/CSaturationNodeAssociatedExpansionCache.h b/Source/Reasoner/Kernel/Cache/CSaturationNodeAssociatedExpansionCache.h
+index 7fd4348..1ed1826 100644
+--- a/Source/Reasoner/Kernel/Cache/CSaturationNodeAssociatedExpansionCache.h
++++ b/Source/Reasoner/Kernel/Cache/CSaturationNodeAssociatedExpansionCache.h
+@@ -117,6 +117,7 @@ namespace Konclude {
+ 
+ 
+ 						virtual bool processCustomsEvents(QEvent::Type type, CCustomEvent *event);
++						CSaturationNodeAssociatedExpansionCacheContext* selectContext();
+ 
+ 					// protected variables
+ 					protected:
+@@ -132,6 +133,12 @@ namespace Konclude {
+ 
+ 						CCacheStatistics mCacheStat;
+ 						CSaturationNodeAssociatedExpansionCacheContext mContext;
++						// second arena: the cache entries hang off saturation nodes of one ontology and were allocated from one
++						// never-freed arena, so every ontology leaked its entries. Arenas alternate per ontology epoch; the arena
++						// of the ontology two generations back (dead by then) is reset on the first write of a new epoch.
++						CSaturationNodeAssociatedExpansionCacheContext mContext2;
++						CSaturationNodeAssociatedExpansionCacheContext* mCurrentContext;
++						long long mContextEpoch;
+ 
+ 						bool mConfDirectUpdateSynchronization;
+ 						QMutex mDirectUpdateSyncMutex;
+diff --git a/Source/Reasoner/Kernel/Cache/CSaturationNodeAssociatedExpansionCacheContext.cpp b/Source/Reasoner/Kernel/Cache/CSaturationNodeAssociatedExpansionCacheContext.cpp
+index 46a16b2..9de0ec3 100644
+--- a/Source/Reasoner/Kernel/Cache/CSaturationNodeAssociatedExpansionCacheContext.cpp
++++ b/Source/Reasoner/Kernel/Cache/CSaturationNodeAssociatedExpansionCacheContext.cpp
+@@ -72,6 +72,15 @@ namespace Konclude {
+ 				}
+ 
+ 
++				CSaturationNodeAssociatedExpansionCacheContext* CSaturationNodeAssociatedExpansionCacheContext::resetArena() {
++					mMemMan->releaseAllMemory();
++					mMemMan->flushFreePools();
++					mConSatUpdateLinker = nullptr;
++					mAddRelMemory = 0;
++					return this;
++				}
++
++
+ 				CIndividualSaturationProcessNodeStatusUpdateLinker* CSaturationNodeAssociatedExpansionCacheContext::getIndividualSaturationUpdateLinker(bool create) {
+ 					CIndividualSaturationProcessNodeStatusUpdateLinker* conSatUpdateLinker = mConSatUpdateLinker;
+ 					if (!conSatUpdateLinker && create) {
+diff --git a/Source/Reasoner/Kernel/Cache/CSaturationNodeAssociatedExpansionCacheContext.h b/Source/Reasoner/Kernel/Cache/CSaturationNodeAssociatedExpansionCacheContext.h
+index e1c275c..261a4ba 100644
+--- a/Source/Reasoner/Kernel/Cache/CSaturationNodeAssociatedExpansionCacheContext.h
++++ b/Source/Reasoner/Kernel/Cache/CSaturationNodeAssociatedExpansionCacheContext.h
+@@ -79,6 +79,8 @@ namespace Konclude {
+ 
+ 						cint64 getMemoryConsumption();
+ 						CSaturationNodeAssociatedExpansionCacheContext* releaseTemporaryMemoryPools(CMemoryPool* memoryPools);
++						// give all arena memory back (only valid when no live node still refers to cache entries allocated here)
++						CSaturationNodeAssociatedExpansionCacheContext* resetArena();
+ 						
+ 						
+ 						
 diff --git a/Source/Reasoner/Kernel/Process/CIndividualNodeRepresentativeMemoryBackendCacheSynchronisationData.cpp b/Source/Reasoner/Kernel/Process/CIndividualNodeRepresentativeMemoryBackendCacheSynchronisationData.cpp
-index 97934886..2d11d668 100644
+index 9793488..2d11d66 100644
 --- a/Source/Reasoner/Kernel/Process/CIndividualNodeRepresentativeMemoryBackendCacheSynchronisationData.cpp
 +++ b/Source/Reasoner/Kernel/Process/CIndividualNodeRepresentativeMemoryBackendCacheSynchronisationData.cpp
 @@ -80,26 +80,26 @@ namespace Konclude {
@@ -454,7 +634,7 @@ index 97934886..2d11d668 100644
  						mMergedIndividualsAllNeighbourExpanded = synchData->mMergedIndividualsAllNeighbourExpanded;
  						mAllNeighbourExpansion = synchData->mAllNeighbourExpansion;
 diff --git a/Source/Reasoner/Kernel/Process/CLinkedRoleSaturationSuccessorHash.cpp b/Source/Reasoner/Kernel/Process/CLinkedRoleSaturationSuccessorHash.cpp
-index 197cb33d..541a9b58 100644
+index 197cb33..541a9b5 100644
 --- a/Source/Reasoner/Kernel/Process/CLinkedRoleSaturationSuccessorHash.cpp
 +++ b/Source/Reasoner/Kernel/Process/CLinkedRoleSaturationSuccessorHash.cpp
 @@ -90,6 +90,7 @@ namespace Konclude {
@@ -475,7 +655,7 @@ index 197cb33d..541a9b58 100644
  					return roleSuccData;
  				}
 diff --git a/Source/Reasoner/Kernel/Task/CConsistenceTaskData.cpp b/Source/Reasoner/Kernel/Task/CConsistenceTaskData.cpp
-index 50324852..58260240 100644
+index 5032485..5826024 100644
 --- a/Source/Reasoner/Kernel/Task/CConsistenceTaskData.cpp
 +++ b/Source/Reasoner/Kernel/Task/CConsistenceTaskData.cpp
 @@ -21,6 +21,10 @@
@@ -540,7 +720,7 @@ index 50324852..58260240 100644
  						mDetSatTask->getTaskStatus()->setMemoryReleaseable(false);
  					}
 diff --git a/Source/Reasoner/Kernel/Task/CConsistenceTaskData.h b/Source/Reasoner/Kernel/Task/CConsistenceTaskData.h
-index f728c981..54f335b4 100644
+index f728c98..54f335b 100644
 --- a/Source/Reasoner/Kernel/Task/CConsistenceTaskData.h
 +++ b/Source/Reasoner/Kernel/Task/CConsistenceTaskData.h
 @@ -77,6 +77,7 @@ namespace Konclude {
@@ -552,7 +732,7 @@ index f728c981..54f335b4 100644
  
  					// private methods
 diff --git a/Source/Reasoner/Kernel/Task/CSaturationTaskData.cpp b/Source/Reasoner/Kernel/Task/CSaturationTaskData.cpp
-index fcb96332..7b07d25e 100644
+index fcb9633..7b07d25 100644
 --- a/Source/Reasoner/Kernel/Task/CSaturationTaskData.cpp
 +++ b/Source/Reasoner/Kernel/Task/CSaturationTaskData.cpp
 @@ -21,6 +21,10 @@
@@ -612,7 +792,7 @@ index fcb96332..7b07d25e 100644
  						mSaturationTask->getTaskStatus()->setMemoryReleaseable(false);
  					}
 diff --git a/Source/Reasoner/Kernel/Task/CSaturationTaskData.h b/Source/Reasoner/Kernel/Task/CSaturationTaskData.h
-index c88ec525..cdf98ece 100644
+index c88ec52..cdf98ec 100644
 --- a/Source/Reasoner/Kernel/Task/CSaturationTaskData.h
 +++ b/Source/Reasoner/Kernel/Task/CSaturationTaskData.h
 @@ -73,6 +73,7 @@ namespace Konclude {
@@ -624,7 +804,7 @@ index c88ec525..cdf98ece 100644
  
  					// private methods
 diff --git a/Source/Reasoner/Ontology/CIndividualNameResolver.h b/Source/Reasoner/Ontology/CIndividualNameResolver.h
-index 64eaa777..4dc3cd23 100644
+index 64eaa77..4dc3cd2 100644
 --- a/Source/Reasoner/Ontology/CIndividualNameResolver.h
 +++ b/Source/Reasoner/Ontology/CIndividualNameResolver.h
 @@ -54,6 +54,9 @@ namespace Konclude {
@@ -638,7 +818,7 @@ index 64eaa777..4dc3cd23 100644
  					virtual bool isAnonymous(const CIndividualReference& indiRef) const = 0;
  
 diff --git a/Source/Reasoner/Ontology/COntologyProcessingRequirement.h b/Source/Reasoner/Ontology/COntologyProcessingRequirement.h
-index dc87026c..9cb6b14b 100644
+index dc87026..9cb6b14 100644
 --- a/Source/Reasoner/Ontology/COntologyProcessingRequirement.h
 +++ b/Source/Reasoner/Ontology/COntologyProcessingRequirement.h
 @@ -55,6 +55,9 @@ namespace Konclude {
@@ -652,7 +832,7 @@ index dc87026c..9cb6b14b 100644
  
  					virtual COntologyProcessingRequirement* submitRequirementUpdate(cint64 processingFlags, cint64 errorFlags) = 0;
 diff --git a/Source/Reasoner/Preprocess/COntologyPreprocessingItem.h b/Source/Reasoner/Preprocess/COntologyPreprocessingItem.h
-index 7ac65d30..1495c109 100644
+index 7ac65d3..1495c10 100644
 --- a/Source/Reasoner/Preprocess/COntologyPreprocessingItem.h
 +++ b/Source/Reasoner/Preprocess/COntologyPreprocessingItem.h
 @@ -68,6 +68,9 @@ namespace Konclude {
@@ -666,7 +846,7 @@ index 7ac65d30..1495c109 100644
  
  					virtual COntologyPreprocessingItem* addProcessingRequirement(COntologyProcessingRequirement* ontoRequirement);
 diff --git a/Source/Reasoner/Realizer/COntologyRealizingItem.h b/Source/Reasoner/Realizer/COntologyRealizingItem.h
-index 7228a083..b01d6fbf 100644
+index 7228a08..b01d6fb 100644
 --- a/Source/Reasoner/Realizer/COntologyRealizingItem.h
 +++ b/Source/Reasoner/Realizer/COntologyRealizingItem.h
 @@ -30,6 +30,8 @@
@@ -705,7 +885,7 @@ index 7228a083..b01d6fbf 100644
  
  					virtual COntologyRealizingItem* addProcessingRequirement(COntologyProcessingRequirement* ontoRequirement, COntologyRealizingDynamicRequirmentProcessingData* procData);
 diff --git a/Source/Reasoner/Realizer/COptimizedKPSetIndividualComplexRoleData.h b/Source/Reasoner/Realizer/COptimizedKPSetIndividualComplexRoleData.h
-index 333d86ad..5f2523a3 100644
+index 333d86a..5f2523a 100644
 --- a/Source/Reasoner/Realizer/COptimizedKPSetIndividualComplexRoleData.h
 +++ b/Source/Reasoner/Realizer/COptimizedKPSetIndividualComplexRoleData.h
 @@ -56,6 +56,9 @@ namespace Konclude {
@@ -719,7 +899,7 @@ index 333d86ad..5f2523a3 100644
  					COptimizedKPSetIndividualComplexRoleData* setInitialized(bool inversed, bool initialized);
  
 diff --git a/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingItem.cpp b/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingItem.cpp
-index 4fa2fa0a..04c2c0e5 100644
+index 4fa2fa0..04c2c0e 100644
 --- a/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingItem.cpp
 +++ b/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingItem.cpp
 @@ -19,6 +19,7 @@
@@ -744,7 +924,7 @@ index 4fa2fa0a..04c2c0e5 100644
  			}
  
 diff --git a/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp b/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp
-index 0ce99cd7..9a745f17 100644
+index 0ce99cd..9a745f1 100644
 --- a/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp
 +++ b/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp
 @@ -19,6 +19,7 @@
@@ -764,7 +944,7 @@ index 0ce99cd7..9a745f17 100644
  
  				if (mTestedPossibleInstancesCount == mOpenPossibleInstancesCount) {
 diff --git a/Source/Reasoner/Realizer/CRealizerThread.cpp b/Source/Reasoner/Realizer/CRealizerThread.cpp
-index 98450852..57b66bd8 100644
+index 9845085..57b66bd 100644
 --- a/Source/Reasoner/Realizer/CRealizerThread.cpp
 +++ b/Source/Reasoner/Realizer/CRealizerThread.cpp
 @@ -44,6 +44,20 @@ namespace Konclude {
@@ -797,7 +977,7 @@ index 98450852..57b66bd8 100644
  					doNextPendingTests();
  
 diff --git a/Source/Reasoner/Realizer/CRealizerThread.h b/Source/Reasoner/Realizer/CRealizerThread.h
-index 10227216..01597ef3 100644
+index 1022721..01597ef 100644
 --- a/Source/Reasoner/Realizer/CRealizerThread.h
 +++ b/Source/Reasoner/Realizer/CRealizerThread.h
 @@ -89,6 +89,9 @@ namespace Konclude {
@@ -810,8 +990,27 @@ index 10227216..01597ef3 100644
  					virtual bool callbackRealized(CConcreteOntology* ontology, CCallbackData* callback);
  
  					virtual CRealizationMessageObserver* tellRealizationMessage(CConcreteOntology *ontology, CRealizationMessageData* messageData, CMemoryPool* memoryPool);
+diff --git a/Source/Reasoner/Triples/CRedlandStoredTriplesData.cpp b/Source/Reasoner/Triples/CRedlandStoredTriplesData.cpp
+index e26070e..da617ff 100644
+--- a/Source/Reasoner/Triples/CRedlandStoredTriplesData.cpp
++++ b/Source/Reasoner/Triples/CRedlandStoredTriplesData.cpp
+@@ -39,6 +39,14 @@ namespace Konclude {
+ 			}
+ 
+ 			CRedlandStoredTriplesData::~CRedlandStoredTriplesData() {
++				// statement copies kept for indexing (the indexer frees them and clears the linker once it ran);
++				// they belong to this data's world, so free them before the world
++				while (mStatementLinker) {
++					librdf_free_statement(mStatementLinker->getData());
++					CXLinker<librdf_statement*>* tmpStatementLinker = mStatementLinker;
++					mStatementLinker = mStatementLinker->getNext();
++					delete tmpStatementLinker;
++				}
+ 				if (mIndexedModel && (!mLastSharingTripleData || mLastSharingTripleData->mIndexedModel != mIndexedModel)) {
+ 					librdf_free_model(mIndexedModel);
+ 				}
 diff --git a/Source/Scheduler/CSingleThreadTaskProcessorUnit.cpp b/Source/Scheduler/CSingleThreadTaskProcessorUnit.cpp
-index efc88833..844a16ab 100644
+index efc8883..844a16a 100644
 --- a/Source/Scheduler/CSingleThreadTaskProcessorUnit.cpp
 +++ b/Source/Scheduler/CSingleThreadTaskProcessorUnit.cpp
 @@ -36,7 +36,7 @@ namespace Konclude {
@@ -824,7 +1023,7 @@ index efc88833..844a16ab 100644
  			mTaskHandleAlgo = taskHandleAlgo;
  			mProcessingBlocked = true;
 diff --git a/Source/Scheduler/CTaskProcessorCompletorThread.cpp b/Source/Scheduler/CTaskProcessorCompletorThread.cpp
-index 17fd5c52..9436437e 100644
+index 17fd5c5..9436437 100644
 --- a/Source/Scheduler/CTaskProcessorCompletorThread.cpp
 +++ b/Source/Scheduler/CTaskProcessorCompletorThread.cpp
 @@ -34,7 +34,7 @@ namespace Konclude {
@@ -837,7 +1036,7 @@ index 17fd5c52..9436437e 100644
  
  			mSchedulerCommunicator = nullptr;
 diff --git a/Source/Scheduler/CTaskProcessorSchedulerThread.cpp b/Source/Scheduler/CTaskProcessorSchedulerThread.cpp
-index 4bab2d92..e15dfb76 100644
+index 4bab2d9..e15dfb7 100644
 --- a/Source/Scheduler/CTaskProcessorSchedulerThread.cpp
 +++ b/Source/Scheduler/CTaskProcessorSchedulerThread.cpp
 @@ -35,7 +35,7 @@ namespace Konclude {
@@ -850,7 +1049,7 @@ index 4bab2d92..e15dfb76 100644
  
  
 diff --git a/Source/Scheduler/CTaskProcessorThread.cpp b/Source/Scheduler/CTaskProcessorThread.cpp
-index 17613617..426f5081 100644
+index 1761361..426f508 100644
 --- a/Source/Scheduler/CTaskProcessorThread.cpp
 +++ b/Source/Scheduler/CTaskProcessorThread.cpp
 @@ -35,7 +35,7 @@ namespace Konclude {
@@ -863,7 +1062,7 @@ index 17613617..426f5081 100644
  
  			mDispenseNotificationTag = 0;
 diff --git a/Source/Scheduler/CTaskProcessorThreadBase.cpp b/Source/Scheduler/CTaskProcessorThreadBase.cpp
-index 488e2913..dc5ecc2e 100644
+index 488e291..dc5ecc2 100644
 --- a/Source/Scheduler/CTaskProcessorThreadBase.cpp
 +++ b/Source/Scheduler/CTaskProcessorThreadBase.cpp
 @@ -20,6 +20,8 @@
@@ -889,7 +1088,7 @@ index 488e2913..dc5ecc2e 100644
  				while (mEventSignalized) {
  					bool eventsProcessed = handleEvents();
 diff --git a/Source/Scheduler/CTaskProcessorThreadBase.h b/Source/Scheduler/CTaskProcessorThreadBase.h
-index 80c1bbd4..f8860453 100644
+index 80c1bbd..f886045 100644
 --- a/Source/Scheduler/CTaskProcessorThreadBase.h
 +++ b/Source/Scheduler/CTaskProcessorThreadBase.h
 @@ -157,6 +157,7 @@ namespace Konclude {
@@ -901,7 +1100,7 @@ index 80c1bbd4..f8860453 100644
  				CTaskStatusPropagator* mTaskStatusPropagator;
  				CTaskCallbackExecuter* mCallbackExecuter;
 diff --git a/Source/Scheduler/CTaskStatus.cpp b/Source/Scheduler/CTaskStatus.cpp
-index c9292ffb..ffa59c55 100644
+index c9292ff..ffa59c5 100644
 --- a/Source/Scheduler/CTaskStatus.cpp
 +++ b/Source/Scheduler/CTaskStatus.cpp
 @@ -19,6 +19,7 @@
@@ -930,7 +1129,7 @@ index c9292ffb..ffa59c55 100644
  		}
  
 diff --git a/Source/Utilities/Container/CQtManagedRestrictedModificationMap.h b/Source/Utilities/Container/CQtManagedRestrictedModificationMap.h
-index 606adf5b..6b8f55e7 100644
+index 606adf5..6b8f55e 100644
 --- a/Source/Utilities/Container/CQtManagedRestrictedModificationMap.h
 +++ b/Source/Utilities/Container/CQtManagedRestrictedModificationMap.h
 @@ -216,6 +216,12 @@ namespace Konclude {
@@ -947,7 +1146,7 @@ index 606adf5b..6b8f55e7 100644
  					CQtManagedRestrictedModificationMap<Key, T>* init(const CQtManagedRestrictedModificationMap<Key, T>* other, CContext* context = nullptr);
  
 diff --git a/Source/Utilities/Memory/CMemoryPoolAllocationManager.cpp b/Source/Utilities/Memory/CMemoryPoolAllocationManager.cpp
-index 89055845..6e0d3034 100644
+index 8905584..6e0d303 100644
 --- a/Source/Utilities/Memory/CMemoryPoolAllocationManager.cpp
 +++ b/Source/Utilities/Memory/CMemoryPoolAllocationManager.cpp
 @@ -19,6 +19,7 @@
@@ -986,7 +1185,7 @@ index 89055845..6e0d3034 100644
  			}
  
 diff --git a/Source/Utilities/Memory/CMemoryPoolAllocationManager.h b/Source/Utilities/Memory/CMemoryPoolAllocationManager.h
-index 5cfc8d98..23a902b4 100644
+index 5cfc8d9..23a902b 100644
 --- a/Source/Utilities/Memory/CMemoryPoolAllocationManager.h
 +++ b/Source/Utilities/Memory/CMemoryPoolAllocationManager.h
 @@ -67,6 +67,9 @@ namespace Konclude {
@@ -1000,7 +1199,7 @@ index 5cfc8d98..23a902b4 100644
  					virtual CMemoryTemporaryAllocationManager* releaseTemporaryMemoryPool(CMemoryPool* memoryPool);
  
 diff --git a/Source/Utilities/Memory/CNewAllocationMemoryPoolProvider.cpp b/Source/Utilities/Memory/CNewAllocationMemoryPoolProvider.cpp
-index bb45e3d4..36f77a5c 100644
+index bb45e3d..36f77a5 100644
 --- a/Source/Utilities/Memory/CNewAllocationMemoryPoolProvider.cpp
 +++ b/Source/Utilities/Memory/CNewAllocationMemoryPoolProvider.cpp
 @@ -19,6 +19,7 @@
@@ -1028,7 +1227,7 @@ index bb45e3d4..36f77a5c 100644
  					++mStatReleasedPoolCount;
  					char* memoryBlock = tmpMemoryPool->getMemoryBlockData();
 diff --git a/Source/Utilities/Memory/CNewCentralizedLimitedAllocationMemoryPoolProvider.cpp b/Source/Utilities/Memory/CNewCentralizedLimitedAllocationMemoryPoolProvider.cpp
-index 8cd89dbe..db1aa881 100644
+index 8cd89db..db1aa88 100644
 --- a/Source/Utilities/Memory/CNewCentralizedLimitedAllocationMemoryPoolProvider.cpp
 +++ b/Source/Utilities/Memory/CNewCentralizedLimitedAllocationMemoryPoolProvider.cpp
 @@ -19,6 +19,7 @@
