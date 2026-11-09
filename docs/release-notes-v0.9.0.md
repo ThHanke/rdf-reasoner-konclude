@@ -1,8 +1,8 @@
-# Release Notes — unreleased (inconsistency repair)
+# Release Notes — v0.9.0 (inconsistency repair)
 
 ## Summary
 
-This release adds **inconsistency repair** to the reasoner: `explainInconsistencyAxioms`, `repair`, `assessEdit` and `weaken`. A consumer (an ontology editor) can ask what to change, what the change costs, and whether part of an axiom can be kept; the reasoner computes and verifies the answers. It also fixes the cause of a trap on larger inputs and of false justifications on list-heavy ontologies. Method names and result shapes of the four new methods are new and may change between releases; the version number is the maintainer's call.
+This release adds **inconsistency repair** to the reasoner: `explainInconsistencyAxioms`, `repair`, `assessEdit` and `weaken`. A consumer (an ontology editor) can ask what to change, what the change costs, and whether part of an axiom can be kept; the reasoner computes and verifies the answers. It also fixes the cause of a trap on larger inputs and of false justifications on list-heavy ontologies. Method names and result shapes of the four new methods are new and may change between releases. Upgrade from v0.8.0 is drop-in: existing methods keep their signatures (one behaviour change to `explainInconsistency`, see below).
 
 Measured on a quiet 8-core host (node build): a single clash on PMDco (17k quads) takes 13-17 s for `repair()` and about 1.2 s per `assessEdit`; on a 100k-quad ontology 106-128 s. See [`benchmark-repair.md`](benchmark-repair.md).
 
@@ -29,6 +29,21 @@ Measured on a quiet 8-core host (node build): a single clash on PMDco (17k quads
 - **`explainInconsistency` minimizes over whole axioms with declarations as fixed background.** Previously it removed individual triples, which can leave part of an RDF list or restriction (a different, stronger axiom for the reasoner) or drop a declaration (which changes how expressions are read) and returned false justifications on list-heavy ontologies such as Roberts. Justifications no longer contain declarations as removable members; each carries the declarations of the entities it mentions. A justification whose search is cut short by the `timeout` is dropped instead of being returned non-minimal.
 - **`checkConsistency` issues one worker call** (`consistency`) instead of `classification` then `consistency`. For an inconsistent store this avoided a second full rebuild (480 -> 265 ms per check on PMDco); the `consistency` response now carries the WASM heap size, which the Worker recycle uses. `explainInconsistency`, `repair`, `assessEdit` and `weaken` leave annotation assertions (declared `owl:AnnotationProperty` or built-in) out of their consistency checks; they never affect consistency in OWL 2 DL.
 - **A trap on larger inputs is fixed.** The explain search degenerated to one check per triple when a clash spanned both halves of the candidate set (17,159 checks on PMDco) and each reload retained about 20 MB of WASM heap until the 4 GiB limit trapped at call 193. The search is QuickXplain over axiom units (23-51 checks regardless of ontology size) and the Worker is recycled between checks when the heap passes the recycle threshold.
+
+### Soundness fixes (restriction post-processing) — output changes
+
+An evaluation against HermiT and native Konclude (2026-11-07) found types that Konclude does not derive and that this package added in its own post-processing of the result. Removed or restricted:
+
+- **`someValuesFrom` filler typing removed.** `A ⊑ ∃p.B` or `A ≡ ∃p.B`, `a : A`, `p(a,c)` no longer yields `c : B`: the witness may be another individual. The backward direction (`C ≡ ∃p.F`, `p(x,y)`, `y : F` ⇒ `x : C`) is unchanged and comes from Konclude itself.
+- **`owl:hasSelf`, `owl:hasValue` (backward), `owl:someValuesFrom` (backward) and `owl:minCardinality` rules apply to `owl:equivalentClass` only.** With `C ⊑ restriction` a member of the restriction is not necessarily a member of `C`; the package used to add `a : C` anyway.
+- **Explanations:** the two "reverse someValuesFrom" justification builders are gone; `explainEntailment` no longer answers `isEntailed: true` for such a filler type.
+- **Tests and docs corrected:** the parity and entailment-coverage tests had recorded the wrong result (`rex : Dog` from `alice : PetOwner`, `PetOwner ≡ ∃hasAnimal.Dog`, `hasAnimal(alice, rex)`); new soundness cases live in `tests/fixtures/soundness/`.
+
+Consequence: materialization results can contain fewer `rdf:type` assertions than before (only ones that were not entailed). Analysis: `docs/solutions/logic-errors/unsound-restriction-workarounds-2026-11-09.md`.
+
+### Memory
+
+Three more per-ontology leaks found with the PMDco consistency check are fixed in the kernel (patches 005-007): the pseudo-model pool container of KPSet class/role classification items, the statement-linker copies in `CRedlandStoredTriplesData`, and the `find_statements` probe stream plus partial statement in `mapTriples` that pinned the whole Redland model. Natively the growth per consistency check on PMDco fell from +91/+22 MB to +5.4/+2 MB; in WASM the heap stays at 1 GiB with no Worker recycle over a repair run.
 
 ### Known limits
 
