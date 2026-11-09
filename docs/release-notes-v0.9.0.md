@@ -69,7 +69,7 @@ Three more per-ontology leaks found with the PMDco consistency check are fixed i
 ### Known limits
 
 - Materialization can still be incomplete for functional properties with several fillers on one subject (or inverse-functional with several subjects): the declaration is dropped before reasoning to avoid an upstream hang (ALIF+; upstream Konclude itself does not finish on such inputs), so types are not propagated through the merged individuals. The result stays sound; `owl:sameAs` and directly derived types are returned. See `tests/fixtures/soundness/fp_multi.ttl` and the analysis doc.
-- Roberts-size materializations show an intermittent 1.5-6x slow run (same output, same memory, several times the CPU time); cause not found, it also occurs without Worker recycling.
+- Roberts-size materializations show an intermittent 1.5-6x slow run (same output, same memory, several times the CPU time); cause not found, it also occurs without Worker recycling. It is most visible when a second `RdfReasoner` is alive in the same process: `tests/integration/explanation-persistence.test.ts` (Roberts materialize with explanations, 120 s limit) can time out, while the same call takes about 28 s in a fresh single-worker process.
 
 - `weaken` supports `rdfs:subClassOf` culprits with named classes only; other shapes return `reason: 'unsupported-axiom'`. No laconic (part-of-axiom) input yet.
 - `assessEdit` measures class disjointness only (domain, range, functional and cardinality constraints are not reported) and tests at most 5,000 pairs.
