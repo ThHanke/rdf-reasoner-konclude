@@ -173,15 +173,12 @@ describe.skipIf(!wasmExists)("Entailment coverage: owl2dl fixtures", () => {
       await reasoner.materialize(store, { includeClassHierarchy: true });
     }, 360000);
 
-    it("rex rdf:type Dog via PetOwner ≡ ∃hasAnimal.Dog (entailed)", async () => {
+    it("rex rdf:type Dog is NOT entailed by PetOwner ≡ ∃hasAnimal.Dog and hasAnimal(alice, rex)", async () => {
+      // alice's dog need not be rex (hasAnimal is not functional); an earlier version asserted this as entailed.
       const result = await reasoner.explainEntailment(
         store, EX("rex"), RDF_TYPE, EX("Dog"),
       );
-      expect(result.isEntailed).toBe(true);
-      expect(result.justifications.length).toBeGreaterThanOrEqual(1);
-      expect(result.justifications[0].length).toBeGreaterThan(0);
-      const preds = result.justifications[0].map(q => q.predicate.value);
-      expect(preds).toContain("http://www.w3.org/2002/07/owl#someValuesFrom");
+      expect(result.isEntailed).toBeFalsy();
     }, 60000);
 
     it("rex rdf:type Cat (not entailed)", async () => {

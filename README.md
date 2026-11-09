@@ -618,7 +618,7 @@ const result = await reasoner.explainEntailment(
 | `rdfs:subClassOf`                | Native dep-chain cache                   | ~1ms  |
 | `rdf:type` (subClassOf chain)    | Native (classification + asserted type)  | ~1ms  |
 | `rdf:type` (realization)         | Native (clash-path hook)                 | ~1ms  |
-| `rdf:type` (someValuesFrom)      | Synthesized (restriction + role scan)    | <1ms  |
+| `rdf:type` (someValuesFrom, `≡`)  | Native; justification synthesized from restriction + role scan | <1ms  |
 | `rdf:type` (minCardinality)      | Synthesized (restriction + filler count) | <1ms  |
 | `owl:sameAs` (FP/IFP)            | Synthesized (FP/IFP pattern scan)        | <1ms  |
 | `owl:sameAs` (native)            | Native (realization cache)               | ~1ms  |
@@ -825,10 +825,10 @@ Input ABox axioms accepted:
 Restriction constructs verified working over ABox individuals:
 
 - `owl:hasValue` — role filler assertions inferred from value restrictions
-- `owl:someValuesFrom` — existential restriction propagation
+- `owl:someValuesFrom` — `C ≡ ∃p.F`, `p(x,y)`, `y : F` ⇒ `x : C`. The filler is **not** typed from the owner (`x : C`, `p(x,y)` does not entail `y : F`: the witness may be another individual)
 - `owl:allValuesFrom` — universal restriction checked at consistency / realization
-- `owl:hasSelf` — reflexive self-role assertions inferred for typed individuals
-- `owl:minCardinality` / `owl:minQualifiedCardinality` — ABox `rdf:type` inference from distinct fillers
+- `owl:hasSelf` — `C ≡ ∃p.Self`, `p(a,a)` ⇒ `a : C` (equivalence only; `C ⊑ ∃p.Self` gives nothing)
+- `owl:minCardinality` / `owl:minQualifiedCardinality` — ABox `rdf:type` inference from distinct fillers for `C ≡ ≥n p` (equivalence only; fillers must be asserted `differentFrom`)
 - `owl:oneOf` — nominal class membership (`rdf:type`) for enumerated individuals
 
 ### Known output gaps

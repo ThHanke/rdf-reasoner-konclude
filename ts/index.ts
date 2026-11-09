@@ -1466,29 +1466,8 @@ export class RdfReasoner {
       }
     }
 
-    // Reverse someValuesFrom: subject is the FILLER, not the restriction owner.
-    const propUsages = allBase.filter(q => q.object.value === subjectIri && q.predicate.value !== RDF_TYPE);
-    for (const usage of propUsages) {
-      const ownerIri = usage.subject.value;
-      const propIri = usage.predicate.value;
-      const ownerTypes = [
-        ...allBase.filter(q => q.subject.value === ownerIri && q.predicate.value === RDF_TYPE).map(q => q.object.value),
-        ...store.getQuads(DataFactory.namedNode(ownerIri), DataFactory.namedNode(RDF_TYPE), null, DataFactory.namedNode(ig)).map(q => q.object.value),
-      ];
-      for (const ownerType of ownerTypes) {
-        const links = allBase.filter(q =>
-          q.subject.value === ownerType &&
-          (q.predicate.value === OWL_EQUIV || q.predicate.value === RDFS_SUBCLASS));
-        for (const link of links) {
-          const bn = link.object.value;
-          const onProp = allBase.find(q => q.subject.value === bn && q.predicate.value === OWL_ON_PROP && q.object.value === propIri);
-          if (!onProp) continue;
-          const some = allBase.find(q => q.subject.value === bn && q.predicate.value === OWL_SOME && q.object.value === classIri);
-          if (!some) continue;
-          return [usage, link, onProp, some];
-        }
-      }
-    }
+    // No reverse-someValuesFrom synthesis: [p(x,y), x:C, C ≡/⊑ ∃p.F] does not entail y:F (the witness may be another
+    // individual), so it is never a justification for y:F.
 
     return null;
   }
@@ -2598,27 +2577,6 @@ export class RdfReasoner {
                 const invOfQuad = store.getQuads(propTerm, OWL_INVERSE_OF, invPropTerm, null)[0]
                   ?? store.getQuads(invPropTerm, OWL_INVERSE_OF, propTerm, null)[0];
                 return { isEntailed: true, justifications: [[invOfQuad as Quad, invMatch[0] as Quad]] };
-              }
-            }
-          }
-        }
-
-        // Reverse someValuesFrom filler typing: Y rdf:type restrictionClass,
-        // Y <prop> indi, restrictionClass equiv someValuesFrom prop targetClass → indi rdf:type target
-        const svfFillerRestrictions = store.getQuads(null, OWL_SOME_VALUES_FROM, objectIri, null);
-        for (const svfQ of svfFillerRestrictions) {
-          const rBnode = svfQ.subject;
-          const opQ = store.getQuads(rBnode, OWL_ON_PROPERTY, null, null);
-          if (opQ.length === 0) continue;
-          const propIri2 = opQ[0].object.value;
-          const ecQuads = store.getQuads(null, OWL_EQUIVALENT_CLASS, rBnode, null);
-          for (const ecQ of ecQuads) {
-            const rClassName = ecQ.subject.value;
-            const pointingToIndi = store.getQuads(null, propIri2, subjectIri, null);
-            for (const ptQ of pointingToIndi) {
-              const yTypes = store.getQuads(ptQ.subject, RDF_TYPE, rClassName, null);
-              if (yTypes.length > 0) {
-                return { isEntailed: true, justifications: [[ptQ as Quad, yTypes[0] as Quad]] };
               }
             }
           }
