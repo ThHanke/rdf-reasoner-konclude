@@ -35,6 +35,9 @@ inline std::atomic<long long> gRealItemsCreated{0}, gRealItemsDestroyed{0}, gRea
 // Flush request: every task processor thread frees its own free-pool reserve when it sees a new
 // generation (checked at least every 100 ms in its processing loop). Call at the end of a reasoning call.
 inline std::atomic<long long> gFlushGen{0};
+// Ontology epoch: bumped by Impl::reset() after the older ontology was freed; per-ontology arenas in shared caches
+// (saturation-node expansion cache) alternate on its parity and reset the arena of the ontology two generations back.
+inline std::atomic<long long> gOntologyEpoch{0};
 inline void requestPoolFlush() { gFlushGen.fetch_add(1, std::memory_order_release); }
 
 // Allocation-site registry for live pool blocks (native only, KON_POOLSITE=<dir>): which call and which stack

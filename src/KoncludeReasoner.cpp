@@ -615,6 +615,7 @@ struct KoncludeReasoner::Impl {
         freeOntology(mPreviousOntology);
         mPreviousOntology = mOntology;
         mOntology = nullptr;
+        KonPoolStats::gOntologyEpoch.fetch_add(1, std::memory_order_acq_rel);
         buildFreshOntology();
         mClassified         = false;
         mLoadError          = false;
