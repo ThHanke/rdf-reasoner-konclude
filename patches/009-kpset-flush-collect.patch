@@ -1,0 +1,27 @@
+--- a/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.cpp
++++ b/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.cpp
+@@ -968,6 +968,24 @@
+ 								// are fully constructed.
+ 								flushPendingInitMessages(optKPSetClassificationItem);
+ 
++								// The flush created possible-subsumption maps after the collection loop above had run: register the
++								// items of those maps for testing too, otherwise their open candidates are never tested.
++								{
++									QSet<COptimizedKPSetClassTestingItem*> collectedItemSet;
++									foreach (COptimizedKPSetClassTestingItem* collectedItem, resevePossSubsumClassList) {
++										collectedItemSet.insert(collectedItem);
++									}
++									foreach (COptimizedKPSetClassTestingItem* lateItem, classList) {
++										COptimizedKPSetClassPossibleSubsumptionMap* lateSubsumMap = lateItem->getPossibleSubsumptionMap(false);
++										if (lateSubsumMap && lateSubsumMap->hasRemainingPossibleSubsumptions() && !collectedItemSet.contains(lateItem)) {
++											if (mConfPossSubsumCalcOrderTopDown) {
++												nextItemList->append(lateItem);
++												remTestingSet->insert(lateItem);
++											}
++											resevePossSubsumClassList.append(lateItem);
++										}
++									}
++								}
+ 
+ 								foreach (COptimizedKPSetClassTestingItem* item, classList) {
+ 									COptimizedKPSetClassPossibleSubsumptionMap* possSubsumMap = item->getPossibleSubsumptionMap(false);

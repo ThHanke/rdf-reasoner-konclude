@@ -9,3 +9,4 @@
 006  # ~CRedlandStoredTriplesData frees the remaining statement-linker copies
 007  # mapTriples: free the find_statements probe stream + partial statement (pinned the whole Redland model)
 008  # Saturation-node expansion cache: alternating per-ontology-epoch arenas (entries leaked per ontology)
+009  # KPSet: register items whose possible-subsumption maps the init-message flush creates (classification lost subsumptions, PMDco)
