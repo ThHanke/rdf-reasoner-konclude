@@ -93,6 +93,32 @@ ex:frank a ex:A, ex:B .
     expect(preferSchema.repairs[0].remove[0].principal.predicate.value).toMatch(/disjointWith$/);
   }, 360000);
 
+  it("justifications from explainInconsistencyAxioms give the same repairs as repairing from scratch", async () => {
+    const store = storeOf(`
+ex:A a owl:Class . ex:B a owl:Class . ex:P a owl:Class . ex:Q a owl:Class .
+ex:A owl:disjointWith ex:B . ex:frank a ex:A, ex:B .
+ex:P owl:disjointWith ex:Q . ex:gina a ex:P, ex:Q .
+`);
+    const key = (r: Awaited<ReturnType<typeof reasoner.repair>>) =>
+      r.repairs.map(rep => rep.remove.map(a => a.principal.subject.value + a.principal.predicate.value + a.principal.object.value).sort().join("|")).sort();
+    const plain = await reasoner.repair(store, { maxJustifications: 5 });
+    const justifications = await reasoner.explainInconsistencyAxioms(store, { maxJustifications: 5 });
+    expect(justifications.length).toBeGreaterThanOrEqual(2);
+    const seeded = await reasoner.repair(store, { justifications });
+    expect(seeded.consistent).toBe(false);
+    expect(seeded.incomplete).toBe(false);
+    expect(key(seeded)).toEqual(key(plain));
+    for (const rep of seeded.repairs) expect(rep.verifiedConsistent).toBe(true);
+  }, 120000);
+
+  it("stale justifications (store changed since) are ignored", async () => {
+    const store = storeOf(`ex:A a owl:Class . ex:B a owl:Class . ex:A owl:disjointWith ex:B . ex:frank a ex:A, ex:B .`);
+    const justifications = await reasoner.explainInconsistencyAxioms(store);
+    const fixed = without(store, store.getQuads(null, "http://www.w3.org/2002/07/owl#disjointWith", null, null));
+    const r = await reasoner.repair(fixed, { justifications });
+    expect(r).toMatchObject({ consistent: true, repairs: [] });
+  }, 120000);
+
   it("rejects non-store input with TypeError", async () => {
     await expect(reasoner.repair({} as unknown as Store)).rejects.toBeInstanceOf(TypeError);
   });

@@ -676,6 +676,12 @@ const cheapFirst = await reasoner.repair(store, {
   cost: (axiom) => (isAssertion(axiom) ? 0 : 10),
 });
 
+// Already showed the user the justifications? Pass them back and repair skips the first explanation round
+// and the initial consistency check. Each one is re-validated: dropped if the store no longer contains it or it
+// is not inconsistent on its own; repair sets are still verified, and missing justifications are found lazily.
+const justifications = await reasoner.explainInconsistencyAxioms(store);
+const again = await reasoner.repair(store, { justifications });
+
 // What does a repair cost? Class-disjointness the edit gives up, read from the asserted pairs
 // (owl:disjointWith, owl:AllDisjointClasses, owl:disjointUnionOf), so it works on an inconsistent store.
 const edit = { remove: cheapFirst.repairs[0].remove.flatMap((a) => a.quads) };

@@ -4,6 +4,12 @@
 
 v0.9.1 is a bug-fix release on v0.9.0. The public API is unchanged; upgrade is drop-in. v0.9.0 is deprecated on npm.
 
+## Added
+
+### `repair(store, { justifications })`
+
+`repair()` accepts justifications the caller already holds (for example from `explainInconsistencyAxioms`). When at least one still holds on the store, the first explanation round and the initial consistency check are skipped. Each supplied justification is re-checked: it is dropped when a quad or declaration is no longer in the store, or when its axioms plus context are not inconsistent on their own. If none survives, `repair` explains as before. Repair sets are still verified and refined, so an incomplete list costs extra rounds, never an unverified result.
+
 ## Fixed
 
 ### Inferred blank nodes returned with a stray colon

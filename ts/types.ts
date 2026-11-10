@@ -48,6 +48,14 @@ export interface AxiomJustification {
 }
 
 export interface RepairOptions {
+  /**
+   * Justifications the caller already holds for this store (for example from `explainInconsistencyAxioms`), used instead of the
+   * first explanation round. Each one is checked against the store: it is dropped when a quad (or declaration) is no longer
+   * present, or when its axioms plus `context` are not inconsistent on their own. If none survives, repair explains as usual.
+   * Repair sets are still verified and refined afterwards, so an incomplete seed list costs extra rounds, not correctness.
+   * Surviving seeds appear first in `RepairResult.justifications`.
+   */
+  justifications?: AxiomJustification[];
   /** Justifications to collect per explanation round. Default 3. */
   maxJustifications?: number;
   /** Stop after this many repair sets (`reason: 'solution-cap'`). Default 10. */
