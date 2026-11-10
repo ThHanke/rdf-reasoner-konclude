@@ -1,7 +1,7 @@
 # Stall detection hooks (old 022).
 # Aggregated from the per-fix patches; see patches/README.md for the old-number mapping.
 diff --git a/Source/Reasoner/Kernel/Manager/CReasonerManagerThread.cpp b/Source/Reasoner/Kernel/Manager/CReasonerManagerThread.cpp
-index 6375ef91..74171d47 100644
+index 6375ef9..74171d4 100644
 --- a/Source/Reasoner/Kernel/Manager/CReasonerManagerThread.cpp
 +++ b/Source/Reasoner/Kernel/Manager/CReasonerManagerThread.cpp
 @@ -18,6 +18,7 @@
@@ -32,7 +32,7 @@ index 6375ef91..74171d47 100644
  				}
  
 diff --git a/Source/Scheduler/CTaskProcessorThreadBase.cpp b/Source/Scheduler/CTaskProcessorThreadBase.cpp
-index f206975c..488e2913 100644
+index f206975..488e291 100644
 --- a/Source/Scheduler/CTaskProcessorThreadBase.cpp
 +++ b/Source/Scheduler/CTaskProcessorThreadBase.cpp
 @@ -18,6 +18,7 @@

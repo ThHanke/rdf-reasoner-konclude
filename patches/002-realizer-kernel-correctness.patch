@@ -1,4 +1,4 @@
-# Realizer/kernel correctness: merging-limit precedence, role-message trace (native diag), late role candidate requeue, dependency-node init, transitive sub-role inversion, queued-flag init, basement prev-build flag, KPSet registration of items created by the init-message flush (old 017-021, 027, 034; 009 of the 0.9.0 series).
+# Realizer/kernel correctness: merging-limit precedence, role-message trace (native diag), late role candidate requeue, dependency-node init, transitive sub-role inversion, queued-flag init, basement prev-build flag, KPSet registration of items created by the init-message flush (old 017-021, 027, 034; 009 of the 0.9.0 series); 0.9.1 series: role candidate confirmation waits for sub-role initialization and skips pairs known on a sub-role (old 0.9.1 005, 006).
 # Aggregated from the per-fix patches; see patches/README.md for the old-number mapping.
 diff --git a/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.cpp b/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.cpp
 index 084bb7c..014e3dd 100644
@@ -78,8 +78,31 @@ index 73dee09..79e374d 100644
  					QSet<COptimizedKPSetIndividualItemReferencePair>::iterator it = mComplexRoleCandidateInstancesSet.begin();
  					nextItem = *it;
  					mComplexRoleCandidateInstancesSet.erase(it);
+diff --git a/Source/Reasoner/Realizer/COptimizedKPSetRoleInstancesItem.h b/Source/Reasoner/Realizer/COptimizedKPSetRoleInstancesItem.h
+index a3c4163..514a10d 100644
+--- a/Source/Reasoner/Realizer/COptimizedKPSetRoleInstancesItem.h
++++ b/Source/Reasoner/Realizer/COptimizedKPSetRoleInstancesItem.h
+@@ -158,6 +158,10 @@ namespace Konclude {
+ 					COptimizedKPSetRoleInstancesItem* setTestingInitializationPropagationCount(cint64 testPossIntCount);
+ 					COptimizedKPSetRoleInstancesItem* incTestingInitializationPropagationCount(cint64 incCount = 1);
+ 					COptimizedKPSetRoleInstancesItem* decTestingInitializationPropagationCount(cint64 decCount = 1);
++					// initialization tests created for this role whose result has not been processed yet
++					bool hasPendingInitializationTests() { return mPendingInitializationTestCount > 0; }
++					void incPendingInitializationTests() { ++mPendingInitializationTestCount; }
++					void decPendingInitializationTests() { --mPendingInitializationTestCount; }
+ 
+ 
+ 
+@@ -337,6 +341,7 @@ namespace Konclude {
+ 
+ 
+ 					cint64 mTestingInitializationPropagationCount;
++					cint64 mPendingInitializationTestCount = 0;
+ 					cint64 mTestingPossibleInstancesCount;
+ 
+ 
 diff --git a/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp b/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp
-index 3c0cbad..0ce99cd 100644
+index 3c0cbad..4fc5185 100644
 --- a/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp
 +++ b/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp
 @@ -1715,7 +1715,7 @@ namespace Konclude {
@@ -127,7 +150,15 @@ index 3c0cbad..0ce99cd 100644
  					return false;
  				}
  
-@@ -2787,7 +2787,7 @@ namespace Konclude {
+@@ -2653,6 +2653,7 @@ namespace Konclude {
+ 						CIndividualRoleCandidateTestingData indiRoleCandTestData(*it);
+ 						COptimizedKPSetRoleInstancesItem* realItem = indiRoleCandTestData.getRoleInstancesItem();
+ 						realItem->incTestingInitializationPropagationCount();
++						realItem->incPendingInitializationTests();
+ 						satCalcJob = satCalcJobGen.getSatisfiableCalculationJob(indiRoleCandTestData.getPropagationConcept(), false, indiRef, satCalcJob);
+ 					}
+ 
+@@ -2787,7 +2788,7 @@ namespace Konclude {
  								COptimizedKPSetIndividualComplexRoleData* indiComplexSubRoleData = subRoleInstancesItem->getIndividualIdComplexRoleData(indiId, true);
  								COptimizedKPSetIndividualComplexRoleExplicitIndirectLinksData* indiExplicitIndirectLinkComplexRoleRepresentationData = (COptimizedKPSetIndividualComplexRoleExplicitIndirectLinksData*)indiComplexRoleData;
  								COptimizedKPSetIndividualComplexRoleExplicitIndirectLinksData* indiExplicitIndirectLinkComplexSubRoleRepresentationData = (COptimizedKPSetIndividualComplexRoleExplicitIndirectLinksData*)indiComplexSubRoleData;
@@ -136,15 +167,169 @@ index 3c0cbad..0ce99cd 100644
  								for (QHash<cint64, COptimizedKPSetRoleInstancesHashData>::const_iterator it = subRoleComplexInstancesHash->constBegin(), itEnd = subRoleComplexInstancesHash->constEnd(); it != itEnd; ++it) {
  									cint64 succIndiId = it.key();
  									CRealizationIndividualInstanceItemReference succIndiItemRef = reqConfPreCompItem->getInstanceItemReference(succIndiId, true);
-@@ -3547,6 +3547,7 @@ namespace Konclude {
+@@ -3088,11 +3089,117 @@ namespace Konclude {
+ 
+ 
+ 
++			// A confirmation test for (a,b) on a role is redundant when a sub-role already has the pair as known
++			// instance (sub-role det pair implies the super-role pair). Which role message of an individual test is
++			// handled first decides whether the super-role candidate is queued as possible although the sub-role
++			// pair is known, so without this check the number of tests depends on message order.
++			// Known det pairs live in one of three stores (see addComplexRoleExplicitIndirectNeighbourLink): the complex role data,
++			// the individual's direct known/possible neighbour hash, or the backend neighbour-role-set label cache.
++			static bool isRolePairKnownOnItem(COptimizedRepresentativeKPSetOntologyRealizingItem* reqConfPreCompItem, COptimizedKPSetRoleInstancesItem* roleItem, bool inversion, const CRealizationIndividualInstanceItemReference& srcRef, cint64 tgtId) {
++				cint64 srcId = srcRef.getIndividualID();
++				COptimizedKPSetIndividualComplexRoleData* complexData = roleItem->getIndividualIdComplexRoleData(srcId, false);
++				if (complexData) {
++					COptimizedKPSetRoleInstancesData* instanceData = ((COptimizedKPSetIndividualComplexRoleExplicitIndirectLinksData*)complexData)->getRoleNeighbourInstanceItemData(inversion, tgtId, false);
++					if (instanceData && instanceData->mKnownInstance) {
++						return true;
++					}
++				}
++				COptimizedKPSetIndividualItem* srcItem = (COptimizedKPSetIndividualItem*)srcRef.getRealizationInstanceItem();
++				if (srcItem && srcItem->getKnownPossibleRoleNeighboursInstancesHash()->contains(roleItem)) {
++					COptimizedKPSetRoleNeighbourInstancesHashData& neighbourData = srcItem->getKnownPossibleRoleNeighboursInstancesHash()->operator[](roleItem);
++					COptimizedKPSetRoleInstancesData* instanceData = neighbourData.getRoleNeighbourInstanceItemData(inversion, tgtId, false);
++					if (instanceData && instanceData->mKnownInstance) {
++						return true;
++					}
++				}
++				CBackendRepresentativeMemoryCacheIndividualAssociationData* indiAssData = reqConfPreCompItem->getBackendAssociationCacheReader()->getIndividualAssociationData(srcId);
++				if (indiAssData) {
++					CBackendRepresentativeMemoryLabelCacheItem* combinationLabelItem = indiAssData->getLabelCacheEntry(CBackendRepresentativeMemoryLabelCacheItem::NEIGHBOUR_INSTANTIATED_ROLE_SET_COMBINATION_LABEL);
++					CBackendRepresentativeMemoryCacheIndividualNeighbourRoleSetHash* neighbourRoleSetHash = indiAssData->getNeighbourRoleSetHash();
++					if (combinationLabelItem && neighbourRoleSetHash) {
++						CBackendRepresentativeMemoryLabelCacheItem* cacheLabelItem = neighbourRoleSetHash->getNeighbourRoleSetLabel(tgtId);
++						COptimizedKPSetRoleInstancesCombinedNeighbourRoleSetCacheLabelData* labelData = roleItem->getCombinedNeighbourCacheLabelItemDataHash(inversion)->value(combinationLabelItem);
++						if (cacheLabelItem && labelData && labelData->hasKnownInstancesLabelItem(cacheLabelItem)) {
++							return true;
++						}
++					}
++				}
++				return false;
++			}
++
++			static bool isComplexRolePairKnownBySubRole(COptimizedRepresentativeKPSetOntologyRealizingItem* reqConfPreCompItem, COptimizedKPSetRoleInstancesItem* roleInstancesItem, bool inversion, const CRealizationIndividualInstanceItemReference& item1Ref, const CRealizationIndividualInstanceItemReference& item2Ref, QSet<COptimizedKPSetRoleInstancesItem*>& visited) {
++				for (const TRoleItemInversionPair& subPair : *roleInstancesItem->getSuccessorItemList()) {
++					COptimizedKPSetRoleInstancesItem* subItem = subPair.first;
++					if (!subItem || visited.contains(subItem)) {
++						continue;
++					}
++					visited.insert(subItem);
++					bool subInversion = inversion ^ subPair.second;
++					// parent(a,b) <=> sub(a,b) without inversion, sub(b,a) with inversion; sub(x,y) is stored either as
++					// (x, successor y) or, when derived from the inverse marker, as (y, predecessor x)
++					const CRealizationIndividualInstanceItemReference& subSrcRef = subInversion ? item2Ref : item1Ref;
++					const CRealizationIndividualInstanceItemReference& subTgtRef = subInversion ? item1Ref : item2Ref;
++					if (isRolePairKnownOnItem(reqConfPreCompItem, subItem, false, subSrcRef, subTgtRef.getIndividualID()) || isRolePairKnownOnItem(reqConfPreCompItem, subItem, true, subTgtRef, subSrcRef.getIndividualID())) {
++						return true;
++					}
++					if (isComplexRolePairKnownBySubRole(reqConfPreCompItem, subItem, subInversion, item1Ref, item2Ref, visited)) {
++						return true;
++					}
++				}
++				return false;
++			}
++
++
++
++			// A role is ready for candidate confirmation when no individual-based initialization is pending and the role and every sub-role
++			// (transitively) have settled initialization: not marked for realization, or all initialization tests created and none in flight.
++			static bool isRoleInitializationSettled(COptimizedKPSetRoleInstancesItem* roleItem) {
++				return !roleItem->hasPendingInitializationTests() && (roleItem->isCandidateSuccessorInitializationCompleted() || !roleItem->hasToInitializeCandidatesFlag());
++			}
++
++			static bool areSubRolesInitializationSettled(COptimizedKPSetRoleInstancesItem* roleItem, QSet<COptimizedKPSetRoleInstancesItem*>& visited) {
++				for (const TRoleItemInversionPair& subPair : *roleItem->getSuccessorItemList()) {
++					COptimizedKPSetRoleInstancesItem* subItem = subPair.first;
++					if (!subItem || visited.contains(subItem)) {
++						continue;
++					}
++					visited.insert(subItem);
++					if (!isRoleInitializationSettled(subItem) || !areSubRolesInitializationSettled(subItem, visited)) {
++						return false;
++					}
++				}
++				return true;
++			}
++
++			static bool isRoleReadyForCandidateConfirmation(COptimizedRepresentativeKPSetOntologyRealizingItem* reqConfPreCompItem, COptimizedKPSetRoleInstancesItem* roleItem) {
++				if (reqConfPreCompItem->hasRemainingInitializingRoleInstanceIndividualItemReferences() || reqConfPreCompItem->hasRemainingInitializingRoleSuccessorInstanceIndividualItemReferencePairs() || reqConfPreCompItem->hasRemainingInitializingRolePredeccessorInstanceIndividualItemReferencePairs()) {
++					return false;
++				}
++				QSet<COptimizedKPSetRoleInstancesItem*> visited;
++				visited.insert(roleItem);
++				return isRoleInitializationSettled(roleItem) && areSubRolesInitializationSettled(roleItem, visited);
++			}
++
++
++
+ 			bool COptimizedRepresentativeKPSetOntologyRealizingThread::createNextRoleComplexCandidateConfirmationTest(COptimizedRepresentativeKPSetOntologyRealizingItem* reqConfPreCompItem, COptimizedKPSetRoleInstancesItem* roleInstancesItem, COptimizedKPSetIndividualItemReferencePair candidatePair, COntologyRealizingDynamicRequirmentProcessingData* procData) {
+ 				bool workCreated = false;
+ 				CRealizationIndividualInstanceItemReference item1Ref = candidatePair.first;
+ 				CRealizationIndividualInstanceItemReference item2Ref = candidatePair.second;
+ 
++				{
++					QSet<COptimizedKPSetRoleInstancesItem*> visitedSubRoles;
++					if (isComplexRolePairKnownBySubRole(reqConfPreCompItem, roleInstancesItem, false, item1Ref, item2Ref, visitedSubRoles)) {
++						COptimizedKPSetIndividualComplexRoleData* knownComplexData = roleInstancesItem->getIndividualIdComplexRoleData(item1Ref.getIndividualID(), true);
++						COptimizedKPSetRoleInstancesData* knownInstanceData = ((COptimizedKPSetIndividualComplexRoleExplicitIndirectLinksData*)knownComplexData)->getRoleNeighbourInstanceItemData(false, item2Ref.getIndividualID(), true);
++						if (!knownInstanceData->mTestedInstance && !knownInstanceData->mTestingInstance && !knownInstanceData->mKnownInstance) {
++							knownInstanceData->mKnownInstance = true;
++							knownInstanceData->mTestedInstance = true;
++						}
++						return false;
++					}
++				}
++
+ 				reqConfPreCompItem->incTestingRoleInstanceCandidatesCount();
+ 				roleInstancesItem->incTestingComplexCandidateInstancesCount();
+ 
+@@ -3537,17 +3644,29 @@ namespace Konclude {
+ 
+ 
+ 
+-								if (reqConfPreCompItem->hasRemainingCandidateConfirmationRoleInstanceItems()) {
++								// confirm possible role candidates of a role only when the initialization of the role and of all its sub-roles is settled:
++								// a candidate that is possible on a super role is often known on a sub-role whose initialization is still pending, and a
++								// test started before that information arrives is wasted (the number of such tests depended on message order)
++								if (reqConfPreCompItem->hasRemainingCandidateConfirmationRoleInstanceItems()) {
++									bool allInitializationDone = !reqConfPreCompItem->hasPropagatingRoleInstanceCandidates() && !reqConfPreCompItem->hasRemainingInitializingRoleInstanceItems() &&
++											!reqConfPreCompItem->hasRemainingInitializingRoleInstanceIndividualItemReferences() && !reqConfPreCompItem->hasRemainingInitializingRoleSuccessorInstanceIndividualItemReferencePairs() && !reqConfPreCompItem->hasRemainingInitializingRolePredeccessorInstanceIndividualItemReferencePairs();
+ 									QList<COptimizedKPSetRoleInstancesItem*>* candidateConfirmationRoleInstancesItemList = reqConfPreCompItem->getCandidateConfirmationRoleInstancesItemList();
+-									while (!workTestCreated && !candidateConfirmationRoleInstancesItemList->isEmpty()) {
+-										COptimizedKPSetRoleInstancesItem* nextCandidateConfirmationRoleItem = candidateConfirmationRoleInstancesItemList->first();
++									int candidateConfirmationRoleIndex = 0;
++									while (!workTestCreated && candidateConfirmationRoleIndex < candidateConfirmationRoleInstancesItemList->size()) {
++										COptimizedKPSetRoleInstancesItem* nextCandidateConfirmationRoleItem = candidateConfirmationRoleInstancesItemList->at(candidateConfirmationRoleIndex);
++
++										if (!allInitializationDone && !isRoleReadyForCandidateConfirmation(reqConfPreCompItem, nextCandidateConfirmationRoleItem)) {
++											++candidateConfirmationRoleIndex;
++											continue;
++										}
+ 
+ 										if (nextCandidateConfirmationRoleItem->hasComplexInstanceCandidates()) {
+ 											COptimizedKPSetIndividualItemReferencePair candidatePair = nextCandidateConfirmationRoleItem->takeNextTestingComplexInstanceCandidate();
  											workTestCreated = createNextRoleComplexCandidateConfirmationTest(reqConfPreCompItem, nextCandidateConfirmationRoleItem, candidatePair);
  										}
  										if (!nextCandidateConfirmationRoleItem->hasComplexInstanceCandidates()) {
+-											candidateConfirmationRoleInstancesItemList->removeFirst();
 +											nextCandidateConfirmationRoleItem->setComplexCandidateProcessingQueuedFlag(false);
- 											candidateConfirmationRoleInstancesItemList->removeFirst();
++											candidateConfirmationRoleInstancesItemList->removeAt(candidateConfirmationRoleIndex);
  										}
  										checkFinishRoleInstancesProcessing(reqConfPreCompItem, nextCandidateConfirmationRoleItem);
-@@ -4638,6 +4639,10 @@ namespace Konclude {
+ 									}
+@@ -4278,6 +4397,9 @@ namespace Konclude {
+ 						QList<CIndividualRoleCandidateTestingData>* indiRoleCandTestDataList = indiRoleCandTestItem->geIndividualRoleCandidateTestingDataList();
+ 
+ 						for (CIndividualRoleCandidateTestingData& indiRoleCandTestData : *indiRoleCandTestDataList) {
++							if (indiRoleCandTestData.getRoleInstancesItem()) {
++								indiRoleCandTestData.getRoleInstancesItem()->decPendingInitializationTests();
++							}
+ 							CConcept* markerConcept = indiRoleCandTestData.getMarkerConcept();
+ 							COptimizedKPSetIndividualComplexRoleData* indiComplexData = indiRoleCandTestData.getIndividualComplexData();
+ 							bool inversed = indiRoleCandTestData.getInversed();
+@@ -4638,6 +4760,10 @@ namespace Konclude {
  						// add to testing queue
  						roleInstItem->addComplexCandidateInstance(COptimizedKPSetIndividualItemReferencePair(indiRealItemRef, CRealizationIndividualInstanceItemReference(neighbourIndi, realItem->getIndividualInstantiatedItem(neighbourIndi.getIndividual(), false))), inversed);
  					}
@@ -155,7 +340,7 @@ index 3c0cbad..0ce99cd 100644
  					if (wasAlreadyPossibleMarked && instanceData->mKnownInstance) {
  						// remove from testing queue
  						roleInstItem->removeComplexCandidateInstance(COptimizedKPSetIndividualItemReferencePair(indiRealItemRef, CRealizationIndividualInstanceItemReference(neighbourIndi, realItem->getIndividualInstantiatedItem(neighbourIndi.getIndividual(), false))), inversed);
-@@ -4689,6 +4694,14 @@ namespace Konclude {
+@@ -4689,6 +4815,14 @@ namespace Konclude {
  							addComplexRoleExplicitIndirectNeighbourLink(roleInstItem, inversed, indiRealItemRef, indiExplicitIndirectLinkComplexRepresentationData, indiRoleNeighbourHashData, combinedNeighbourCacheLabelItemData, assNeighbourRoleSetHash, candIndi, nullptr, deterministic, realItem);
  						};
  
