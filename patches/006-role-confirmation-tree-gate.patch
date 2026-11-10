@@ -1,0 +1,117 @@
+--- a/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp
++++ b/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp
+@@ -2655,6 +2655,7 @@
+ 						CIndividualRoleCandidateTestingData indiRoleCandTestData(*it);
+ 						COptimizedKPSetRoleInstancesItem* realItem = indiRoleCandTestData.getRoleInstancesItem();
+ 						realItem->incTestingInitializationPropagationCount();
++						realItem->incPendingInitializationTests();
+ 						satCalcJob = satCalcJobGen.getSatisfiableCalculationJob(indiRoleCandTestData.getPropagationConcept(), false, indiRef, satCalcJob);
+ 					}
+ 
+@@ -3152,6 +3153,37 @@
+ 
+ 
+ 
++			// A role is ready for candidate confirmation when no individual-based initialization is pending and the role and every sub-role
++			// (transitively) have settled initialization: not marked for realization, or all initialization tests created and none in flight.
++			static bool isRoleInitializationSettled(COptimizedKPSetRoleInstancesItem* roleItem) {
++				return !roleItem->hasPendingInitializationTests() && (roleItem->isCandidateSuccessorInitializationCompleted() || !roleItem->hasToInitializeCandidatesFlag());
++			}
++
++			static bool areSubRolesInitializationSettled(COptimizedKPSetRoleInstancesItem* roleItem, QSet<COptimizedKPSetRoleInstancesItem*>& visited) {
++				for (const TRoleItemInversionPair& subPair : *roleItem->getSuccessorItemList()) {
++					COptimizedKPSetRoleInstancesItem* subItem = subPair.first;
++					if (!subItem || visited.contains(subItem)) {
++						continue;
++					}
++					visited.insert(subItem);
++					if (!isRoleInitializationSettled(subItem) || !areSubRolesInitializationSettled(subItem, visited)) {
++						return false;
++					}
++				}
++				return true;
++			}
++
++			static bool isRoleReadyForCandidateConfirmation(COptimizedRepresentativeKPSetOntologyRealizingItem* reqConfPreCompItem, COptimizedKPSetRoleInstancesItem* roleItem) {
++				if (reqConfPreCompItem->hasRemainingInitializingRoleInstanceIndividualItemReferences() || reqConfPreCompItem->hasRemainingInitializingRoleSuccessorInstanceIndividualItemReferencePairs() || reqConfPreCompItem->hasRemainingInitializingRolePredeccessorInstanceIndividualItemReferencePairs()) {
++					return false;
++				}
++				QSet<COptimizedKPSetRoleInstancesItem*> visited;
++				visited.insert(roleItem);
++				return isRoleInitializationSettled(roleItem) && areSubRolesInitializationSettled(roleItem, visited);
++			}
++
++
++
+ 			bool COptimizedRepresentativeKPSetOntologyRealizingThread::createNextRoleComplexCandidateConfirmationTest(COptimizedRepresentativeKPSetOntologyRealizingItem* reqConfPreCompItem, COptimizedKPSetRoleInstancesItem* roleInstancesItem, COptimizedKPSetIndividualItemReferencePair candidatePair, COntologyRealizingDynamicRequirmentProcessingData* procData) {
+ 				bool workCreated = false;
+ 				CRealizationIndividualInstanceItemReference item1Ref = candidatePair.first;
+@@ -3614,14 +3646,21 @@
+ 
+ 
+ 
+-								// confirm possible role candidates only after all role initialization/propagation tests are done: a candidate that
+-								// is possible on a super role is often known on a sub-role whose initialization is still pending, and a test started
+-								// before that information arrives is wasted (the number of such tests depended on message order)
+-								if (reqConfPreCompItem->hasRemainingCandidateConfirmationRoleInstanceItems() && !reqConfPreCompItem->hasPropagatingRoleInstanceCandidates() && !reqConfPreCompItem->hasRemainingInitializingRoleInstanceItems() &&
+-										!reqConfPreCompItem->hasRemainingInitializingRoleInstanceIndividualItemReferences() && !reqConfPreCompItem->hasRemainingInitializingRoleSuccessorInstanceIndividualItemReferencePairs() && !reqConfPreCompItem->hasRemainingInitializingRolePredeccessorInstanceIndividualItemReferencePairs()) {
++								// confirm possible role candidates of a role only when the initialization of the role and of all its sub-roles is settled:
++								// a candidate that is possible on a super role is often known on a sub-role whose initialization is still pending, and a
++								// test started before that information arrives is wasted (the number of such tests depended on message order)
++								if (reqConfPreCompItem->hasRemainingCandidateConfirmationRoleInstanceItems()) {
++									bool allInitializationDone = !reqConfPreCompItem->hasPropagatingRoleInstanceCandidates() && !reqConfPreCompItem->hasRemainingInitializingRoleInstanceItems() &&
++											!reqConfPreCompItem->hasRemainingInitializingRoleInstanceIndividualItemReferences() && !reqConfPreCompItem->hasRemainingInitializingRoleSuccessorInstanceIndividualItemReferencePairs() && !reqConfPreCompItem->hasRemainingInitializingRolePredeccessorInstanceIndividualItemReferencePairs();
+ 									QList<COptimizedKPSetRoleInstancesItem*>* candidateConfirmationRoleInstancesItemList = reqConfPreCompItem->getCandidateConfirmationRoleInstancesItemList();
+-									while (!workTestCreated && !candidateConfirmationRoleInstancesItemList->isEmpty()) {
+-										COptimizedKPSetRoleInstancesItem* nextCandidateConfirmationRoleItem = candidateConfirmationRoleInstancesItemList->first();
++									int candidateConfirmationRoleIndex = 0;
++									while (!workTestCreated && candidateConfirmationRoleIndex < candidateConfirmationRoleInstancesItemList->size()) {
++										COptimizedKPSetRoleInstancesItem* nextCandidateConfirmationRoleItem = candidateConfirmationRoleInstancesItemList->at(candidateConfirmationRoleIndex);
++
++										if (!allInitializationDone && !isRoleReadyForCandidateConfirmation(reqConfPreCompItem, nextCandidateConfirmationRoleItem)) {
++											++candidateConfirmationRoleIndex;
++											continue;
++										}
+ 
+ 										if (nextCandidateConfirmationRoleItem->hasComplexInstanceCandidates()) {
+ 											COptimizedKPSetIndividualItemReferencePair candidatePair = nextCandidateConfirmationRoleItem->takeNextTestingComplexInstanceCandidate();
+@@ -3629,7 +3668,7 @@
+ 										}
+ 										if (!nextCandidateConfirmationRoleItem->hasComplexInstanceCandidates()) {
+ 											nextCandidateConfirmationRoleItem->setComplexCandidateProcessingQueuedFlag(false);
+-											candidateConfirmationRoleInstancesItemList->removeFirst();
++											candidateConfirmationRoleInstancesItemList->removeAt(candidateConfirmationRoleIndex);
+ 										}
+ 										checkFinishRoleInstancesProcessing(reqConfPreCompItem, nextCandidateConfirmationRoleItem);
+ 									}
+@@ -4360,6 +4399,9 @@
+ 						QList<CIndividualRoleCandidateTestingData>* indiRoleCandTestDataList = indiRoleCandTestItem->geIndividualRoleCandidateTestingDataList();
+ 
+ 						for (CIndividualRoleCandidateTestingData& indiRoleCandTestData : *indiRoleCandTestDataList) {
++							if (indiRoleCandTestData.getRoleInstancesItem()) {
++								indiRoleCandTestData.getRoleInstancesItem()->decPendingInitializationTests();
++							}
+ 							CConcept* markerConcept = indiRoleCandTestData.getMarkerConcept();
+ 							COptimizedKPSetIndividualComplexRoleData* indiComplexData = indiRoleCandTestData.getIndividualComplexData();
+ 							bool inversed = indiRoleCandTestData.getInversed();
+--- a/Source/Reasoner/Realizer/COptimizedKPSetRoleInstancesItem.h
++++ b/Source/Reasoner/Realizer/COptimizedKPSetRoleInstancesItem.h
+@@ -158,6 +158,10 @@
+ 					COptimizedKPSetRoleInstancesItem* setTestingInitializationPropagationCount(cint64 testPossIntCount);
+ 					COptimizedKPSetRoleInstancesItem* incTestingInitializationPropagationCount(cint64 incCount = 1);
+ 					COptimizedKPSetRoleInstancesItem* decTestingInitializationPropagationCount(cint64 decCount = 1);
++					// initialization tests created for this role whose result has not been processed yet
++					bool hasPendingInitializationTests() { return mPendingInitializationTestCount > 0; }
++					void incPendingInitializationTests() { ++mPendingInitializationTestCount; }
++					void decPendingInitializationTests() { --mPendingInitializationTestCount; }
+ 
+ 
+ 
+@@ -337,6 +341,7 @@
+ 
+ 
+ 					cint64 mTestingInitializationPropagationCount;
++					cint64 mPendingInitializationTestCount = 0;
+ 					cint64 mTestingPossibleInstancesCount;
+ 
+ 

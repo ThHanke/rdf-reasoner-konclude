@@ -1,0 +1,49 @@
+import os
+import re
+import sys
+
+# Per-role tree gate for role candidate confirmation (replaces the global barrier of patch 005): a role's confirmation jobs start
+# once the role and all its sub-roles have settled initialization, while unrelated roles may still initialize.
+
+CPP = 'Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp'
+H = 'Source/Reasoner/Realizer/COptimizedKPSetRoleInstancesItem.h'
+FILES = [CPP, H]
+
+EDITS = {
+    CPP: [
+        ('\t\t\t\t\t\trealItem->incTestingInitializationPropagationCount();\n', '\t\t\t\t\t\trealItem->incTestingInitializationPropagationCount();\n\t\t\t\t\t\trealItem->incPendingInitializationTests();\n'),
+        ('\t\t\t\t\t\t\tCConcept* markerConcept = indiRoleCandTestData.getMarkerConcept();\n', '\t\t\t\t\t\t\tif (indiRoleCandTestData.getRoleInstancesItem()) {\n\t\t\t\t\t\t\t\tindiRoleCandTestData.getRoleInstancesItem()->decPendingInitializationTests();\n\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\tCConcept* markerConcept = indiRoleCandTestData.getMarkerConcept();\n'),
+        ('\t\t\tbool COptimizedRepresentativeKPSetOntologyRealizingThread::createNextRoleComplexCandidateConfirmationTest(', '\t\t\t// A role is ready for candidate confirmation when no individual-based initialization is pending and the role and every sub-role\n\t\t\t// (transitively) have settled initialization: not marked for realization, or all initialization tests created and none in flight.\n\t\t\tstatic bool isRoleInitializationSettled(COptimizedKPSetRoleInstancesItem* roleItem) {\n\t\t\t\treturn !roleItem->hasPendingInitializationTests() && (roleItem->isCandidateSuccessorInitializationCompleted() || !roleItem->hasToInitializeCandidatesFlag());\n\t\t\t}\n\n\t\t\tstatic bool areSubRolesInitializationSettled(COptimizedKPSetRoleInstancesItem* roleItem, QSet<COptimizedKPSetRoleInstancesItem*>& visited) {\n\t\t\t\tfor (const TRoleItemInversionPair& subPair : *roleItem->getSuccessorItemList()) {\n\t\t\t\t\tCOptimizedKPSetRoleInstancesItem* subItem = subPair.first;\n\t\t\t\t\tif (!subItem || visited.contains(subItem)) {\n\t\t\t\t\t\tcontinue;\n\t\t\t\t\t}\n\t\t\t\t\tvisited.insert(subItem);\n\t\t\t\t\tif (!isRoleInitializationSettled(subItem) || !areSubRolesInitializationSettled(subItem, visited)) {\n\t\t\t\t\t\treturn false;\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t\treturn true;\n\t\t\t}\n\n\t\t\tstatic bool isRoleReadyForCandidateConfirmation(COptimizedRepresentativeKPSetOntologyRealizingItem* reqConfPreCompItem, COptimizedKPSetRoleInstancesItem* roleItem) {\n\t\t\t\tif (reqConfPreCompItem->hasRemainingInitializingRoleInstanceIndividualItemReferences() || reqConfPreCompItem->hasRemainingInitializingRoleSuccessorInstanceIndividualItemReferencePairs() || reqConfPreCompItem->hasRemainingInitializingRolePredeccessorInstanceIndividualItemReferencePairs()) {\n\t\t\t\t\treturn false;\n\t\t\t\t}\n\t\t\t\tQSet<COptimizedKPSetRoleInstancesItem*> visited;\n\t\t\t\tvisited.insert(roleItem);\n\t\t\t\treturn isRoleInitializationSettled(roleItem) && areSubRolesInitializationSettled(roleItem, visited);\n\t\t\t}\n\n\n\n' + '\t\t\tbool COptimizedRepresentativeKPSetOntologyRealizingThread::createNextRoleComplexCandidateConfirmationTest('),
+        ('\t\t\t\t\t\t\t\t// confirm possible role candidates only after all role initialization/propagation tests are done: a candidate that\n\t\t\t\t\t\t\t\t// is possible on a super role is often known on a sub-role whose initialization is still pending, and a test started\n\t\t\t\t\t\t\t\t// before that information arrives is wasted (the number of such tests depended on message order)\n\t\t\t\t\t\t\t\tif (reqConfPreCompItem->hasRemainingCandidateConfirmationRoleInstanceItems() && !reqConfPreCompItem->hasPropagatingRoleInstanceCandidates() && !reqConfPreCompItem->hasRemainingInitializingRoleInstanceItems() &&\n\t\t\t\t\t\t\t\t\t\t!reqConfPreCompItem->hasRemainingInitializingRoleInstanceIndividualItemReferences() && !reqConfPreCompItem->hasRemainingInitializingRoleSuccessorInstanceIndividualItemReferencePairs() && !reqConfPreCompItem->hasRemainingInitializingRolePredeccessorInstanceIndividualItemReferencePairs()) {\n\t\t\t\t\t\t\t\t\tQList<COptimizedKPSetRoleInstancesItem*>* candidateConfirmationRoleInstancesItemList = reqConfPreCompItem->getCandidateConfirmationRoleInstancesItemList();\n\t\t\t\t\t\t\t\t\twhile (!workTestCreated && !candidateConfirmationRoleInstancesItemList->isEmpty()) {\n\t\t\t\t\t\t\t\t\t\tCOptimizedKPSetRoleInstancesItem* nextCandidateConfirmationRoleItem = candidateConfirmationRoleInstancesItemList->first();\n\n\t\t\t\t\t\t\t\t\t\tif (nextCandidateConfirmationRoleItem->hasComplexInstanceCandidates()) {\n\t\t\t\t\t\t\t\t\t\t\tCOptimizedKPSetIndividualItemReferencePair candidatePair = nextCandidateConfirmationRoleItem->takeNextTestingComplexInstanceCandidate();\n\t\t\t\t\t\t\t\t\t\t\tworkTestCreated = createNextRoleComplexCandidateConfirmationTest(reqConfPreCompItem, nextCandidateConfirmationRoleItem, candidatePair);\n\t\t\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t\t\t\tif (!nextCandidateConfirmationRoleItem->hasComplexInstanceCandidates()) {\n\t\t\t\t\t\t\t\t\t\t\tnextCandidateConfirmationRoleItem->setComplexCandidateProcessingQueuedFlag(false);\n\t\t\t\t\t\t\t\t\t\t\tcandidateConfirmationRoleInstancesItemList->removeFirst();\n\t\t\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t\t\t\tcheckFinishRoleInstancesProcessing(reqConfPreCompItem, nextCandidateConfirmationRoleItem);\n\t\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t\t}\n', '\t\t\t\t\t\t\t\t// confirm possible role candidates of a role only when the initialization of the role and of all its sub-roles is settled:\n\t\t\t\t\t\t\t\t// a candidate that is possible on a super role is often known on a sub-role whose initialization is still pending, and a\n\t\t\t\t\t\t\t\t// test started before that information arrives is wasted (the number of such tests depended on message order)\n\t\t\t\t\t\t\t\tif (reqConfPreCompItem->hasRemainingCandidateConfirmationRoleInstanceItems()) {\n\t\t\t\t\t\t\t\t\tbool allInitializationDone = !reqConfPreCompItem->hasPropagatingRoleInstanceCandidates() && !reqConfPreCompItem->hasRemainingInitializingRoleInstanceItems() &&\n\t\t\t\t\t\t\t\t\t\t\t!reqConfPreCompItem->hasRemainingInitializingRoleInstanceIndividualItemReferences() && !reqConfPreCompItem->hasRemainingInitializingRoleSuccessorInstanceIndividualItemReferencePairs() && !reqConfPreCompItem->hasRemainingInitializingRolePredeccessorInstanceIndividualItemReferencePairs();\n\t\t\t\t\t\t\t\t\tQList<COptimizedKPSetRoleInstancesItem*>* candidateConfirmationRoleInstancesItemList = reqConfPreCompItem->getCandidateConfirmationRoleInstancesItemList();\n\t\t\t\t\t\t\t\t\tint candidateConfirmationRoleIndex = 0;\n\t\t\t\t\t\t\t\t\twhile (!workTestCreated && candidateConfirmationRoleIndex < candidateConfirmationRoleInstancesItemList->size()) {\n\t\t\t\t\t\t\t\t\t\tCOptimizedKPSetRoleInstancesItem* nextCandidateConfirmationRoleItem = candidateConfirmationRoleInstancesItemList->at(candidateConfirmationRoleIndex);\n\n\t\t\t\t\t\t\t\t\t\tif (!allInitializationDone && !isRoleReadyForCandidateConfirmation(reqConfPreCompItem, nextCandidateConfirmationRoleItem)) {\n\t\t\t\t\t\t\t\t\t\t\t++candidateConfirmationRoleIndex;\n\t\t\t\t\t\t\t\t\t\t\tcontinue;\n\t\t\t\t\t\t\t\t\t\t}\n\n\t\t\t\t\t\t\t\t\t\tif (nextCandidateConfirmationRoleItem->hasComplexInstanceCandidates()) {\n\t\t\t\t\t\t\t\t\t\t\tCOptimizedKPSetIndividualItemReferencePair candidatePair = nextCandidateConfirmationRoleItem->takeNextTestingComplexInstanceCandidate();\n\t\t\t\t\t\t\t\t\t\t\tworkTestCreated = createNextRoleComplexCandidateConfirmationTest(reqConfPreCompItem, nextCandidateConfirmationRoleItem, candidatePair);\n\t\t\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t\t\t\tif (!nextCandidateConfirmationRoleItem->hasComplexInstanceCandidates()) {\n\t\t\t\t\t\t\t\t\t\t\tnextCandidateConfirmationRoleItem->setComplexCandidateProcessingQueuedFlag(false);\n\t\t\t\t\t\t\t\t\t\t\tcandidateConfirmationRoleInstancesItemList->removeAt(candidateConfirmationRoleIndex);\n\t\t\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t\t\t\tcheckFinishRoleInstancesProcessing(reqConfPreCompItem, nextCandidateConfirmationRoleItem);\n\t\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t\t}\n'),
+    ],
+    H: [
+        ('\t\t\t\t\tCOptimizedKPSetRoleInstancesItem* decTestingInitializationPropagationCount(cint64 decCount = 1);\n', '\t\t\t\t\tCOptimizedKPSetRoleInstancesItem* decTestingInitializationPropagationCount(cint64 decCount = 1);\n\t\t\t\t\t// initialization tests created for this role whose result has not been processed yet\n\t\t\t\t\tbool hasPendingInitializationTests() { return mPendingInitializationTestCount > 0; }\n\t\t\t\t\tvoid incPendingInitializationTests() { ++mPendingInitializationTestCount; }\n\t\t\t\t\tvoid decPendingInitializationTests() { --mPendingInitializationTestCount; }\n'),
+        ('\t\t\t\t\tcint64 mTestingInitializationPropagationCount;\n', '\t\t\t\t\tcint64 mTestingInitializationPropagationCount;\n\t\t\t\t\tcint64 mPendingInitializationTestCount = 0;\n'),
+    ],
+}
+
+
+def modify(rel_path, content):
+    # the file mixes CRLF and LF lines: match with either ending, insert with the file's dominant ending
+    nl = "\r\n" if "\r\n" in content else "\n"
+    for old, new in EDITS[rel_path]:
+        pattern = re.compile("\r?\n".join(re.escape(part) for part in old.split("\n")))
+        assert len(pattern.findall(content)) == 1, (rel_path, old[:70])
+        content = pattern.sub(lambda _m, n=new.replace("\n", nl): n, content, count=1)
+    return content
+
+
+if __name__ == "__main__":
+    if "--list-files" in sys.argv:
+        for f in FILES:
+            print(f)
+        sys.exit(0)
+    vendor_dir = sys.argv[1]
+    for rel_path in FILES:
+        full = os.path.join(vendor_dir, rel_path)
+        with open(full, newline="") as fh:
+            content = fh.read()
+        new = modify(rel_path, content)
+        if new != content:
+            with open(full, "w", newline="") as fh:
+                fh.write(new)
