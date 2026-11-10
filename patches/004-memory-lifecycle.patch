@@ -924,7 +924,7 @@ index 4fa2fa0..04c2c0e 100644
  			}
  
 diff --git a/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp b/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp
-index 0ce99cd..9a745f1 100644
+index 4fc5185..57a0361 100644
 --- a/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp
 +++ b/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp
 @@ -19,6 +19,7 @@

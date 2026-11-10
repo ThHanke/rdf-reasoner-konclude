@@ -1,9 +1,7 @@
 # Vendor patches applied to vendor/konclude (order = filename order; each is written against the post-previous state).
-# Aggregated 2026-10-15 from the per-fix patches 000-041; 0.9.0 patches 005-009 folded into 002/004 (see patches/README.md).
+# Aggregated 2026-10-15 from the per-fix patches 000-041; 0.9.0 patches 005-009 and post-0.9.1 patches 005-006 folded into 002/004 (see patches/README.md).
 000  # Qt type substitutions
 001  # WASM port base (compile prereqs, pthread core, cache sync, perf, conformance, KPSet classifier, drain-loop/processing-set fixes)
 002  # Realizer/kernel correctness fixes
 003  # Stall detection hooks
 004  # Per-call memory lifecycle (pool/item/cache release, virtual dtors) + diagnostic counters
-005  # Role candidate confirmation: hold until initialization is done, skip pairs already known on a sub-role
-006  # Role candidate confirmation: per-role tree gate (role + sub-roles settled) replaces the global barrier
