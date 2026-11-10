@@ -5,3 +5,4 @@
 002  # Realizer/kernel correctness fixes
 003  # Stall detection hooks
 004  # Per-call memory lifecycle (pool/item/cache release, virtual dtors) + diagnostic counters
+005  # Role candidate confirmation: hold until initialization is done, skip pairs already known on a sub-role
