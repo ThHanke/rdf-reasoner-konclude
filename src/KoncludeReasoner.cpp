@@ -2317,6 +2317,11 @@ struct InternTable {
 
     // typeTag: 0=NamedNode, 1=BlankNode, 2=Literal
     uint32_t intern(const std::string& s, uint32_t typeTag = 0) {
+        // Konclude names blank individuals "_:" + ontologyName + ":" + label (ontologyName is empty
+        // here, giving "_::label"). Emit them as BlankNodes carrying the original label.
+        if (typeTag == 0 && s.compare(0, 2, "_:") == 0) {
+            return intern(s.compare(0, 3, "_::") == 0 ? s.substr(3) : s.substr(2), 1);
+        }
         auto key = std::to_string(typeTag) + "\x01" + s;
         auto it = index.find(key);
         if (it != index.end()) return it->second;
