@@ -1,7 +1,7 @@
 /**
  * Repair orchestration (C1 of the repair plan): lazy candidate / verify / refine loop over a reasoner oracle.
  *
- *   1. explain the inconsistency (a few justifications),
+ *   1. explain the inconsistency (a few justifications), or start from caller-supplied justifications that still hold,
  *   2. minimal hitting sets of the justifications are the repair candidates (no reasoner calls),
  *   3. verify each candidate on an edited copy; a candidate that still fails reveals undiscovered
  *      justifications: explain the edited copy, add them, recompute the candidates, repeat.
@@ -88,15 +88,40 @@ export async function computeRepairs(args: {
 
   const totalCost = (keys: string[]): number => (cost ? keys.reduce((sum, k) => sum + cost(axiomByKey.get(k)!), 0) : 0);
 
-  const inc0 = await oracle.inconsistent(base);
-  if (inc0 === "aborted") return stop("deadline");
-  if (!inc0) {
-    result.consistent = true;
-    return result;
+  // Caller-supplied justifications replace the first explanation round when at least one still holds on this store.
+  let seeded = 0;
+  const seeds = args.opts?.justifications;
+  if (seeds && seeds.length > 0) {
+    const baseKeys = new Set(base.map(quadKey));
+    for (const seed of seeds) {
+      const axiomQuads = seed.axioms.flatMap(a => a.quads);
+      const context = seed.context ?? [];
+      if (axiomQuads.length === 0 || ![...axiomQuads, ...context].every(q => baseKeys.has(quadKey(q)))) continue; // stale
+      let alone: boolean | "aborted";
+      try {
+        alone = await oracle.inconsistent([...axiomQuads, ...context]);
+      } catch (e) {
+        if (e instanceof ReasonerStalledError) throw e;
+        return stop("explain-failed");
+      }
+      if (alone === "aborted") return stop("deadline");
+      if (alone) seeded += addJustifications([[...axiomQuads, ...context]]);
+    }
+  }
+
+  // A seed that is inconsistent on its own and present in the store makes the whole store inconsistent (monotonicity),
+  // so with a valid seed neither the consistency check nor the first explanation round is needed.
+  if (seeded === 0) {
+    const inc0 = await oracle.inconsistent(base);
+    if (inc0 === "aborted") return stop("deadline");
+    if (!inc0) {
+      result.consistent = true;
+      return result;
+    }
   }
 
   try {
-    if (addJustifications(await oracle.explain(base, maxJustifications)) === 0) {
+    if (seeded === 0 && addJustifications(await oracle.explain(base, maxJustifications)) === 0) {
       return stop(expired() ? "deadline" : "explain-failed");
     }
   } catch (e) {

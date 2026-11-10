@@ -125,6 +125,61 @@ describe("computeRepairs", () => {
     expect(r.repairs[0]).toMatchObject({ verifiedConsistent: true });
   });
 
+  describe("supplied justifications", () => {
+    const seed = (...is: number[]) => ({ axioms: is.map(i => ({ principal: ax(i), quads: [ax(i)] })), context: [] as Quad[] });
+
+    it("valid seeds replace the first explanation round and the initial consistency check", async () => {
+      const { r, oracle } = await run([[0, 1, 2], [0, 3]], { justifications: [seed(0, 1, 2), seed(0, 3)] });
+      expect(oracle.explains).toBe(0);
+      expect(r.consistent).toBe(false);
+      expect(r.repairs.map(removedIdx)[0]).toEqual([0]);
+      expect(r.repairs[0]).toMatchObject({ verifiedConsistent: true, minimal: true });
+      expect(r.justifications).toHaveLength(2);
+    });
+
+    it("gives the same repairs as explaining from scratch", async () => {
+      const clashes = [[0, 1], [2, 3]];
+      const plain = await run(clashes);
+      const seeded = await run(clashes, { justifications: [seed(0, 1), seed(2, 3)] });
+      expect(seeded.r.repairs.map(removedIdx)).toEqual(plain.r.repairs.map(removedIdx));
+      expect(seeded.oracle.explains).toBe(0);
+    });
+
+    it("an incomplete seed list is completed by refinement", async () => {
+      const { r, oracle } = await run([[0, 1], [2, 3]], { justifications: [seed(0, 1)] });
+      expect(oracle.explains).toBeGreaterThan(0); // the refine round
+      expect(r.repairs.length).toBeGreaterThan(0);
+      for (const rep of r.repairs) {
+        expect(rep.verifiedConsistent).toBe(true);
+        const gone = new Set(removedIdx(rep));
+        expect([0, 1].some(i => gone.has(i)) && [2, 3].some(i => gone.has(i))).toBe(true);
+      }
+    });
+
+    it("a stale seed (axiom no longer in the store) is dropped and repair explains as usual", async () => {
+      const { r, oracle } = await run([[0, 1]], { justifications: [seed(0, 99)] });
+      expect(oracle.explains).toBe(1);
+      expect(r.justifications).toHaveLength(1);
+      expect(r.repairs[0]).toMatchObject({ verifiedConsistent: true });
+    });
+
+    it("a seed that is not inconsistent on its own is dropped", async () => {
+      const { r, oracle } = await run([[0, 1]], { justifications: [seed(4, 5)] });
+      expect(oracle.explains).toBe(1);
+      expect(r.justifications.map(j => j.axioms.map(a => idx(a.principal)).sort())).toEqual([[0, 1]]);
+    });
+
+    it("stale or bogus seeds on a consistent store still report consistent", async () => {
+      const { r } = await run([], { justifications: [seed(0, 1)] });
+      expect(r).toMatchObject({ consistent: true, repairs: [], incomplete: false });
+    });
+
+    it("a deadline during seed validation is reported, not thrown", async () => {
+      const { r } = await run([[0, 1]], { justifications: [seed(0, 1)] }, { abortAfter: 0 });
+      expect(r).toMatchObject({ incomplete: true, reason: "deadline" });
+    });
+  });
+
   it("does not swallow kernel stalls", async () => {
     const s = setup([[0, 1]]);
     const oracle: RepairOracle = {

@@ -73,102 +73,77 @@ describe.skipIf(!wasmExists)("Explanation persistence integration", () => {
   it("materialize with explanations populates explanation graph (Roberts family)", async () => {
     const quads = loadFixture("roberts-family.nt");
     const store = new Store(quads);
-    const r = new RdfReasoner();
-    await r.ready;
-    try {
-      await r.materialize(store, { explanations: true });
+    const r = reasoner;
+    await r.materialize(store, { explanations: true });
 
-      const justifies = store.getQuads(null, namedNode(KJ_JUSTIFIES), null, explGraph);
-      expect(justifies.length).toBeGreaterThan(0);
+    const justifies = store.getQuads(null, namedNode(KJ_JUSTIFIES), null, explGraph);
+    expect(justifies.length).toBeGreaterThan(0);
 
-      for (const j of justifies) {
-        expect(j.object.termType).toBe("Quad");
-      }
-
-      const types = store.getQuads(null, namedNode(RDF_TYPE), namedNode(KJ_JUSTIFICATION), explGraph);
-      expect(types.length).toBeLessThanOrEqual(justifies.length);
-    } finally {
-      r.terminate();
+    for (const j of justifies) {
+      expect(j.object.termType).toBe("Quad");
     }
+
+    const types = store.getQuads(null, namedNode(RDF_TYPE), namedNode(KJ_JUSTIFICATION), explGraph);
+    expect(types.length).toBeLessThanOrEqual(justifies.length);
   }, 120000);
 
   it("justification node has kj:axiom quads linking to proof axioms", async () => {
     const quads = loadFixture("roberts-family.nt");
     const store = new Store(quads);
-    const r = new RdfReasoner();
-    await r.ready;
-    try {
-      await r.materialize(store, { explanations: true });
+    const r = reasoner;
+    await r.materialize(store, { explanations: true });
 
-      const justifies = store.getQuads(null, namedNode(KJ_JUSTIFIES), null, explGraph);
-      const withAxioms = justifies.filter(j => {
-        const axioms = store.getQuads(j.subject, namedNode(KJ_AXIOM), null, explGraph);
-        return axioms.length > 0;
-      });
-      expect(withAxioms.length).toBeGreaterThan(0);
+    const justifies = store.getQuads(null, namedNode(KJ_JUSTIFIES), null, explGraph);
+    const withAxioms = justifies.filter(j => {
+      const axioms = store.getQuads(j.subject, namedNode(KJ_AXIOM), null, explGraph);
+      return axioms.length > 0;
+    });
+    expect(withAxioms.length).toBeGreaterThan(0);
 
-      const firstWithAxioms = withAxioms[0];
-      const axioms = store.getQuads(firstWithAxioms.subject, namedNode(KJ_AXIOM), null, explGraph);
-      for (const ax of axioms) {
-        expect(ax.object.termType).toBe("Quad");
-      }
-    } finally {
-      r.terminate();
+    const firstWithAxioms = withAxioms[0];
+    const axioms = store.getQuads(firstWithAxioms.subject, namedNode(KJ_AXIOM), null, explGraph);
+    for (const ax of axioms) {
+      expect(ax.object.termType).toBe("Quad");
     }
   }, 120000);
 
   it("second classify (cache hit) keeps explanation graph", async () => {
     const quads = loadFixture("roberts-family.nt");
     const store = new Store(quads);
-    const r = new RdfReasoner();
-    await r.ready;
-    try {
-      await r.classify(store, { explanations: true });
+    const r = reasoner;
+    await r.classify(store, { explanations: true });
 
-      const firstCount = store.getQuads(null, namedNode(KJ_JUSTIFIES), null, explGraph).length;
-      expect(firstCount).toBeGreaterThanOrEqual(0);
+    const firstCount = store.getQuads(null, namedNode(KJ_JUSTIFIES), null, explGraph).length;
+    expect(firstCount).toBeGreaterThanOrEqual(0);
 
-      await r.classify(store, { explanations: true });
+    await r.classify(store, { explanations: true });
 
-      const secondCount = store.getQuads(null, namedNode(KJ_JUSTIFIES), null, explGraph).length;
-      expect(secondCount).toBe(firstCount);
-    } finally {
-      r.terminate();
-    }
+    const secondCount = store.getQuads(null, namedNode(KJ_JUSTIFIES), null, explGraph).length;
+    expect(secondCount).toBe(firstCount);
   }, 120000);
 
   it("classifyProperties with explanations works", async () => {
     const quads = loadFixture("roberts-family.nt");
     const store = new Store(quads);
-    const r = new RdfReasoner();
-    await r.ready;
-    try {
-      await r.classifyProperties(store, { explanations: true });
+    const r = reasoner;
+    await r.classifyProperties(store, { explanations: true });
 
-      const inferred = store.getQuads(null, null, null, infGraph);
-      expect(inferred.length).toBeGreaterThan(0);
-    } finally {
-      r.terminate();
-    }
+    const inferred = store.getQuads(null, null, null, infGraph);
+    expect(inferred.length).toBeGreaterThan(0);
   }, 120000);
 
   it("explanation graph queryable via getQuads pattern matching", { retry: 1, timeout: 120000 }, async () => {
     const quads = loadFixture("roberts-family.nt");
     const store = new Store(quads);
-    const r = new RdfReasoner();
-    await r.ready;
-    try {
-      await r.materialize(store, { explanations: true });
+    const r = reasoner;
+    await r.materialize(store, { explanations: true });
 
-      const allExpl = store.getQuads(null, null, null, explGraph);
-      const typeQuads = store.getQuads(null, namedNode(RDF_TYPE), null, explGraph);
-      const justifiesQuads = store.getQuads(null, namedNode(KJ_JUSTIFIES), null, explGraph);
+    const allExpl = store.getQuads(null, null, null, explGraph);
+    const typeQuads = store.getQuads(null, namedNode(RDF_TYPE), null, explGraph);
+    const justifiesQuads = store.getQuads(null, namedNode(KJ_JUSTIFIES), null, explGraph);
 
-      expect(allExpl.length).toBeGreaterThan(0);
-      expect(typeQuads.length).toBeLessThanOrEqual(justifiesQuads.length);
-    } finally {
-      r.terminate();
-    }
+    expect(allExpl.length).toBeGreaterThan(0);
+    expect(typeQuads.length).toBeLessThanOrEqual(justifiesQuads.length);
   });
 
   it("cache hit with explanations: prior call without → populates on demand", { retry: 1, timeout: 120000 }, async () => {
@@ -177,17 +152,12 @@ describe.skipIf(!wasmExists)("Explanation persistence integration", () => {
     // gets explanation data back even though the prior call did not request it.
     const quads = loadFixture("roberts-family.nt");
     const store = new Store(quads);
-    const r = new RdfReasoner();
-    await r.ready;
-    try {
-      await r.materialize(store);
-      expect(store.getQuads(null, null, null, explGraph)).toHaveLength(0);
+    const r = reasoner;
+    await r.materialize(store);
+    expect(store.getQuads(null, null, null, explGraph)).toHaveLength(0);
 
-      await r.materialize(store, { explanations: true });
-      const justifies = store.getQuads(null, namedNode(KJ_JUSTIFIES), null, explGraph);
-      expect(justifies.length).toBeGreaterThan(0);
-    } finally {
-      r.terminate();
-    }
+    await r.materialize(store, { explanations: true });
+    const justifies = store.getQuads(null, namedNode(KJ_JUSTIFIES), null, explGraph);
+    expect(justifies.length).toBeGreaterThan(0);
   }, 120000);
 });
