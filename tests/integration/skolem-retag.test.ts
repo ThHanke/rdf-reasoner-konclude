@@ -161,7 +161,12 @@ describe.skipIf(!wasmExists)("skolem IRIs reason like blank nodes", () => {
           expect(await reasoner.checkConsistency(store)).toBe(false);
           return;
         }
-        await reasoner.materialize(store);
+        await reasoner.materialize(store, { includeClassHierarchy: true });
+        // The wire label of a retagged node must never reach the caller, also where the kernel names an
+        // anonymous class expression in its output (for example `i rdf:type <expression node>`).
+        for (const q of inferredOf(store)) {
+          for (const term of [q.subject, q.predicate, q.object]) expect(term.value.startsWith("sk_")).toBe(false);
+        }
         const [subject, cls] = c.entails;
         const hit = inferredOf(store).some(
           (q) =>

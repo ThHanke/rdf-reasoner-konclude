@@ -20,7 +20,7 @@ import {
 export function toN3EntityKey(raw: string, type: number): string {
   switch (type) {
     case 0:
-      return raw;
+      return blankLabelToSkolemIri(raw) ?? raw;
     case 1:
       return blankLabelToSkolemIri(raw) ?? `_:${raw}`;
     case 2: {
