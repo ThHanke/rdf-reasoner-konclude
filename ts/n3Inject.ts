@@ -1,5 +1,6 @@
 import type { Store } from "n3";
 import type { EncodedBuffers } from "./intern.js";
+import { isSkolemIri, skolemIriToBlankLabel, blankLabelToSkolemIri } from "./intern.js";
 import {
   INFERRED_GRAPH_IRI,
   HYPOTHETICAL_IRI,
@@ -21,7 +22,7 @@ export function toN3EntityKey(raw: string, type: number): string {
     case 0:
       return raw;
     case 1:
-      return `_:${raw}`;
+      return blankLabelToSkolemIri(raw) ?? `_:${raw}`;
     case 2: {
       const nul1 = raw.indexOf("\0");
       const value = nul1 >= 0 ? raw.slice(0, nul1) : raw;
@@ -140,14 +141,45 @@ const EXCLUDED_GRAPHS = new Set([INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATI
 /**
  * Build a Set of numeric graph IDs that should be excluded from dedup checks.
  */
-function getExcludedGraphIds(store: Store): Set<number> {
+function getExcludedGraphIds(store: Store, extra: Iterable<string> = []): Set<number> {
   const ei = (store as any)._entityIndex;
   const ids = new Set<number>();
-  for (const iri of EXCLUDED_GRAPHS) {
+  for (const iri of [...EXCLUDED_GRAPHS, ...extra]) {
     const id = ei._ids[iri];
     if (id !== undefined) ids.add(id);
   }
   return ids;
+}
+
+/**
+ * Order-independent signature of one graph's quads (count plus two 32-bit mixes of the interned term ids), read
+ * from N3's index without allocating quads. Equal signatures mean the graph holds the same quads as when the
+ * signature was taken (up to a 2^-64 collision), so a caller can tell whether anyone edited the graph since.
+ */
+export function graphSignature(store: Store, graphIri: string): string {
+  const raw = store as any;
+  const gId = raw._entityIndex?._ids?.[graphIri];
+  const graph = gId === undefined ? undefined : raw._graphs?.[gId];
+  if (!graph) return "0";
+  let n = 0;
+  let h1 = 0;
+  let h2 = 0;
+  const subjects = graph.subjects;
+  for (const s in subjects) {
+    const sh = Math.imul(Number(s), 0x9e3779b1);
+    const predicates = subjects[s];
+    for (const p in predicates) {
+      const sp = sh ^ Math.imul(Number(p), 0x85ebca77);
+      const objects = predicates[p];
+      for (const o in objects) {
+        const x = Math.imul(sp ^ Math.imul(Number(o), 0xc2b2ae3d), 0x27d4eb2f);
+        h1 = (h1 + x) | 0;
+        h2 ^= (x << 13) | (x >>> 19);
+        n++;
+      }
+    }
+  }
+  return `${n}:${h1 >>> 0}:${h2 >>> 0}`;
 }
 
 /**
@@ -195,6 +227,7 @@ export function existsInSourceGraphs(
   subject: { termType: string; value: string },
   predicate: { termType: string; value: string },
   object: { termType: string; value: string; language?: string; datatype?: { value: string } },
+  extraExcludedGraphs: Iterable<string> = [],
 ): boolean {
   const ei = (store as any)._entityIndex;
   const sId = ei._ids[termToN3Key(subject)];
@@ -203,7 +236,7 @@ export function existsInSourceGraphs(
   if (pId === undefined) return false;
   const oId = ei._ids[termToN3Key(object)];
   if (oId === undefined) return false;
-  return spoExistsInOtherGraphs(store, sId, pId, oId, getExcludedGraphIds(store));
+  return spoExistsInOtherGraphs(store, sId, pId, oId, getExcludedGraphIds(store, extraExcludedGraphs));
 }
 
 /**
@@ -234,7 +267,7 @@ export function fromN3EntityKey(entityStr: string): { raw: string; type: 0 | 1 |
     }
     return { raw: `${value}\0\0`, type: 2 };
   }
-  return { raw: entityStr, type: 0 };
+  return isSkolemIri(entityStr) ? { raw: skolemIriToBlankLabel(entityStr), type: 1 } : { raw: entityStr, type: 0 };
 }
 
 const enc = new TextEncoder();
