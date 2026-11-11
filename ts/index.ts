@@ -31,7 +31,7 @@ export { createManagedStore } from "./n3Inject.js";
 import type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions, LaconicPart, LaconicJustification, LaconicExplainOptions, Axiom, AxiomJustification, RepairOptions, Repair, RepairResult, Edit, DisjointPair, AssessEditOptions, EditAssessment, WeakenOptions, Weakening, WeakenResult, InconsistencyGuardOptions } from "./types.js";
 import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, KJ_JUSTIFIES, KJ_AXIOM, ReasonerStalledError, InconsistentOntologyError } from "./types.js";
 export { ReasonerStalledError, InconsistentOntologyError } from "./types.js";
-import { injectExplanationsFromBuffer, encodeStoreToBuffers, existsInSourceGraphs, clearGraph, createManagedStore, getRawStore } from "./n3Inject.js";
+import { injectExplanationsFromBuffer, encodeStoreToBuffers, existsInSourceGraphs, clearGraph, createManagedStore, getRawStore, graphSignature } from "./n3Inject.js";
 import { groupJustification, partitionIntoUnits } from "./axiomGrouping.js";
 import { dropAnnotationTriples } from "./annotations.js";
 import { computeRepairs, REPAIR_DEFAULT_TIMEOUT_MS, type RepairOracle } from "./repair.js";
@@ -118,6 +118,8 @@ const workerRegistry = new FinalizationRegistry<Worker>((worker) => {
   }
 });
 
+type ResultCache = { gen: number; store: Store; graph: string; sig: string };
+
 export class RdfReasoner {
   /** Resolves when the Worker WASM module is ready; rejects on init failure. */
   readonly ready: Promise<void>;
@@ -141,9 +143,12 @@ export class RdfReasoner {
   // exact store instance so that a cache hit only fires for the same Store object with unchanged
   // content. Two different Store objects with identical quads do NOT share a hit — the inferred graph
   // lives inside the Store, so a fresh Store is populated from the reasoner's (cached) result.
-  private _classifyCache: { gen: number; store: Store; result: void } | null = null;
-  private _materializeCache: { gen: number; store: Store; result: void } | null = null;
-  private _classifyPropertiesCache: { gen: number; store: Store; result: void } | null = null;
+  // A result cache says "the inferred graph of `store` was written for generation `gen`". It is only a hit while
+  // the graph still holds exactly what was written (`sig`): an edit to the inferred graph, or a call that targets
+  // another inferred graph, rewrites it instead of trusting the cache.
+  private _classifyCache: ResultCache | null = null;
+  private _materializeCache: ResultCache | null = null;
+  private _classifyPropertiesCache: ResultCache | null = null;
   private _consistencyCache: { gen: number; result: boolean } | null = null;
 
   // Cached explanation buffers — avoids WASM round-trip on cache-hit explanation requests.
@@ -156,6 +161,8 @@ export class RdfReasoner {
   // when a blocking call shows no sign of life (see RdfReasonerOptions.stallTimeoutMs).
   private readonly _stallTimeoutMs: number;
   private readonly _recycleHeapBytes: number;
+  // Caller graphs that are not ontology content (shapes, provenance, ...): never encoded, never count as a source of an inferred triple.
+  private readonly _excludeGraphs: ReadonlySet<string>;
   private _lastHeapBytes = 0;
   private readonly _workerFactory: (() => Worker) | undefined;
   private _lastActivity = Date.now();
@@ -166,6 +173,7 @@ export class RdfReasoner {
     this._onTrace = opts?.onTrace;
     this._stallTimeoutMs = opts?.stallTimeoutMs ?? 600_000;
     this._recycleHeapBytes = opts?.recycleHeapBytes ?? 2 * 1024 ** 3;
+    this._excludeGraphs = new Set(opts?.excludeGraphs ?? []);
     this._workerFactory = opts?.workerFactory;
     if (opts?.workerFactory) {
       this.worker = opts.workerFactory();
@@ -418,6 +426,17 @@ export class RdfReasoner {
     });
   }
 
+  private _stamp(gen: number, store: Store, inferredGraph?: string): ResultCache {
+    const graph = inferredGraph ?? INFERRED_GRAPH_IRI;
+    return { gen, store, graph, sig: graphSignature(getRawStore(store), graph) };
+  }
+
+  private _hit(cache: ResultCache | null, gen: number, store: Store, inferredGraph?: string): boolean {
+    if (cache === null || cache.gen !== gen || cache.store !== store) return false;
+    const graph = inferredGraph ?? INFERRED_GRAPH_IRI;
+    return cache.graph === graph && cache.sig === graphSignature(getRawStore(store), graph);
+  }
+
   /** Content generation of the last `sync` (C++ owns validity; see KoncludeReasoner::syncTripleBuffer). */
   private _lastGen = -1;
   private _noGen = 0;
@@ -428,7 +447,7 @@ export class RdfReasoner {
    * result caches. `ignoreGraph` (a custom inferredGraph) never counts as content.
    */
   private async _sync(store: Store, ignoreGraph?: string, direct = false): Promise<number> {
-    const { tripleBuffer, strTableBuffer } = encodeStoreToBuffers(store, ignoreGraph ? [ignoreGraph] : []);
+    const { tripleBuffer, strTableBuffer } = encodeStoreToBuffers(store, ignoreGraph ? [ignoreGraph, ...this._excludeGraphs] : [...this._excludeGraphs]);
     const call = direct ? this._callDirect.bind(this) : this._call.bind(this);
     const info = (await call("sync", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer])) as { generation?: number } | undefined;
     // A worker that does not report generations (e.g. test doubles) never yields a cache hit.
@@ -486,7 +505,7 @@ export class RdfReasoner {
       const gen = await this._syncForOp(store, opts?.inferredGraph);
       await this._guardConsistent(gen, opts);
       // Cache hit: same store instance with same content as last classify call
-      if (this._classifyCache !== null && this._classifyCache.gen === gen && this._classifyCache.store === store) {
+      if (this._hit(this._classifyCache, gen, store, opts?.inferredGraph)) {
         if (wantExplanations) {
           await this._ensureExplanationGraphFromBuffer(store, "getInferredTripleBuffer");
         }
@@ -506,7 +525,7 @@ export class RdfReasoner {
       if (wantExplanations) {
         const decoded = decodeBuffers(resultBuf, { withJustifications: true });
         for (const q of decoded.quads) {
-          if (existsInSourceGraphs(store, q.subject, q.predicate, q.object)) continue;
+          if (existsInSourceGraphs(store, q.subject, q.predicate, q.object, this._excludeGraphs)) continue;
           rawStore.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode));
         }
         injectExplanationsFromBuffer(rawStore, resultBuf, EXPLANATION_GRAPH_IRI);
@@ -514,13 +533,13 @@ export class RdfReasoner {
       } else {
         const inferredQuads = decodeBuffers(resultBuf);
         for (const q of inferredQuads) {
-          if (existsInSourceGraphs(store, q.subject, q.predicate, q.object)) continue;
+          if (existsInSourceGraphs(store, q.subject, q.predicate, q.object, this._excludeGraphs)) continue;
           rawStore.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode));
         }
         this._lastExplBuffer = null;
       }
 
-      this._classifyCache = { gen, store, result: undefined as void };
+      this._classifyCache = this._stamp(gen, store, opts?.inferredGraph);
       this._materializeCache = null;
       this._classifyPropertiesCache = null;
       this._lastPropertyExplBuffer = null;
@@ -628,7 +647,7 @@ export class RdfReasoner {
       await this._guardConsistent(gen, opts);
 
       // Cache hit: same store instance with same content as last materialize call
-      if (this._materializeCache !== null && this._materializeCache.gen === gen && this._materializeCache.store === store) {
+      if (this._hit(this._materializeCache, gen, store, opts?.inferredGraph)) {
         if (wantExplanations) {
           await this._ensureExplanationGraphFromBuffer(store, "getInferredTripleBuffer");
         }
@@ -680,13 +699,13 @@ export class RdfReasoner {
           );
 
       for (const q of inferredQuads) {
-        if (existsInSourceGraphs(store, q.subject, q.predicate, q.object)) continue;
+        if (existsInSourceGraphs(store, q.subject, q.predicate, q.object, this._excludeGraphs)) continue;
         rawStore.addQuad(
           DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode),
         );
       }
 
-      this._materializeCache = { gen, store, result: undefined as void };
+      this._materializeCache = this._stamp(gen, store, opts?.inferredGraph);
       this._classifyCache = null;
       this._classifyPropertiesCache = null;
       this._lastPropertyExplBuffer = null;
@@ -734,7 +753,7 @@ export class RdfReasoner {
       const gen = await this._syncForOp(store, opts?.inferredGraph);
       await this._guardConsistent(gen, opts);
       // Cache hit: same store instance with same content as last classifyProperties call
-      if (this._classifyPropertiesCache !== null && this._classifyPropertiesCache.gen === gen && this._classifyPropertiesCache.store === store) {
+      if (this._hit(this._classifyPropertiesCache, gen, store, opts?.inferredGraph)) {
         if (wantExplanations) {
           await this._ensureExplanationGraphFromBuffer(store, "getPropertyTripleBuffer");
         }
@@ -754,7 +773,7 @@ export class RdfReasoner {
       if (wantExplanations) {
         const decoded = decodeBuffers(resultBuf, { withJustifications: true });
         for (const q of decoded.quads) {
-          if (existsInSourceGraphs(store, q.subject, q.predicate, q.object)) continue;
+          if (existsInSourceGraphs(store, q.subject, q.predicate, q.object, this._excludeGraphs)) continue;
           rawStore.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode));
         }
         injectExplanationsFromBuffer(rawStore, resultBuf, EXPLANATION_GRAPH_IRI);
@@ -762,13 +781,13 @@ export class RdfReasoner {
       } else {
         const inferredQuads = decodeBuffers(resultBuf);
         for (const q of inferredQuads) {
-          if (existsInSourceGraphs(store, q.subject, q.predicate, q.object)) continue;
+          if (existsInSourceGraphs(store, q.subject, q.predicate, q.object, this._excludeGraphs)) continue;
           rawStore.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, inferredGraphNode));
         }
         this._lastPropertyExplBuffer = null;
       }
 
-      this._classifyPropertiesCache = { gen, store, result: undefined as void };
+      this._classifyPropertiesCache = this._stamp(gen, store, opts?.inferredGraph);
       this._classifyCache = null;
       this._materializeCache = null;
       this._lastExplBuffer = null;
@@ -799,7 +818,7 @@ export class RdfReasoner {
   }
 
   private async _classifyInline(store: Store, gen: number, inferredGraph?: string): Promise<void> {
-    if (this._classifyCache?.gen === gen && this._classifyCache.store === store) return;
+    if (this._hit(this._classifyCache, gen, store, inferredGraph)) return;
     const rawStore = getRawStore(store);
     const ig = DataFactory.namedNode(inferredGraph ?? INFERRED_GRAPH_IRI);
     clearGraph(rawStore, ig.value);
@@ -808,7 +827,7 @@ export class RdfReasoner {
     for (const q of decodeBuffers(buf)) {
       rawStore.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, ig));
     }
-    this._classifyCache = { gen, store, result: undefined as void };
+    this._classifyCache = this._stamp(gen, store, inferredGraph);
     this._materializeCache = null;           // cross-invalidate
     this._classifyPropertiesCache = null;    // cross-invalidate
     this._lastExplBuffer = null;
@@ -816,7 +835,7 @@ export class RdfReasoner {
   }
 
   private async _materializeInline(store: Store, gen: number, inferredGraph?: string): Promise<void> {
-    if (this._materializeCache?.gen === gen && this._materializeCache.store === store) return;
+    if (this._hit(this._materializeCache, gen, store, inferredGraph)) return;
     const rawStore = getRawStore(store);
     const ig = DataFactory.namedNode(inferredGraph ?? INFERRED_GRAPH_IRI);
     clearGraph(rawStore, ig.value);
@@ -827,7 +846,7 @@ export class RdfReasoner {
     for (const q of allQuads) {
       rawStore.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, ig));
     }
-    this._materializeCache = { gen, store, result: undefined as void };
+    this._materializeCache = this._stamp(gen, store, inferredGraph);
     this._classifyCache = null;              // cross-invalidate
     this._classifyPropertiesCache = null;    // cross-invalidate
     this._lastExplBuffer = null;
@@ -835,7 +854,7 @@ export class RdfReasoner {
   }
 
   private async _classifyPropertiesInline(store: Store, gen: number, inferredGraph?: string): Promise<void> {
-    if (this._classifyPropertiesCache?.gen === gen && this._classifyPropertiesCache.store === store) return;
+    if (this._hit(this._classifyPropertiesCache, gen, store, inferredGraph)) return;
     const rawStore = getRawStore(store);
     const ig = DataFactory.namedNode(inferredGraph ?? INFERRED_GRAPH_IRI);
     clearGraph(rawStore, ig.value);
@@ -844,7 +863,7 @@ export class RdfReasoner {
     for (const q of decodeBuffers(buf)) {
       rawStore.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, ig));
     }
-    this._classifyPropertiesCache = { gen, store, result: undefined as void };
+    this._classifyPropertiesCache = this._stamp(gen, store, inferredGraph);
     this._classifyCache = null;              // cross-invalidate
     this._materializeCache = null;           // cross-invalidate
     this._lastExplBuffer = null;
@@ -864,7 +883,7 @@ export class RdfReasoner {
   private async _getUnsatisfiableClassesInternal(store: Store, inferredGraph?: string, guard?: { failOnInconsistent?: boolean }): Promise<string[]> {
     const gen = await this._sync(store, inferredGraph, true);
     await this._guardConsistent(gen, guard, true);
-    if (this._classifyCache?.gen !== gen || this._classifyCache.store !== store) {
+    if (!this._hit(this._classifyCache, gen, store, inferredGraph)) {
       const rawStore = getRawStore(store);
       const ig = DataFactory.namedNode(inferredGraph ?? INFERRED_GRAPH_IRI);
       clearGraph(rawStore, ig.value);
@@ -872,7 +891,7 @@ export class RdfReasoner {
       const buf = (await this._callDirect("getInferredTripleBuffer", [])) as ArrayBuffer;
       for (const q of decodeBuffers(buf))
         rawStore.addQuad(DataFactory.quad(q.subject, q.predicate, q.object, ig));
-      this._classifyCache = { gen, store, result: undefined as void };
+      this._classifyCache = this._stamp(gen, store, inferredGraph);
       this._materializeCache = null;
       this._classifyPropertiesCache = null;
     }
@@ -1057,7 +1076,7 @@ export class RdfReasoner {
       );
       const baseQuads = store.getQuads(null, null, null, null).filter(q => {
         const g = q.graph.value;
-        if (g === igIri || g === HYPOTHETICAL_IRI) return false;
+        if (g === igIri || g === HYPOTHETICAL_IRI || this._excludeGraphs.has(g)) return false;
         const key = `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`;
         return !removalKeys.has(key);
       });
@@ -1513,7 +1532,7 @@ export class RdfReasoner {
       const background: Quad[] = [];
       for (const q of store.getQuads(null, null, null, null)) {
         const g = q.graph.value;
-        if (g === igIri || g === HYPOTHETICAL_IRI) continue;
+        if (g === igIri || g === HYPOTHETICAL_IRI || this._excludeGraphs.has(g)) continue;
         if (this._isBuiltInDeclaration(q)) {
           background.push(q);
           continue;
@@ -1657,7 +1676,7 @@ export class RdfReasoner {
       // Annotation assertions never affect consistency (OWL 2 DL): leave them out of every check.
       const allBase = dropAnnotationTriples(store.getQuads(null, null, null, null).filter(q => {
         const g = q.graph.value;
-        return g !== ig && g !== HYPOTHETICAL_IRI;
+        return g !== ig && g !== HYPOTHETICAL_IRI && !this._excludeGraphs.has(g);
       }));
 
       // Fast-path: check consistency using existing cache or direct Worker call
@@ -1688,7 +1707,7 @@ export class RdfReasoner {
       // ABox inconsistency (Konclude requires them to recognize disjoint classes).
       const allCandidates = dropAnnotationTriples(store.getQuads(null, null, null, null).filter(q => {
         const g = q.graph.value;
-        if (g === ig || g === HYPOTHETICAL_IRI) return false;
+        if (g === ig || g === HYPOTHETICAL_IRI || this._excludeGraphs.has(g)) return false;
         if (opts?.axiomFilter && !opts.axiomFilter(q)) return false;
         return true;
       }));
@@ -1738,7 +1757,7 @@ export class RdfReasoner {
     }
     const result = this._queue.then(async () => {
       const ig = opts?.inferredGraph ?? INFERRED_GRAPH_IRI;
-      const graphsToIgnore = new Set<string>([ig, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI]);
+      const graphsToIgnore = new Set<string>([ig, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, ...this._excludeGraphs]);
       const base = store.getQuads(null, null, null, null).filter(q => !graphsToIgnore.has(q.graph.value));
       const timeoutMs = opts?.timeout ?? 180_000;
       const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : Infinity;
@@ -1781,7 +1800,7 @@ export class RdfReasoner {
     if (edit === null || typeof edit !== "object") return Promise.reject(new TypeError("assessEdit: edit must be an object"));
     const result = this._queue.then(async () => {
       const ig = opts?.inferredGraph ?? INFERRED_GRAPH_IRI;
-      const graphsToIgnore = new Set<string>([ig, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI]);
+      const graphsToIgnore = new Set<string>([ig, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, ...this._excludeGraphs]);
       const base = store.getQuads(null, null, null, null).filter(q => !graphsToIgnore.has(q.graph.value));
       const timeoutMs = opts?.timeout ?? 180_000;
       const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : Infinity;
@@ -1825,7 +1844,7 @@ export class RdfReasoner {
     }
     const result = this._queue.then(async () => {
       const ig = opts?.inferredGraph ?? INFERRED_GRAPH_IRI;
-      const graphsToIgnore = new Set<string>([ig, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI]);
+      const graphsToIgnore = new Set<string>([ig, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, ...this._excludeGraphs]);
       // Annotation assertions never affect consistency (OWL 2 DL): leave them out of every check.
       const base = dropAnnotationTriples(store.getQuads(null, null, null, null).filter(q => !graphsToIgnore.has(q.graph.value)));
       const timeoutMs = opts?.timeout ?? REPAIR_DEFAULT_TIMEOUT_MS;
@@ -1864,7 +1883,7 @@ export class RdfReasoner {
    */
   async explainInconsistencyAxioms(store: Store, opts?: ExplainOptions): Promise<AxiomJustification[]> {
     const justifications = await this.explainInconsistency(store, opts);
-    const ignore = new Set<string>([opts?.inferredGraph ?? INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI]);
+    const ignore = new Set<string>([opts?.inferredGraph ?? INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, ...this._excludeGraphs]);
     return justifications.map(j => groupJustification(j, store, ignore));
   }
 
@@ -1923,7 +1942,7 @@ export class RdfReasoner {
    * (every pair is then vacuously entailed, which says nothing). The probe load replaces the WASM state: the caller invalidates caches.
    */
   private async _disjointEntailmentsDirect(store: Store, inferredGraph: string, axioms: Quad[]): Promise<Array<{ entailed: boolean | null; vacuous: boolean }>> {
-    const ignore = new Set<string>([inferredGraph, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI]);
+    const ignore = new Set<string>([inferredGraph, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, ...this._excludeGraphs]);
     const base = dropAnnotationTriples(store.getQuads(null, null, null, null).filter(q => !ignore.has(q.graph.value)));
     const inconsistent = await this._boundedInconsistencyCheck(base, Infinity);
     if (inconsistent !== false) return axioms.map(() => ({ entailed: null, vacuous: false }));
@@ -2129,7 +2148,7 @@ export class RdfReasoner {
       // Get MIPS justifications (reuse explainInconsistency logic inline)
       const allBase = store.getQuads(null, null, null, null).filter(q => {
         const g = q.graph.value;
-        return g !== ig && g !== HYPOTHETICAL_IRI;
+        return g !== ig && g !== HYPOTHETICAL_IRI && !this._excludeGraphs.has(g);
       });
 
       const gen = await this._sync(store, ig);
@@ -2154,7 +2173,7 @@ export class RdfReasoner {
 
       const allCandidates = store.getQuads(null, null, null, null).filter(q => {
         const g = q.graph.value;
-        if (g === ig || g === HYPOTHETICAL_IRI) return false;
+        if (g === ig || g === HYPOTHETICAL_IRI || this._excludeGraphs.has(g)) return false;
         if (opts?.axiomFilter && !opts.axiomFilter(q)) return false;
         return true;
       });
@@ -2365,7 +2384,7 @@ export class RdfReasoner {
       const ig = opts?.inferredGraph ?? INFERRED_GRAPH_IRI;
       const allBase = store.getQuads(null, null, null, null).filter(q => {
         const g = q.graph.value;
-        return g !== ig && g !== HYPOTHETICAL_IRI;
+        return g !== ig && g !== HYPOTHETICAL_IRI && !this._excludeGraphs.has(g);
       });
 
       const probeKind = classifyAxiom(predicateIri, objectIsClassLike);
@@ -3016,12 +3035,12 @@ export class RdfReasoner {
       const igIri = opts?.inferredGraph ?? INFERRED_GRAPH_IRI;
 
       const allBase = store.getQuads(null, null, null, null).filter(q =>
-        q.graph.value !== igIri && q.graph.value !== HYPOTHETICAL_IRI,
+        q.graph.value !== igIri && q.graph.value !== HYPOTHETICAL_IRI && !this._excludeGraphs.has(q.graph.value),
       );
 
       const makeCandidates = () => store.getQuads(null, null, null, null).filter(q => {
         const g = q.graph.value;
-        if (g === igIri || g === HYPOTHETICAL_IRI) return false;
+        if (g === igIri || g === HYPOTHETICAL_IRI || this._excludeGraphs.has(g)) return false;
         if (opts?.axiomFilter && !opts.axiomFilter(q)) return false;
         return true;
       });

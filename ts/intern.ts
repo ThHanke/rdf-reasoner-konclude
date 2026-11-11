@@ -8,6 +8,36 @@ export interface EncodedBuffers {
 }
 
 const enc = new TextEncoder();
+const dec = new TextDecoder();
+
+// Skolem IRIs (urn:vg:bnode:*, RFC 7511 /.well-known/genid/*) stand for blank nodes. The kernel only builds
+// anonymous class expressions (intersectionOf, unionOf, oneOf, complementOf, cardinalities) from blank-node
+// terms, so they go over the wire as blank nodes with a reversible label and come back as the original IRI.
+const SKOLEM_LABEL = "sk_";
+
+export function isSkolemIri(iri: string): boolean {
+  return iri.startsWith("urn:vg:bnode:") || iri.includes("/.well-known/genid/");
+}
+
+export function skolemIriToBlankLabel(iri: string): string {
+  let hex = SKOLEM_LABEL;
+  for (const b of enc.encode(iri)) hex += b.toString(16).padStart(2, "0");
+  return hex;
+}
+
+/** Original skolem IRI for a label made by skolemIriToBlankLabel, otherwise null. */
+export function blankLabelToSkolemIri(label: string): string | null {
+  if (!label.startsWith(SKOLEM_LABEL) || (label.length - SKOLEM_LABEL.length) % 2 !== 0) return null;
+  const n = (label.length - SKOLEM_LABEL.length) / 2;
+  const bytes = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    const v = parseInt(label.substr(SKOLEM_LABEL.length + 2 * i, 2), 16);
+    if (Number.isNaN(v)) return null;
+    bytes[i] = v;
+  }
+  const iri = dec.decode(bytes);
+  return isSkolemIri(iri) ? iri : null;
+}
 
 export class InternTable {
   // Separate maps per term type to avoid key-prefix construction on cache hits.
@@ -27,7 +57,9 @@ export class InternTable {
       case "NamedNode": {
         let id = this.namedNodes.get(term.value);
         if (id === undefined) {
-          id = this.addEntry(enc.encode(term.value), 0);
+          id = isSkolemIri(term.value)
+            ? this.addEntry(enc.encode(skolemIriToBlankLabel(term.value)), 1)
+            : this.addEntry(enc.encode(term.value), 0);
           this.namedNodes.set(term.value, id);
         }
         return id;
@@ -88,8 +120,6 @@ export class InternTable {
     return buf;
   }
 }
-
-const dec = new TextDecoder();
 
 // decodeBuffers — reverse of encodeToBuffers for the C++ output path.
 //
@@ -245,8 +275,10 @@ function decodeTerm(
   const raw = rawStrings[idx] ?? "";
 
   switch (type) {
-    case 1:
-      return DataFactory.blankNode(raw);
+    case 1: {
+      const skolem = blankLabelToSkolemIri(raw);
+      return skolem !== null ? DataFactory.namedNode(skolem) : DataFactory.blankNode(raw);
+    }
     case 2: {
       const nul1 = raw.indexOf("\0");
       const value = nul1 >= 0 ? raw.slice(0, nul1) : raw;

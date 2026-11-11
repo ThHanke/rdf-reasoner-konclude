@@ -406,6 +406,12 @@ export interface RdfReasonerOptions {
    *  make an allocator thread trap (observed as a stall). When the heap has grown past this many
    *  bytes after a call, the Worker is recycled before the next load. Default 2 GiB; 0 disables. */
   recycleHeapBytes?: number;
+  /** Named graphs that are not ontology content (for example SHACL shapes, provenance or workflow state).
+   *  Their quads are never sent to the reasoner, never count as store content for change detection, are
+   *  ignored when extracting axioms for explanations and repairs, and never make an inferred triple look
+   *  "already asserted". The reasoner's own inferred, hypothetical and explanation graphs are always excluded
+   *  and need not be listed. Applies to every call on this instance. Default none. */
+  excludeGraphs?: Iterable<string>;
 }
 
 /** Thrown (after one automatic recovery attempt) when a reasoning call stalls. */
