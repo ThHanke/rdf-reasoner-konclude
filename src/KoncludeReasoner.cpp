@@ -1017,17 +1017,6 @@ struct KoncludeReasoner::Impl {
         return s + '\0' + p + '\0' + o;
     }
 
-    // Resolve a vector of dep chain tags to axiom NTriples.
-    // isRoleTag: use getAxiomsForRoleTag instead of getAxiomsForConceptTag.
-    std::string resolveDepTagsToNTriples(const std::vector<int64_t>& depTags, bool isRoleTag = false) {
-        std::string result;
-        for (int64_t tag : depTags) {
-            std::string axioms = isRoleTag ? getAxiomsForRoleTag(tag) : getAxiomsForConceptTag(tag);
-            if (!axioms.empty()) result += axioms;
-        }
-        return result;
-    }
-
     // Axiom index resolution — same expression walks as getAxiomsForConceptTag/RoleTag
     // but interns IRIs into a shared InternTable and returns (s,p,o) index tuples.
     // Defined out-of-line after InternTable.

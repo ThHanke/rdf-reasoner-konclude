@@ -350,47 +350,6 @@ export function encodeStoreToBuffers(store: Store, extraExcludedGraphs: readonly
 }
 
 /**
- * Convert an N3 entity string to NTriples format for fingerprinting.
- *
- * N3's entity format: "VALUE"@lang, "VALUE"^^datatype, or "VALUE"
- * VALUE may contain unescaped " characters. Find the closing quote by
- * scanning backwards for a " followed by @, ^^, or end-of-string.
- */
-function entityToNTriples(entityStr: string): string {
-  if (entityStr.startsWith("_:")) {
-    return entityStr;
-  }
-  if (entityStr.startsWith('"')) {
-    let closingQuote = entityStr.length - 1;
-    // Scan backwards for the closing quote: it's the last " followed by @, ^^, or EOS
-    while (closingQuote > 0) {
-      if (entityStr[closingQuote] === '"') {
-        const after = entityStr[closingQuote + 1];
-        if (after === undefined || after === "@" || after === "^") break;
-      }
-      closingQuote--;
-    }
-    const value = entityStr.slice(1, closingQuote);
-    const suffix = entityStr.slice(closingQuote + 1);
-    const escaped = value
-      .replace(/\\/g, "\\\\")
-      .replace(/"/g, '\\"')
-      .replace(/\n/g, "\\n")
-      .replace(/\r/g, "\\r");
-    if (suffix.startsWith("@")) {
-      return `"${escaped}"${suffix}`;
-    }
-    if (suffix.startsWith("^^")) {
-      return `"${escaped}"^^<${suffix.slice(2)}>`;
-    }
-    // N3 suppresses xsd:string — but N3 DataFactory still sets term.datatype
-    // to xsd:string, so computeStoreFingerprint emits it. Match that.
-    return `"${escaped}"^^<http://www.w3.org/2001/XMLSchema#string>`;
-  }
-  return `<${entityStr}>`;
-}
-
-/**
  * Decode inferred triples from the combined buffer and inject them directly
  * into the N3 Store's index, bypassing DataFactory.quad() and store.addQuad().
  *
