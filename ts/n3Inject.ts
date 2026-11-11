@@ -20,7 +20,7 @@ import {
 export function toN3EntityKey(raw: string, type: number): string {
   switch (type) {
     case 0:
-      return raw;
+      return blankLabelToSkolemIri(raw) ?? raw;
     case 1:
       return blankLabelToSkolemIri(raw) ?? `_:${raw}`;
     case 2: {
@@ -347,47 +347,6 @@ export function encodeStoreToBuffers(store: Store, extraExcludedGraphs: readonly
   const tripleBuffer = new Uint32Array(tripleIds).buffer;
 
   return { tripleBuffer, strTableBuffer };
-}
-
-/**
- * Convert an N3 entity string to NTriples format for fingerprinting.
- *
- * N3's entity format: "VALUE"@lang, "VALUE"^^datatype, or "VALUE"
- * VALUE may contain unescaped " characters. Find the closing quote by
- * scanning backwards for a " followed by @, ^^, or end-of-string.
- */
-function entityToNTriples(entityStr: string): string {
-  if (entityStr.startsWith("_:")) {
-    return entityStr;
-  }
-  if (entityStr.startsWith('"')) {
-    let closingQuote = entityStr.length - 1;
-    // Scan backwards for the closing quote: it's the last " followed by @, ^^, or EOS
-    while (closingQuote > 0) {
-      if (entityStr[closingQuote] === '"') {
-        const after = entityStr[closingQuote + 1];
-        if (after === undefined || after === "@" || after === "^") break;
-      }
-      closingQuote--;
-    }
-    const value = entityStr.slice(1, closingQuote);
-    const suffix = entityStr.slice(closingQuote + 1);
-    const escaped = value
-      .replace(/\\/g, "\\\\")
-      .replace(/"/g, '\\"')
-      .replace(/\n/g, "\\n")
-      .replace(/\r/g, "\\r");
-    if (suffix.startsWith("@")) {
-      return `"${escaped}"${suffix}`;
-    }
-    if (suffix.startsWith("^^")) {
-      return `"${escaped}"^^<${suffix.slice(2)}>`;
-    }
-    // N3 suppresses xsd:string — but N3 DataFactory still sets term.datatype
-    // to xsd:string, so computeStoreFingerprint emits it. Match that.
-    return `"${escaped}"^^<http://www.w3.org/2001/XMLSchema#string>`;
-  }
-  return `<${entityStr}>`;
 }
 
 /**

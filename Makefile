@@ -1,4 +1,4 @@
-.PHONY: repro-wasm repro repro-selftest build build-wasm test test-browser smoke reason shell patches reset-patches fmt lint
+.PHONY: repro-wasm repro repro-selftest build build-wasm test test-browser smoke reason shell patches reset-patches fmt lint dead-code
 
 build:
 	npm run build
@@ -36,6 +36,11 @@ fmt:
 
 lint:
 	trunk check
+
+# Static dead-code suspects (TS layer, src/ glue, vendored Konclude). `make dead-code ARGS=--check` fails on findings
+# that are not in scripts/dead-code-allowlist.txt; `make dead-code ARGS="--out docs/dead-code.md"` writes the report.
+dead-code:
+	python3 scripts/dead-code.py $(ARGS)
 
 # Native (no WASM, no N3) realization determinism gate: N fresh-process samples vs oracle.
 # Usage: make repro N=5   (needs build-native/konclude_repro; ~40 s per sample at -O1)

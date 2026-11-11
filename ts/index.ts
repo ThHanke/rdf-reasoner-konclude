@@ -100,7 +100,6 @@ const RDFS_DOMAIN = "http://www.w3.org/2000/01/rdf-schema#domain";
 const RDFS_RANGE = "http://www.w3.org/2000/01/rdf-schema#range";
 const OWL_ON_PROPERTY = "http://www.w3.org/2002/07/owl#onProperty";
 const OWL_SOME_VALUES_FROM = "http://www.w3.org/2002/07/owl#someValuesFrom";
-const OWL_ALL_VALUES_FROM = "http://www.w3.org/2002/07/owl#allValuesFrom";
 const OWL_HAS_VALUE = "http://www.w3.org/2002/07/owl#hasValue";
 const OWL_INVERSE_OF = "http://www.w3.org/2002/07/owl#inverseOf";
 // ---------------------------------------------------------------------------
@@ -1248,10 +1247,6 @@ export class RdfReasoner {
     return (await this._callDirect("isSubClassOf", [sub, sup])) as boolean;
   }
 
-  private async _isInstanceOfDirect(indi: string, cls: string): Promise<boolean> {
-    return (await this._callDirect("isInstanceOf", [indi, cls])) as boolean;
-  }
-
   private async _isSatisfiableClassDirect(cls: string): Promise<boolean> {
     return (await this._callDirect("isSatisfiableClass", [cls])) as boolean;
   }
@@ -1262,16 +1257,6 @@ export class RdfReasoner {
 
   private async _hasNativeJustificationDirect(sub: string, sup: string): Promise<boolean> {
     return (await this._callDirect("hasNativeJustification", [sub, sup])) as boolean;
-  }
-
-  /** IU-A1: Reverse-map a concept tag to source axiom NTriples. */
-  async _getAxiomsForConceptTag(tag: number): Promise<string> {
-    return (await this._callDirect("getAxiomsForConceptTag", [tag])) as string;
-  }
-
-  /** IU-A1: Reverse-map a role tag to source axiom NTriples. */
-  async _getAxiomsForRoleTag(tag: number): Promise<string> {
-    return (await this._callDirect("getAxiomsForRoleTag", [tag])) as string;
   }
 
   // EntailmentType enum values matching JustificationCache.h

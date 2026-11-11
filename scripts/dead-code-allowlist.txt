@@ -1,0 +1,4 @@
+# Intentional leftovers for scripts/dead-code.py. Format: SECTION name   # reason
+CPP1 EMSCRIPTEN_BINDINGS    # Embind macro, registers the JS API at load time
+CPP1 __cyg_profile_func_enter   # -finstrument-functions hook (tracing build), called by compiler-inserted code
+CPP1 __cyg_profile_func_exit    # -finstrument-functions hook (tracing build), called by compiler-inserted code

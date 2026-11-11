@@ -290,8 +290,8 @@ function decodeTerm(
       if (datatype) return DataFactory.literal(value, DataFactory.namedNode(datatype));
       return DataFactory.literal(value);
     }
-    default: // 0 = NamedNode
-      return DataFactory.namedNode(raw);
+    default: // 0 = NamedNode; the kernel also names anonymous class expressions after their (retagged) label
+      return DataFactory.namedNode(blankLabelToSkolemIri(raw) ?? raw);
   }
 }
 
