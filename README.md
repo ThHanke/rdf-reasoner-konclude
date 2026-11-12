@@ -511,6 +511,10 @@ if (!consistent) {
 }
 ```
 
+`checkConsistency` runs only up to Konclude's consistency step (no saturation, no classification), so it is cheap even
+where a full classification is not. It returns the verdict only; for the cause see
+[From a failed reasoning call to the explanation](#from-a-failed-reasoning-call-to-the-explanation).
+
 ### Incremental ontology evolution
 
 Each call computes a fingerprint of the store's triples. If the store is unchanged since the last call, the C++ layer detects this and skips reloading — returning cached results in milliseconds. If the store has changed, the full reasoning pipeline reruns over the new triple set. To reason over an evolving ontology, mutate the store and call again:
@@ -582,12 +586,66 @@ const { added, removed } = await reasoner.whatIf(store, [newAxiom]);
 // added/removed are deltas relative to the current INFERRED_GRAPH_IRI
 ```
 
+### Which graphs count as axioms (`inferredGraph`, `excludeGraphs`)
+
+An explanation consists of **asserted** axioms. Triples that the reasoner derived are not axioms, and a store often holds
+more than the ontology (SHACL shapes, application metadata). Two options say what to leave out; every explanation,
+repair and validation method honours them:
+
+- `inferredGraph` (per call, default `INFERRED_GRAPH_IRI`): the named graph that holds inferred triples. It is the graph you
+  passed to `materialize`/`classify`. Pass the **same name** to the explain calls.
+- `excludeGraphs` (constructor option): named graphs that are never part of the ontology, for example shapes.
+
+```typescript
+const INFERRED = "urn:myapp:inferred";
+const reasoner = new RdfReasoner({ excludeGraphs: ["urn:myapp:shapes"] });
+
+await reasoner.materialize(store, { inferredGraph: INFERRED });
+const why = await reasoner.explainEntailment(store, subjectIri, RDF_TYPE, classIri, {
+  justificationMode: "minimal",
+  inferredGraph: INFERRED, // same graph as above
+});
+```
+
+If the inferred graph is not named, its copy of the target triple is treated as an axiom, and the explanation is that
+triple itself (one justification with one axiom) instead of the axioms that cause it.
+
+### From a failed reasoning call to the explanation
+
+`classify`, `materialize` and `realize` return an empty result for an inconsistent ontology (or reject with
+`InconsistentOntologyError` when you pass `failOnInconsistent: true`). They do not explain. The explanation is a separate
+call, and it reuses what the reasoner already knows: every call syncs the store and learns the content generation, so the
+consistency verdict of unchanged content is not recomputed.
+
+```typescript
+const reasoner = new RdfReasoner({ excludeGraphs: [SHAPES] });
+const INFERRED = "urn:myapp:inferred";
+
+if (await reasoner.checkConsistency(store)) {
+  await reasoner.materialize(store, { inferredGraph: INFERRED });
+} else {
+  // each justification is a minimal set of axioms that is inconsistent on its own
+  const causes = await reasoner.explainInconsistencyAxioms(store, {
+    inferredGraph: INFERRED,
+    maxJustifications: 3,
+    timeout: 60_000, // returns what was found when it expires (default 180 000 ms, 0 = none)
+  });
+  // causes[i].axioms — removable axioms, causes[i].context — declarations they need
+  // repair(store) proposes minimal sets of axioms to remove; assessEdit / weaken evaluate edits
+}
+```
+
+Costs: the first explanation of a content generation needs about 2·k·log₂(n/k) consistency probes for a justification
+of k axioms among n axiom units (PMDco with an injected disjointness: 3 axioms, about 3 s). The same call on unchanged
+content is answered from a cache (about 50 ms). Any change to the store starts a new generation.
+
 ### Explaining an entailment (`explain`)
 
 `explain` returns minimal justifications — each is the smallest set of axioms
 that alone entails the target. Returns `[]` if the axiom is not entailed.
-Each BlackBox call issues multiple Worker round-trips; use `maxJustifications: 1`
-for cheap first-justification lookups.
+The search runs over whole axioms (QuickXplain plus a hitting-set tree, the same engine as
+`explainInconsistency`), one reasoner call per probe, and is bounded by `timeout` (default 180 000 ms, returns what was
+found). Use `maxJustifications: 1` for the cheapest first-justification lookup.
 
 ```typescript
 const justs = await reasoner.explain(store, quad, { maxJustifications: 3 });
@@ -598,7 +656,8 @@ const justs = await reasoner.explain(store, quad, { maxJustifications: 3 });
 
 `explainEntailment` explains why a specific triple is entailed by the ontology.
 All 16 entailment types use native dep-chain cache or TS synthesis (~1ms).
-BlackBox (5-13s) is available as opt-in via `justificationMode: "minimal"`.
+`justificationMode: "minimal"` is the opt-in search for guaranteed-minimal axiom sets: it returns every minimal
+justification up to `maxJustifications` (HermiT's "explanation" view), at the price of one reasoner call per probe.
 
 ```typescript
 const result = await reasoner.explainEntailment(
@@ -638,12 +697,17 @@ Full coverage matrix with test cases: [`docs/entailment-coverage.md`](docs/entai
 
 - `justificationMode` — controls how justifications are computed:
   - `"causal"` (default): native dep chain + TS synthesis. Returns the causal
-    proof path (~1ms). No BlackBox fallback.
-  - `"minimal"`: BlackBox MIPS. Guaranteed smallest axiom set (5-13s per call).
+    proof path (~1ms). When the native path has none, `isEntailed` is `true` with an empty `justifications` list.
+  - `"minimal"`: guaranteed-minimal axiom sets over whole axioms (QuickXplain plus hitting-set tree), bounded by `timeout`.
+    Example: `some_silicon rdf:type semiconductor` in a 1 MB PMDco-based case returns both of HermiT's justifications, three
+    axioms each, in about 18 s (`tests/integration/explain-entailment-hermit-fesi.test.ts`).
 - `objectIsClassLike: false` — treat the object as a non-class entity (e.g., literal).
   Enables data property explanation.
 - `maxJustifications` — maximum number of justifications to return (default: 1).
   Only applies to the `"minimal"` mode; native/synthesis paths return at most one.
+- `inferredGraph` — the graph holding inferred triples; it must be named here, see
+  [Which graphs count as axioms](#which-graphs-count-as-axioms-inferredgraph-excludegraphs).
+- `timeout` — wall-clock limit of the `"minimal"` search in ms (default 180 000, `0` disables it).
 
 ### Diagnosing an inconsistency (`explainInconsistency`)
 
@@ -725,11 +789,14 @@ const report = await reasoner.validate(store);
 // report.errors     — Quad[][], minimal inconsistent sub-ontologies (non-empty when inconsistent)
 // report.warnings   — ClassWarning[], one per unsatisfiable class
 
-// Cheap IRI-only scan (skip BlackBox justifications for warnings):
+// Cheap IRI-only scan (skip the justification search for warnings):
 const quickReport = await reasoner.validate(store, {
   maxJustificationsPerWarning: 0,
 });
 ```
+
+The justification search of `validate` is the same engine as `explainInconsistency` and honours `timeout` (default
+180 000 ms) and `inferredGraph`.
 
 `errors` are non-empty only when `consistent` is `false`. When `consistent` is
 `true`, only `warnings` may be present. Callers should check `consistent` before
@@ -848,7 +915,8 @@ Restriction constructs verified working over ABox individuals:
 
 ## Browser deployment
 
-The WASM binary uses pthreads, which requires `SharedArrayBuffer`. Browsers
+The WASM binary needs native WebAssembly exception handling (Chrome 95+, Firefox 100+, Safari 15.2+; Node 17+) and uses
+pthreads, which requires `SharedArrayBuffer`. Browsers
 block `SharedArrayBuffer` unless the page is cross-origin isolated:
 
 ```http
@@ -900,6 +968,9 @@ On complex OWL 2 DL reasoning (SROIQ, Roberts family), this package matches nati
 Full benchmark — speed, output comparison vs native Konclude and HermiT, incremental reasoning, memory: [`docs/benchmark.md`](docs/benchmark.md).
 
 `repair()` (inconsistency repair) latency and robustness across ontology sizes: [`docs/benchmark-repair.md`](docs/benchmark-repair.md); reproduce with `npm run bench:repair`.
+
+PMDco in the Ontosphere sequence (`checkConsistency` then `materialize`): 1.9 s in Node and 2.0 s in Chromium, compared with
+17–19 s in Chromium on v0.9.0–v0.9.3. Method, the 0.8.0 comparison and the causes: [`docs/benchmark.md`](docs/benchmark.md) §4.
 
 Run `npm run bench` to reproduce (requires built WASM binary + Docker).
 

@@ -27,7 +27,7 @@ Validated by: `tests/integration/entailment-coverage.test.ts`,
 | 14 | `disjointUnionOf` → `subClassOf` | Synthesized (RDF list walk) | B | `Cat subClassOf Animal via disjointUnionOf` |
 | 15 | `owl:oneOf` → `rdf:type` | Synthesized (member scan) | B | `Red rdf:type PrimaryColor via oneOf` |
 | 16 | Data property assertions | Asserted lookup (returns triple) | B | `asserted data property (entailed)` |
-| 17 | Inconsistency (MIPS) | BlackBox (retained) | -- | via `explainInconsistency` (separate API) |
+| 17 | Inconsistency (MIPS) | QuickXplain over axiom units (retained) | -- | via `explainInconsistency` (separate API) |
 | 18 | `rdf:type` (hasValue) | Synthesized (restriction + value match) | B | `mario rdf:type Italian via hasValue` |
 | 19 | `rdf:type` (allValuesFrom) | Synthesized (type + restriction + role → filler type) | B | `grass rdf:type Plant via allValuesFrom` |
 | 20 | `rdf:type` (intersectionOf) | Synthesized (all member types → intersection type) | B | `bob rdf:type Father via Male ∩ Parent` |
@@ -39,7 +39,7 @@ Validated by: `tests/integration/entailment-coverage.test.ts`,
 
 | Mode | Behavior | Speed |
 |------|----------|-------|
-| `"causal"` (default) | Native dep chain + TS synthesis. No BlackBox fallback. | ~1ms |
-| `"minimal"` | BlackBox MIPS. Guaranteed smallest axiom set. | 5-13s |
+| `"causal"` (default) | Native dep chain + TS synthesis. No search fallback: an entailment without a native path returns no justification. | ~1ms |
+| `"minimal"` | QuickXplain over axiom units plus hitting-set tree. Guaranteed minimal axiom sets, all of them up to `maxJustifications`. | seconds (about 18 s for the 1 MB FeSi case), bounded by `timeout` |
 
-`explainInconsistency` always uses BlackBox (MIPS genuinely needs axiom-removal).
+`explainInconsistency` always uses the axiom-unit search (a minimal inconsistent set cannot be read off the native clash; see the README section "From a failed reasoning call to the explanation").
