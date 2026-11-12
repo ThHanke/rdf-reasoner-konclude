@@ -104,7 +104,8 @@ public:
 private:
     struct Impl;
     Impl* mImpl;
-    static bool runPipeline(Impl* impl, bool includeRealization);
+    // consistencyOnly: stop after the consistency step (no saturation, no classification).
+    static bool runPipeline(Impl* impl, bool includeRealization, bool consistencyOnly = false);
     // Decode the wire format and map the triples into mImpl->mOntology (fresh, empty ontology expected).
     void buildOntology(const void* triplePtr, int tripleCount, const void* strTablePtr, int strTableLen, bool forRealization);
     // Make the loaded ontology reflect the synced content for the requested load variant.
