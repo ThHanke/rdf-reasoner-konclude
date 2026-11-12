@@ -5,3 +5,4 @@
 002  # Realizer/kernel correctness fixes
 003  # Stall detection hooks
 004  # Per-call memory lifecycle (pool/item/cache release, virtual dtors) + diagnostic counters
+005  # OR branching ends the task by status flag instead of a C++ exception on the direct rule chain (324k throws per PMDco classification, ~78 us each in Chromium)
