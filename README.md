@@ -601,10 +601,16 @@ const INFERRED = "urn:myapp:inferred";
 const reasoner = new RdfReasoner({ excludeGraphs: ["urn:myapp:shapes"] });
 
 await reasoner.materialize(store, { inferredGraph: INFERRED });
-const why = await reasoner.explainEntailment(store, subjectIri, RDF_TYPE, classIri, {
-  justificationMode: "minimal",
-  inferredGraph: INFERRED, // same graph as above
-});
+const why = await reasoner.explainEntailment(
+  store,
+  subjectIri,
+  RDF_TYPE,
+  classIri,
+  {
+    justificationMode: "minimal",
+    inferredGraph: INFERRED, // same graph as above
+  },
+);
 ```
 
 If the inferred graph is not named, its copy of the target triple is treated as an axiom, and the explanation is that
@@ -672,24 +678,24 @@ const result = await reasoner.explainEntailment(
 
 **Supported entailment types:**
 
-| Predicate                        | Method                                   | Speed |
-| -------------------------------- | ---------------------------------------- | ----- |
-| `rdfs:subClassOf`                | Native dep-chain cache                   | ~1ms  |
-| `rdf:type` (subClassOf chain)    | Native (classification + asserted type)  | ~1ms  |
-| `rdf:type` (realization)         | Native (clash-path hook)                 | ~1ms  |
-| `rdf:type` (someValuesFrom, `≡`)  | Native; justification synthesized from restriction + role scan | <1ms  |
-| `rdf:type` (minCardinality)      | Synthesized (restriction + filler count) | <1ms  |
-| `owl:sameAs` (FP/IFP)            | Synthesized (FP/IFP pattern scan)        | <1ms  |
-| `owl:sameAs` (native)            | Native (realization cache)               | ~1ms  |
-| `owl:equivalentClass`            | Native (bidirectional subClassOf)        | ~1ms  |
-| `owl:disjointWith`               | Asserted axiom, or probe class (derived) | ~1s   |
-| `owl:equivalentProperty`         | Synthesized (assertion scan)             | <1ms  |
-| `rdfs:subPropertyOf`             | Native (clash-path hook)                 | ~1ms  |
-| `rdfs:domain` / `rdfs:range`     | Native (GCI in taxonomy)                 | ~1ms  |
-| `disjointUnionOf` → `subClassOf` | Synthesized (RDF list walk)              | <1ms  |
-| `owl:oneOf` → `rdf:type`         | Synthesized (member scan)                | <1ms  |
-| Data property assertions         | Asserted-triple lookup                   | <1ms  |
-| Object property assertions       | Asserted-triple lookup                   | <1ms  |
+| Predicate                        | Method                                                         | Speed |
+| -------------------------------- | -------------------------------------------------------------- | ----- |
+| `rdfs:subClassOf`                | Native dep-chain cache                                         | ~1ms  |
+| `rdf:type` (subClassOf chain)    | Native (classification + asserted type)                        | ~1ms  |
+| `rdf:type` (realization)         | Native (clash-path hook)                                       | ~1ms  |
+| `rdf:type` (someValuesFrom, `≡`) | Native; justification synthesized from restriction + role scan | <1ms  |
+| `rdf:type` (minCardinality)      | Synthesized (restriction + filler count)                       | <1ms  |
+| `owl:sameAs` (FP/IFP)            | Synthesized (FP/IFP pattern scan)                              | <1ms  |
+| `owl:sameAs` (native)            | Native (realization cache)                                     | ~1ms  |
+| `owl:equivalentClass`            | Native (bidirectional subClassOf)                              | ~1ms  |
+| `owl:disjointWith`               | Asserted axiom, or probe class (derived)                       | ~1s   |
+| `owl:equivalentProperty`         | Synthesized (assertion scan)                                   | <1ms  |
+| `rdfs:subPropertyOf`             | Native (clash-path hook)                                       | ~1ms  |
+| `rdfs:domain` / `rdfs:range`     | Native (GCI in taxonomy)                                       | ~1ms  |
+| `disjointUnionOf` → `subClassOf` | Synthesized (RDF list walk)                                    | <1ms  |
+| `owl:oneOf` → `rdf:type`         | Synthesized (member scan)                                      | <1ms  |
+| Data property assertions         | Asserted-triple lookup                                         | <1ms  |
+| Object property assertions       | Asserted-triple lookup                                         | <1ms  |
 
 Full coverage matrix with test cases: [`docs/entailment-coverage.md`](docs/entailment-coverage.md)
 
