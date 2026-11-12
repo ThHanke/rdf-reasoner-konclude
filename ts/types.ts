@@ -21,7 +21,7 @@ export interface ExplainOptions {
    */
   inferredGraph?: string;
   /**
-   * Wall-clock timeout in milliseconds for the BlackBox bisection search.
+   * Wall-clock timeout in milliseconds for the justification search.
    *
    * When the deadline is reached the call returns whatever justifications have
    * been found so far (possibly zero).  The inconsistency detection itself is
@@ -343,10 +343,13 @@ export interface ValidateOptions {
   /** Maximum inconsistency justifications to return. Defaults to 1. */
   maxJustificationsPerError?: number;
   /** Maximum justifications per unsatisfiable class. Defaults to 1.
-   *  Pass 0 to skip BlackBox for warnings (returns IRI list only). */
+   *  Pass 0 to skip the justification search for warnings (returns IRI list only). */
   maxJustificationsPerWarning?: number;
   /** Optional filter applied to both error and warning candidate axiom sets. */
   axiomFilter?: (q: Quad) => boolean;
+  /** Wall-clock timeout in milliseconds for the justification search (errors and warnings together). When it is reached
+   *  the justifications found so far are returned. Defaults to 180 000 ms; 0 disables the timeout. */
+  timeout?: number;
 }
 
 /**
@@ -520,8 +523,11 @@ export interface ExplainEntailmentOptions extends ExplainOptions {
    * - `"causal"` (default): uses native dep-chain cache and TS synthesis.
    *   Returns the causal proof path (~1ms). If the native path misses,
    *   returns `isEntailed: true` with empty justifications.
-   * - `"minimal"`: uses the BlackBox algorithm (axiom-removal + WASM reload)
-   *   to find a guaranteed-minimal axiom set. Slower (5-13s per call).
+   * - `"minimal"`: finds guaranteed-minimal axiom sets (QuickXplain over axiom units plus a
+   *   hitting-set tree, the engine shared with `explainInconsistency`, with the negated
+   *   entailment as part of the input). One reasoner call per probe, about 2*k*log2(n/k) probes
+   *   for a justification of k axioms; bounded by `timeout`. Returns every justification up
+   *   to `maxJustifications`.
    */
   justificationMode?: "causal" | "minimal";
 }
