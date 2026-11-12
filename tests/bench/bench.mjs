@@ -12,7 +12,7 @@
 //
 //   § 3  INCREMENTAL REASONING BENCHMARK
 //
-// Usage: node tests/bench/bench.mjs
+// Usage: node --expose-gc tests/bench/bench.mjs [--quick] [--case NAME] [--no-hermit] [--wasm-only]
 //        npm run bench
 //        npm run bench > results.md
 
@@ -100,11 +100,15 @@ async function main() {
 
   const optsFor = (c) => { const b = budgetFor(c.name, quick); return { opts: { warmup: b.warmup, runs: b.runs }, timeoutMs: b.timeoutMs }; };
 
-  console.error('Running native Konclude benchmark (Docker)...');
-  const nativeResults = await nativeBenchAll(NATIVE_CASES.filter(wanted), 3);
+  // --wasm-only: re-measure only this package; native Konclude and HermiT numbers are not repeated.
+  const wasmOnly = process.argv.includes('--wasm-only');
+  console.error(wasmOnly ? 'Skipping native Konclude benchmark (--wasm-only).' : 'Running native Konclude benchmark (Docker)...');
+  const nativeResults = wasmOnly ? [] : await nativeBenchAll(NATIVE_CASES.filter(wanted), 3);
 
-  console.error('\nRunning HermiT benchmark (ROBOT/ODK Docker)...');
-  const robotResults = await robotBenchAll(ROBOT_CASES.filter(wanted), 3);
+  // --no-hermit: skip the ROBOT/ODK image (several GB, pulled by `docker run` when missing); HermiT cells then stay empty.
+  const skipHermit = wasmOnly || process.argv.includes('--no-hermit');
+  console.error(skipHermit ? '\nSkipping HermiT benchmark (--no-hermit).' : '\nRunning HermiT benchmark (ROBOT/ODK Docker)...');
+  const robotResults = skipHermit ? [] : await robotBenchAll(ROBOT_CASES.filter(wanted), 3);
 
   console.error('\nRunning WASM benchmark (per-case subprocess)...');
   const wasmResults = runBenchPerCase('./wasm-runner.mjs', 'benchAll', wasmCases, optsFor);

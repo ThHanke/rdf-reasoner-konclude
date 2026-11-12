@@ -32,7 +32,7 @@ import type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, Material
 import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, KJ_JUSTIFIES, KJ_AXIOM, ReasonerStalledError, InconsistentOntologyError } from "./types.js";
 export { ReasonerStalledError, InconsistentOntologyError } from "./types.js";
 import { injectExplanationsFromBuffer, encodeStoreToBuffers, existsInSourceGraphs, clearGraph, createManagedStore, getRawStore, graphSignature } from "./n3Inject.js";
-import { groupJustification, partitionIntoUnits } from "./axiomGrouping.js";
+import { groupJustification, isDeclaration, partitionIntoUnits } from "./axiomGrouping.js";
 import { dropAnnotationTriples } from "./annotations.js";
 import { computeRepairs, REPAIR_DEFAULT_TIMEOUT_MS, type RepairOracle } from "./repair.js";
 import { computeAssessment, probeQuads, PROBE_NS, type AssessOracle } from "./assessEdit.js";
@@ -149,6 +149,9 @@ export class RdfReasoner {
   private _materializeCache: ResultCache | null = null;
   private _classifyPropertiesCache: ResultCache | null = null;
   private _consistencyCache: { gen: number; result: boolean } | null = null;
+  /** Result of the last explainInconsistency() for the store content of generation `key` (the kernel's content generation, so
+   *  an unchanged store gets the same answer without a search). Dropped when the Worker is recreated: generations restart. */
+  private _inconsistencyExplainCache: { key: string; result: Quad[][] } | null = null;
 
   // Cached explanation buffers — avoids WASM round-trip on cache-hit explanation requests.
   private _lastExplBuffer: { gen: number; store: Store; buf: ArrayBuffer } | null = null;
@@ -329,6 +332,7 @@ export class RdfReasoner {
       this._materializeCache = null;
       this._classifyPropertiesCache = null;
       this._consistencyCache = null;
+      this._inconsistencyExplainCache = null;
       this._lastExplBuffer = null;
       this._lastPropertyExplBuffer = null;
       return;
@@ -340,6 +344,7 @@ export class RdfReasoner {
     this._materializeCache = null;
     this._classifyPropertiesCache = null;
     this._consistencyCache = null;
+    this._inconsistencyExplainCache = null;
     this._lastExplBuffer = null;
     this._lastPropertyExplBuffer = null;
     this._queue = Promise.resolve();
@@ -571,9 +576,9 @@ export class RdfReasoner {
   // -------------------------------------------------------------------------
 
   /** Check consistency of a Store. Does not write inferred triples. */
-  // Unit 4 judgment (2026-05-28): full classification pipeline runs ≤300ms for
-  // cases 5 and 6 after mConfExtractSimpleABoxAssertions fix. consistencyOnly()
-  // removed as no longer needed; full pipeline preferred for correctness.
+  // The WASM side runs only up to Konclude's consistency step (the native `consistency` command stops there as
+  // well); classification is not a prerequisite of consistency, it is the other way round. Since 0.9.0 a full
+  // classification costs thousands of tableau tests on some ontologies (PMDco: ~4 760), so it must not run here.
   checkConsistency(store: Store): Promise<boolean> {
     const result = this._queue.then(async () => {
       const gen = await this._sync(store);
@@ -581,7 +586,7 @@ export class RdfReasoner {
         return this._consistencyCache.result;
       }
 
-      // consistency() runs the classification pipeline itself (see _checkInconsistencyDirect).
+      // consistency() runs only the consistency step (see _checkInconsistencyDirect).
       const consistent = (await this._call("consistency", [])) as boolean;
 
       // Caches of other content generations are stale; caches of THIS generation stay valid.
@@ -1223,8 +1228,8 @@ export class RdfReasoner {
   private async _checkInconsistencyDirect(candidates: Quad[]): Promise<boolean> {
     const { tripleBuffer, strTableBuffer } = encodeToBuffers(candidates);
     await this._callDirect("sync", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer]);
-    // consistency() runs the classification pipeline itself; a separate classification call first would make an
-    // inconsistent set (failed pipeline, marked for retry) pay for a second full rebuild (measured: 480 -> 265 ms on PMDco).
+    // consistency() runs only the consistency step; a separate classification call first would make an inconsistent
+    // set (failed pipeline, marked for retry) pay for a second full rebuild (measured: 480 -> 265 ms on PMDco).
     const consistent = (await this._callDirect("consistency", [])) as boolean;
     return !consistent;
   }
@@ -1480,7 +1485,7 @@ export class RdfReasoner {
   // explain()
   // -------------------------------------------------------------------------
 
-  /** Compute minimal justifications for an axiom using the BlackBox algorithm.
+  /** Compute minimal justifications for an axiom (QuickXplain over axiom units, see _minimalUnitSets).
    *
    * Returns a list of minimal subsets of the store's base quads, each of which
    * alone entails the axiom. Returns [] if the axiom is not entailed.
@@ -1488,7 +1493,7 @@ export class RdfReasoner {
    *
    * Throws for unsupported predicates (unlike isEntailed which returns null).
    *
-   * All BlackBox sub-calls run inside this method's single _queue slot using
+   * All reasoner sub-calls run inside this method's single _queue slot using
    * _callDirect. Do NOT call the public methods classify/materialize from inside.
    */
   explain(store: Store, axiom: Quad, opts?: ExplainOptions): Promise<Quad[][]> {
@@ -1538,106 +1543,17 @@ export class RdfReasoner {
       const entailedByAll = await this._checkEntailmentDirect(allCandidates, axiom, opInfo, background);
       if (!entailedByAll) return [];
 
-      const justifications: Quad[][] = [];
-
-      // Find one MUS via binary-partition shrink + deletion pass
-      const findOneJustification = async (candidates: Quad[]): Promise<Quad[] | null> => {
-        let working = [...candidates];
-
-        // Shrink phase: binary partition
-        let changed = true;
-        while (changed && working.length > 1) {
-          changed = false;
-          const mid = Math.floor(working.length / 2);
-          const firstHalf = working.slice(0, mid);
-          const secondHalf = working.slice(mid);
-
-          const firstEntails = await this._checkEntailmentDirect(firstHalf, axiom, opInfo, background);
-          if (firstEntails) {
-            working = firstHalf;
-            changed = true;
-            continue;
-          }
-          const secondEntails = await this._checkEntailmentDirect(secondHalf, axiom, opInfo, background);
-          if (secondEntails) {
-            working = secondHalf;
-            changed = true;
-            continue;
-          }
-          // Neither half alone entails — need both; stop shrinking
-          break;
-        }
-
-        // Deletion pass: remove each axiom that is not individually required
-        let i = 0;
-        while (i < working.length) {
-          if (working.length === 1) break; // single axiom must stay
-          const without = [...working.slice(0, i), ...working.slice(i + 1)];
-          const stillEntails = await this._checkEntailmentDirect(without, axiom, opInfo, background);
-          if (stillEntails) {
-            working = without;
-            // don't increment i — next element shifted into position i
-          } else {
-            i++;
-          }
-        }
-
-        return working;
-      };
-
-      // First justification
-      const j1 = await findOneJustification(allCandidates);
-      if (!j1 || j1.length === 0) return [];
-      justifications.push(j1);
-
-      // HSDAG for additional justifications
-      if (maxJustifications > 1) {
-        // HSDAG queue: pairs of (excluded set, justification to expand from)
-        const hsQueue: Array<{ excluded: Set<string>; justification: Quad[] }> = [
-          { excluded: new Set(), justification: j1 },
-        ];
-        const exploredExclusions = new Set<string>();
-
-        while (hsQueue.length > 0 && justifications.length < maxJustifications) {
-          const { excluded, justification: currentJ } = hsQueue.shift()!;
-          const excludedKey = [...excluded].sort().join("|");
-          if (exploredExclusions.has(excludedKey)) continue;
-          exploredExclusions.add(excludedKey);
-
-          for (const axiomInJ of currentJ) {
-            const newExcluded = new Set(excluded);
-            const axKey = `${axiomInJ.subject.value}\0${axiomInJ.predicate.value}\0${axiomInJ.object.value}`;
-            newExcluded.add(axKey);
-
-            const newExcludedKey = [...newExcluded].sort().join("|");
-            if (exploredExclusions.has(newExcludedKey)) continue;
-
-            const reduced = allCandidates.filter(q => {
-              const k = `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`;
-              return !newExcluded.has(k);
-            });
-
-            const entailed = await this._checkEntailmentDirect(reduced, axiom, opInfo, background);
-            if (!entailed) continue;
-
-            const jNew = await findOneJustification(reduced);
-            if (!jNew || jNew.length === 0) continue;
-
-            const jKey = jNew.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`).sort().join("|");
-            const alreadyFound = justifications.some(j => {
-              const k = j.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`).sort().join("|");
-              return k === jKey;
-            });
-            if (!alreadyFound) {
-              justifications.push(jNew);
-              if (justifications.length >= maxJustifications) break;
-              hsQueue.push({ excluded: newExcluded, justification: jNew });
-            }
-          }
-        }
-      }
-
-      return justifications;
+      // Minimal justifications over axiom units (QuickXplain + hitting-set tree). The oracle is the reasoner's own
+      // entailment test of this axiom; declarations stay background of every check and are not part of the result.
+      const timeoutMs = opts?.timeout ?? 180_000;
+      const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : Infinity;
+      return this._minimalUnitSets(
+        [...allCandidates, ...background],
+        (quads, d) => this._boundedCheck(q => this._checkEntailmentDirect(q, axiom, opInfo), quads, d),
+        maxJustifications,
+        deadline,
+        false,
+      );
     });
     this._queue = result.then(() => {}, () => {});
     return result;
@@ -1651,7 +1567,7 @@ export class RdfReasoner {
    *  ontology. Returns [] if the ontology is consistent.
    *
    * Uses the consistency oracle directly (loadTripleBuffer → classification →
-   * consistency) for all BlackBox iterations. Does not depend on
+   * consistency) for all justification-search iterations. Does not depend on
    * owl:Thing rdfs:subClassOf owl:Nothing being emitted as an inferred triple.
    */
   explainInconsistency(store: Store, opts?: ExplainOptions): Promise<Quad[][]> {
@@ -1664,11 +1580,19 @@ export class RdfReasoner {
         return g !== ig && g !== HYPOTHETICAL_IRI && !this._excludeGraphs.has(g);
       }));
 
-      // Fast-path: check consistency using existing cache or direct Worker call
+      // The worker state tells what must be repeated: _sync() answers with the content generation. The same generation
+      // and options have the same explanation (cached below), and the consistency verdict of the synced content is
+      // memoised per generation in the kernel, so it is asked there instead of re-syncing a filtered copy of the store.
       const gen = await this._sync(store, ig);
+      const cacheKey = opts?.axiomFilter ? null : `${gen}|${ig}|${opts?.maxJustifications ?? 1}`;
+      if (cacheKey !== null && this._inconsistencyExplainCache?.key === cacheKey) return this._inconsistencyExplainCache.result;
       let consistent: boolean;
       if (this._consistencyCache?.gen === gen) {
         consistent = this._consistencyCache.result;
+      } else if (store.getQuads(null, null, null, DataFactory.namedNode(HYPOTHETICAL_IRI)).length === 0) {
+        // synced content == the store minus the excluded graphs (annotation assertions never affect consistency)
+        consistent = (await this._callDirect("consistency", [])) as boolean;
+        this._consistencyCache = { gen, result: consistent };
       } else {
         consistent = !(await this._checkInconsistencyDirect(allBase));
         this._consistencyCache = { gen, result: consistent };
@@ -1701,7 +1625,7 @@ export class RdfReasoner {
       const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : Infinity;
       const isExpired = () => Date.now() >= deadline;
 
-      // Invalidate caches before BlackBox sub-calls (we already ran one consistency check)
+      // Invalidate caches before the justification-search sub-calls (we already ran one consistency check)
       this._classifyCache = null;
       this._materializeCache = null;
       this._classifyPropertiesCache = null;
@@ -1716,7 +1640,15 @@ export class RdfReasoner {
         if (!(await this._checkInconsistencyDirect(allCandidates))) return [];
       }
 
-      return this._explainInconsistencyQuadsDirect(allCandidates, maxJustifications, deadline);
+      const found = await this._explainInconsistencyQuadsDirect(allCandidates, maxJustifications, deadline);
+      if (cacheKey !== null && Date.now() < deadline) {
+        // The search loaded sub-ontologies; load the store's content again (cheap: the rebuild is lazy) so the worker state,
+        // its generation and the cached answer describe the same content. A search cut short by the deadline is not cached.
+        const genAfter = await this._sync(store, ig);
+        this._inconsistencyExplainCache = { key: `${genAfter}|${ig}|${maxJustifications}`, result: found };
+        this._consistencyCache = { gen: genAfter, result: false };
+      }
+      return found;
     });
     this._queue = result.then(() => {}, () => {});
     return result;
@@ -1879,7 +1811,19 @@ export class RdfReasoner {
    * Also recycles the Worker first when the WASM heap passed the recycle threshold (every reload retains ~20 MB;
    * a long search would otherwise hit the 4 GiB wasm32 ceiling and trap). Returns true when INCONSISTENT.
    */
-  private async _boundedInconsistencyCheck(quads: Quad[], deadline: number): Promise<boolean | "aborted"> {
+  private _boundedInconsistencyCheck(quads: Quad[], deadline: number): Promise<boolean | "aborted"> {
+    return this._boundedCheck(q => this._checkInconsistencyDirect(q), quads, deadline);
+  }
+
+  /**
+   * Runs one reasoner oracle (inconsistency, entailment, unsatisfiability, ...) on a quad set with the remaining deadline:
+   * a probe that exceeds it is abandoned, the Worker is recreated and "aborted" is returned.
+   */
+  private async _boundedCheck(
+    check: (quads: Quad[]) => Promise<boolean>,
+    quads: Quad[],
+    deadline: number,
+  ): Promise<boolean | "aborted"> {
     const remaining = deadline - Date.now();
     if (remaining <= 0) return "aborted";
     if (this._recycleHeapBytes > 0 && this._lastHeapBytes > this._recycleHeapBytes) await this._recycleWorkerInSlot();
@@ -1890,7 +1834,7 @@ export class RdfReasoner {
     });
     try {
       const result = await Promise.race([
-        this._checkInconsistencyDirect(quads).then(r => r as boolean | "aborted"),
+        check(quads).then(r => r as boolean | "aborted"),
         timerPromise,
       ]);
       if (result === "aborted") await this._reinitForBisection();
@@ -2025,15 +1969,31 @@ export class RdfReasoner {
    * short by the deadline is dropped (it would not be minimal). Each returned justification carries the declarations
    * of the entities it mentions.
    */
-  private async _explainInconsistencyQuadsDirect(
+  private _explainInconsistencyQuadsDirect(
     allCandidates: Quad[],
     maxJustifications: number,
     deadline: number,
   ): Promise<Quad[][]> {
+    return this._minimalUnitSets(allCandidates, (quads, d) => this._boundedInconsistencyCheck(quads, d), maxJustifications, deadline);
+  }
+
+  /**
+   * The one engine behind every explanation: minimal sets of axiom units for which `holds` is true (the set is
+   * inconsistent / entails the axiom / makes a class unsatisfiable), by QuickXplain plus a hitting-set tree.
+   * `holds` receives a quad set (units plus the declaration background) and the deadline. With `withDeclarations` false
+   * the declarations of the mentioned entities are left out of each result.
+   */
+  private async _minimalUnitSets(
+    allCandidates: Quad[],
+    holds: (quads: Quad[], deadline: number) => Promise<boolean | "aborted">,
+    maxJustifications: number,
+    deadline: number,
+    withDeclarations = true,
+  ): Promise<Quad[][]> {
     const isExpired = () => Date.now() >= deadline;
     const { units, background } = partitionIntoUnits(allCandidates);
     const checkOrAbort = (idx: readonly number[]): Promise<boolean | "aborted"> =>
-      this._boundedInconsistencyCheck([...idx.flatMap(i => units[i]), ...background], deadline);
+      holds([...idx.flatMap(i => units[i]), ...background], deadline);
     const idKey = (idx: Iterable<number>): string => [...idx].sort((x, y) => x - y).join(",");
 
     // QuickXplain (Junker 2004): a minimal inconsistent set of units in about 2*k*log2(n/k) consistency checks for a
@@ -2102,6 +2062,7 @@ export class RdfReasoner {
 
     return found.map(idx => {
       const quads = idx.flatMap(i => units[i]);
+      if (!withDeclarations) return quads;
       const iris = new Set<string>();
       for (const q of quads) for (const t of [q.subject, q.predicate, q.object]) if (t.termType === "NamedNode") iris.add(t.value);
       return [...quads, ...background.filter(d => iris.has(d.subject.value))];
@@ -2179,93 +2140,15 @@ export class RdfReasoner {
         if (!(await this._checkInconsistencyDirect(allCandidates))) return [];
       }
 
-      // Race each WASM call against a per-call timer (same pattern as explainInconsistency).
-      const checkOrAbortL = async (quads: Quad[]): Promise<boolean | "aborted"> => {
-        const remaining = deadline - Date.now();
-        if (remaining <= 0) return "aborted";
-        const perCallMs = Math.min(remaining + 1_000, 30_000);
-        let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-        const timerPromise = new Promise<"aborted">(resolve => {
-          timeoutHandle = setTimeout(() => resolve("aborted"), perCallMs);
-        });
-        try {
-          const result = await Promise.race([
-            this._checkInconsistencyDirect(quads).then(r => r as boolean | "aborted"),
-            timerPromise,
-          ]);
-          if (result === "aborted") await this._reinitForBisection();
-          return result;
-        } finally {
-          clearTimeout(timeoutHandle);
-        }
-      };
-
-      // Find MIPS (same inline BlackBox as explainInconsistency)
-      const findOne = async (cands: Quad[]): Promise<Quad[] | null> => {
-        let w = [...cands];
-        let changed = true;
-        while (changed && w.length > 1) {
-          if (isExpired()) return w;
-          changed = false;
-          const mid = Math.floor(w.length / 2);
-          const [fh, sh] = [w.slice(0, mid), w.slice(mid)];
-          const fhR = await checkOrAbortL(fh);
-          if (fhR === "aborted") return w;
-          if (fhR) { w = fh; changed = true; continue; }
-          if (isExpired()) return w;
-          const shR = await checkOrAbortL(sh);
-          if (shR === "aborted") return w;
-          if (shR) { w = sh; changed = true; continue; }
-          break;
-        }
-        let i = 0;
-        while (i < w.length) {
-          if (isExpired()) return w;
-          if (w.length === 1) break;
-          const without = [...w.slice(0, i), ...w.slice(i + 1)];
-          const r = await checkOrAbortL(without);
-          if (r === "aborted") return w;
-          if (r) { w = without; } else { i++; }
-        }
-        return w;
-      };
-
-      const justifications: Quad[][] = [];
-      const j1 = await findOne(allCandidates);
-      if (!j1 || j1.length === 0) return [];
-      justifications.push(j1);
-
-      if (!isExpired() && maxJustifications > 1) {
-        const hsQueue: Array<{ excluded: Set<string>; justification: Quad[] }> = [
-          { excluded: new Set(), justification: j1 },
-        ];
-        const explored = new Set<string>();
-        const keyOf = (q: Quad) => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`;
-        while (!isExpired() && hsQueue.length > 0 && justifications.length < maxJustifications) {
-          const { excluded, justification: curJ } = hsQueue.shift()!;
-          const eKey = [...excluded].sort().join("|");
-          if (explored.has(eKey)) continue;
-          explored.add(eKey);
-          for (const ax of curJ) {
-            if (isExpired()) break;
-            const newExcl = new Set(excluded);
-            newExcl.add(keyOf(ax));
-            const nKey = [...newExcl].sort().join("|");
-            if (explored.has(nKey)) continue;
-            const reduced = allCandidates.filter(q => !newExcl.has(keyOf(q)));
-            const rCheck = await checkOrAbortL(reduced);
-            if (rCheck === "aborted" || !rCheck) continue;
-            const jN = await findOne(reduced);
-            if (!jN || jN.length === 0) continue;
-            const jKey = jN.map(keyOf).sort().join("|");
-            if (!justifications.some(j => j.map(keyOf).sort().join("|") === jKey)) {
-              justifications.push(jN);
-              if (justifications.length >= maxJustifications) break;
-              hsQueue.push({ excluded: newExcl, justification: jN });
-            }
-          }
-        }
-      }
+      // Minimal inconsistent unit sets (the shared engine: QuickXplain + hitting-set tree)
+      const justifications: Quad[][] = await this._minimalUnitSets(
+        allCandidates,
+        (quads, d) => this._boundedInconsistencyCheck(quads, d),
+        maxJustifications,
+        deadline,
+        false,
+      );
+      if (justifications.length === 0) return [];
 
       // Post-process each justification with laconic
       const out: Array<{ justification: Quad[]; laconic: LaconicJustification }> = [];
@@ -2813,7 +2696,7 @@ export class RdfReasoner {
         return { isEntailed: false, justifications: [] as Quad[][] };
       }
 
-      // ── BlackBox fallback ─────────────────────────────────────────────
+      // ── Justification search (fallback) ─────────────────────────────────────────────
       // Only used in "minimal" mode. In "causal" mode (default), check
       // inferred graph for the triple — if present, it's entailed but we
       // couldn't synthesize a justification. If absent, not entailed.
@@ -2902,95 +2785,25 @@ export class RdfReasoner {
       this._lastPropertyExplBuffer = null;
       this._consistencyCache = null;
 
-      // Partition into justification candidates vs background declarations
-      const ontologyCandidates: Quad[] = [];
-      const background: Quad[] = [];
-      for (const q of allBase) {
-        if (this._isBuiltInDeclaration(q)) { background.push(q); }
-        else { ontologyCandidates.push(q); }
-      }
-      const filteredCandidates = opts?.axiomFilter
-        ? ontologyCandidates.filter(q => opts.axiomFilter!(q))
-        : ontologyCandidates;
-
-      const keyOf = (q: Quad) => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`;
-      const stripProbe = (j: Quad[]): Quad[] =>
-        j.filter(q => !probe.probeKeys.has(probeTripleKey(q.subject.value, q.predicate.value, q.object.value)));
-
-      const justifications: Quad[][] = [];
-
-      // BlackBox find one justification
-      const findOne = async (ontCandidates: Quad[]): Promise<Quad[] | null> => {
-        let working = [...ontCandidates];
-
-        let changed = true;
-        while (changed && working.length > 1) {
-          changed = false;
-          const mid = Math.floor(working.length / 2);
-          const fh = working.slice(0, mid);
-          const sh = working.slice(mid);
-          if (await this._checkInconsistencyDirect([...fh, ...probe.probeQuads, ...background])) {
-            working = fh; changed = true; continue;
-          }
-          if (await this._checkInconsistencyDirect([...sh, ...probe.probeQuads, ...background])) {
-            working = sh; changed = true; continue;
-          }
-          break;
-        }
-
-        let i = 0;
-        while (i < working.length) {
-          if (working.length === 0) break;
-          const without = [...working.slice(0, i), ...working.slice(i + 1)];
-          if (await this._checkInconsistencyDirect([...without, ...probe.probeQuads, ...background])) {
-            working = without;
-          } else {
-            i++;
-          }
-        }
-
-        return working.length > 0 ? [...working, ...probe.probeQuads] : null;
-      };
-
-      if (!(await this._checkInconsistencyDirect([...filteredCandidates, ...probe.probeQuads, ...background]))) {
-        return { isEntailed: true, justifications: [] as Quad[][] };
-      }
-
-      const j1 = await findOne(filteredCandidates);
-      if (!j1 || j1.length === 0) {
-        return { isEntailed: true, justifications: [] as Quad[][] };
-      }
-      justifications.push(stripProbe(j1));
-
-      if (maxJustifications > 1) {
-        const hsQueue: Array<{ excluded: Set<string>; justification: Quad[] }> = [
-          { excluded: new Set(), justification: j1 },
-        ];
-        const explored = new Set<string>();
-        while (hsQueue.length > 0 && justifications.length < maxJustifications) {
-          const { excluded, justification: curJ } = hsQueue.shift()!;
-          const eKey = [...excluded].sort().join("|");
-          if (explored.has(eKey)) continue;
-          explored.add(eKey);
-          for (const ax of curJ) {
-            if (probe.probeKeys.has(probeTripleKey(ax.subject.value, ax.predicate.value, ax.object.value))) continue;
-            const newExcl = new Set(excluded);
-            newExcl.add(keyOf(ax));
-            const nKey = [...newExcl].sort().join("|");
-            if (explored.has(nKey)) continue;
-            const reduced = filteredCandidates.filter(q => !newExcl.has(keyOf(q)));
-            if (!(await this._checkInconsistencyDirect([...reduced, ...probe.probeQuads, ...background]))) continue;
-            const jNew = await findOne(reduced);
-            if (!jNew || jNew.length === 0) continue;
-            const jKey = stripProbe(jNew).map(keyOf).sort().join("|");
-            if (!justifications.some(j => j.map(keyOf).sort().join("|") === jKey)) {
-              justifications.push(stripProbe(jNew));
-              if (justifications.length >= maxJustifications) break;
-              hsQueue.push({ excluded: newExcl, justification: jNew });
-            }
-          }
-        }
-      }
+      // Minimal justifications over AXIOM UNITS: QuickXplain plus a hitting-set tree, the same engine as
+      // explainInconsistency (a triple-level search cannot work on real ontologies: it falls back to one reasoner
+      // probe per triple). The negated entailment (probe) is part of the input, so every inconsistent unit set
+      // contains it; it is stripped from each result. Declarations are fixed background of every check.
+      const timeoutMs = opts?.timeout ?? 180_000;
+      const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : Infinity;
+      const candidates = opts?.axiomFilter
+        ? allBase.filter(q => isDeclaration(q) || opts.axiomFilter!(q))
+        : allBase;
+      const found = await this._minimalUnitSets(
+        [...candidates, ...probe.probeQuads],
+        (quads, d) => this._boundedInconsistencyCheck(quads, d),
+        maxJustifications,
+        deadline,
+        false,
+      );
+      const justifications: Quad[][] = found
+        .map(j => j.filter(q => !probe.probeKeys.has(probeTripleKey(q.subject.value, q.predicate.value, q.object.value))))
+        .filter(j => j.length > 0);
 
       return { isEntailed: true, justifications };
     });
@@ -3010,7 +2823,7 @@ export class RdfReasoner {
    *  - `errors` — MIPS (minimal inconsistent sub-ontologies); non-empty only when inconsistent
    *  - `warnings` — one `ClassWarning` per unsatisfiable class (owl:Nothing excluded)
    *
-   *  All BlackBox iterations run inside this method's single _queue slot.
+   *  All reasoner calls of the justification search run inside this method's single _queue slot.
    *  Do NOT call public methods from inside — use private helpers only.
    */
   validate(store: Store, opts?: ValidateOptions): Promise<ValidationResult> {
@@ -3018,6 +2831,8 @@ export class RdfReasoner {
       const maxErr  = opts?.maxJustificationsPerError  ?? 1;
       const maxWarn = opts?.maxJustificationsPerWarning ?? 1;
       const igIri = opts?.inferredGraph ?? INFERRED_GRAPH_IRI;
+      const validateTimeoutMs = opts?.timeout ?? 180_000;
+      const validateDeadline = validateTimeoutMs > 0 ? Date.now() + validateTimeoutMs : Infinity;
 
       const allBase = store.getQuads(null, null, null, null).filter(q =>
         q.graph.value !== igIri && q.graph.value !== HYPOTHETICAL_IRI && !this._excludeGraphs.has(q.graph.value),
@@ -3051,55 +2866,14 @@ export class RdfReasoner {
         this._consistencyCache = null;
 
         if (await this._checkInconsistencyDirect(allCandidates)) {
-          const findOneIncons = async (cands: Quad[]): Promise<Quad[] | null> => {
-            let w = [...cands];
-            let changed = true;
-            while (changed && w.length > 1) {
-              changed = false;
-              const mid = Math.floor(w.length / 2);
-              const [fh, sh] = [w.slice(0, mid), w.slice(mid)];
-              if (await this._checkInconsistencyDirect(fh)) { w = fh; changed = true; continue; }
-              if (await this._checkInconsistencyDirect(sh)) { w = sh; changed = true; continue; }
-              break;
-            }
-            let i = 0;
-            while (i < w.length) {
-              if (w.length === 1) break;
-              const without = [...w.slice(0, i), ...w.slice(i + 1)];
-              if (await this._checkInconsistencyDirect(without)) { w = without; } else { i++; }
-            }
-            return w;
-          };
-
-          const j1 = await findOneIncons(allCandidates);
-          if (j1 && j1.length > 0) {
-            errors.push(j1);
-            if (maxErr > 1) {
-              const hsQ: Array<{ excluded: Set<string>; justification: Quad[] }> = [{ excluded: new Set(), justification: j1 }];
-              const explored = new Set<string>();
-              outer: while (hsQ.length > 0 && errors.length < maxErr) {
-                const { excluded, justification: curJ } = hsQ.shift()!;
-                const eKey = [...excluded].sort().join("|");
-                if (explored.has(eKey)) continue;
-                explored.add(eKey);
-                for (const ax of curJ) {
-                  const newExcl = new Set(excluded);
-                  newExcl.add(`${ax.subject.value}\0${ax.predicate.value}\0${ax.object.value}`);
-                  const nKey = [...newExcl].sort().join("|");
-                  if (explored.has(nKey)) continue;
-                  const reduced = allCandidates.filter(q => !newExcl.has(`${q.subject.value}\0${q.predicate.value}\0${q.object.value}`));
-                  if (!(await this._checkInconsistencyDirect(reduced))) continue;
-                  const jN = await findOneIncons(reduced);
-                  if (!jN || jN.length === 0) continue;
-                  const jNKey = jN.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`).sort().join("|");
-                  if (!errors.some(j => j.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`).sort().join("|") === jNKey)) {
-                    errors.push(jN);
-                    if (errors.length >= maxErr) break outer;
-                    hsQ.push({ excluded: newExcl, justification: jN });
-                  }
-                }
-              }
-            }
+          for (const j of await this._minimalUnitSets(
+            allCandidates,
+            (q, d) => this._boundedInconsistencyCheck(q, d),
+            maxErr,
+            validateDeadline,
+            false,
+          )) {
+            errors.push(j);
           }
         }
       }
@@ -3111,7 +2885,7 @@ export class RdfReasoner {
       // Native fast path: classification already ran (step 3), so the
       // dep-chain cache contains clash justifications for unsatisfiable
       // classes keyed as (C, owl:Nothing). Zero extra WASM reloads.
-      // Falls back to BlackBox only when native justification is absent.
+      // Falls back to the justification search only when the native justification is absent.
       const warnings: ClassWarning[] = [];
       if (unsatIRIs.length > 0) {
         for (const classIRI of unsatIRIs) {
@@ -3131,7 +2905,7 @@ export class RdfReasoner {
             }
           }
 
-          // BlackBox fallback
+          // Justification-search fallback
           const warnCands = makeCandidates();
 
           this._classifyCache = null;
@@ -3144,57 +2918,13 @@ export class RdfReasoner {
             continue;
           }
 
-          const findOneWarning = async (cands: Quad[]): Promise<Quad[] | null> => {
-            let w = [...cands];
-            let changed = true;
-            while (changed && w.length > 1) {
-              changed = false;
-              const mid = Math.floor(w.length / 2);
-              const [fh, sh] = [w.slice(0, mid), w.slice(mid)];
-              if (await this._checkUnsatisfiabilityDirect(fh, classIRI)) { w = fh; changed = true; continue; }
-              if (await this._checkUnsatisfiabilityDirect(sh, classIRI)) { w = sh; changed = true; continue; }
-              break;
-            }
-            let i = 0;
-            while (i < w.length) {
-              if (w.length === 1) break;
-              const without = [...w.slice(0, i), ...w.slice(i + 1)];
-              if (await this._checkUnsatisfiabilityDirect(without, classIRI)) { w = without; } else { i++; }
-            }
-            return w;
-          };
-
-          const justs: Quad[][] = [];
-          const j1 = await findOneWarning(warnCands);
-          if (j1 && j1.length > 0) {
-            justs.push(j1);
-            if (maxWarn > 1) {
-              const hsQ: Array<{ excluded: Set<string>; justification: Quad[] }> = [{ excluded: new Set(), justification: j1 }];
-              const explored = new Set<string>();
-              outer: while (hsQ.length > 0 && justs.length < maxWarn) {
-                const { excluded, justification: curJ } = hsQ.shift()!;
-                const eKey = [...excluded].sort().join("|");
-                if (explored.has(eKey)) continue;
-                explored.add(eKey);
-                for (const ax of curJ) {
-                  const newExcl = new Set(excluded);
-                  newExcl.add(`${ax.subject.value}\0${ax.predicate.value}\0${ax.object.value}`);
-                  const nKey = [...newExcl].sort().join("|");
-                  if (explored.has(nKey)) continue;
-                  const reduced = warnCands.filter(q => !newExcl.has(`${q.subject.value}\0${q.predicate.value}\0${q.object.value}`));
-                  if (!(await this._checkUnsatisfiabilityDirect(reduced, classIRI))) continue;
-                  const jN = await findOneWarning(reduced);
-                  if (!jN || jN.length === 0) continue;
-                  const jNKey = jN.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`).sort().join("|");
-                  if (!justs.some(j => j.map(q => `${q.subject.value}\0${q.predicate.value}\0${q.object.value}`).sort().join("|") === jNKey)) {
-                    justs.push(jN);
-                    if (justs.length >= maxWarn) break outer;
-                    hsQ.push({ excluded: newExcl, justification: jN });
-                  }
-                }
-              }
-            }
-          }
+          const justs = await this._minimalUnitSets(
+            warnCands,
+            (q, d) => this._boundedCheck(x => this._checkUnsatisfiabilityDirect(x, classIRI), q, d),
+            maxWarn,
+            validateDeadline,
+            false,
+          );
 
           warnings.push({ classIRI, justifications: justs });
         }

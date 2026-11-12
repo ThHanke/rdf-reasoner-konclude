@@ -303,7 +303,7 @@ target_include_directories(konclude_kernel
 # aliases and macros are available without modifying vendor sources.
 target_compile_options(konclude_kernel PRIVATE
     "-include" "${CMAKE_SOURCE_DIR}/src/compat/QtCompat.h"
-    $<$<BOOL:${EMSCRIPTEN}>:-fexceptions>
+    $<$<BOOL:${EMSCRIPTEN}>:-fwasm-exceptions>
     $<$<BOOL:${EMSCRIPTEN}>:-pthread>
     $<$<BOOL:${EMSCRIPTEN}>:-flto>
 )
@@ -333,7 +333,7 @@ add_executable(konclude_wasm
 # shared-memory link ("not compiled with 'atomics' or 'bulk-memory' features").
 target_compile_options(konclude_wasm PRIVATE
     $<$<BOOL:${EMSCRIPTEN}>:-pthread>
-    $<$<BOOL:${EMSCRIPTEN}>:-fexceptions>
+    $<$<BOOL:${EMSCRIPTEN}>:-fwasm-exceptions>
 )
 
 set_target_properties(konclude_wasm PROPERTIES

@@ -3,14 +3,16 @@
 Latency and robustness of `repair()` (inconsistency repair) on ontologies from 312 to 100k quads: [`benchmark-repair.md`](benchmark-repair.md).
 
 ```
-Date:      2026-10-16
-Package:   rdf-reasoner-konclude 0.8.0  (git b928e4c; vendor/konclude 056334ad)
-WASM:      dist/konclude.wasm sha256 a8e8134d27e1; pthread pool 32; Konclude processors 8
-Native:    Konclude v0.7.0-1138 - 500e11d9 (image 49374483e311); threads 8 (-w AUTO)
-HermiT:    1.9.10 (image 731aaa3c781f)
-Host:      Intel(R) Xeon(R) Silver 4216 CPU @ 2.10GHz, 8 cores, 41 GB; load average at start 5.35
+Date:      WASM columns 2026-11-12 (this release); Konclude and HermiT columns 2026-10-16 (recorded, not repeated)
+Package:   rdf-reasoner-konclude 0.9.4 for the WASM columns; 0.8.0 (git b928e4c; vendor/konclude 056334ad) for the recorded columns
+WASM:      dist/konclude.wasm sha256 dd01c43e2b91; pthread pool 32; Konclude processors 8
+Native:    Konclude v0.7.0-1138 - 500e11d9 (image 49374483e311); threads 8 (-w AUTO)   [2026-10-16]
+HermiT:    1.9.10 (image 731aaa3c781f)   [2026-10-16]
+Host:      Intel(R) Xeon(R) Silver 4216 CPU @ 2.10GHz, 8 cores, 41 GB; load average at start 4.39 (2026-11-12 run), 5.35 (2026-10-16 run)
 Runtime:   Node v25.1.0
 ```
+
+The WASM columns of §1–§3 were re-measured for v0.9.4; native Konclude and HermiT were not run again, so their cells and the WASM / Konclude ratios use the 2026-10-16 native medians (same native image on the same host class, different load). PMDco is in §4.
 
 Markers: † spread (max−min)/median above 10%; ‡ fewer than 5 samples (indicative only). Cells show median [min–max].
 
@@ -22,8 +24,8 @@ Markers: † spread (max−min)/median above 10%; ‡ fewer than 5 samples (indi
 
 | Ontology | Exp. | Triples | Konclude total | HermiT reason ⁴ | WASM ingest→result | WASM / Konclude |
 |---|---|---|---|---|---|---|
-| LUBM schema | SHI | 307 | 67 ms [63–72]†‡ | 55 ms | 297 ms [279–330]† | ~4.4× |
-| GALEN | SHIF | 30817 | 322 ms [306–325]‡ | 4750 ms | 1594 ms [1575–1627] | ~5.0× |
+| LUBM schema | SHI | 307 | 67 ms [63–72]†‡ | 55 ms | 261 ms [249–273] | ~3.9× |
+| GALEN | SHIF | 30817 | 322 ms [306–325]‡ | 4750 ms | 1126 ms [1098–1137] | ~3.5× |
 
 #### §1b ABox ontologies (realization) — classification path, and full role-closure realization
 
@@ -31,17 +33,19 @@ Upstream Konclude's `realization` computes only concept realization by default a
 
 | Ontology | Exp. | Triples | Konclude realization (types only) | Konclude excl. realization ⁷ | WASM classification path (ingest→result) | WASM / Konclude (classification path) | Konclude realization + role instances ⁸ | WASM full realization (ingest→result, incl. role closure) | WASM / Konclude (full) |
 |---|---|---|---|---|---|---|---|---|---|
-| Roberts family | SROIQ | 3866 | 2223 ms [2077–2282]‡ | 1909 ms | 1854 ms [1836–1891]‡ | ~1.0× | 40038 ms [32229–49872]†‡ | 27471 ms [26645–28459]‡ | ~0.7× |
-| LUBM schema + data | SHI | 100850 | 1221 ms [1200–1255]‡ | 1219 ms | 2870 ms [2856–2990] | ~2.4× | 1237 ms [1227–1255]‡ | 3550 ms [3492–3785] | ~2.9× |
+| Roberts family | SROIQ | 3866 | 2223 ms [2077–2282]‡ | 1909 ms | 1679 ms [1676–1742]‡ | ~0.9× | 40038 ms [32229–49872]†‡ | 29640 ms [29033–30218]‡ | ~0.7× |
+| LUBM schema + data | SHI | 100850 | 1221 ms [1200–1255]‡ | 1219 ms | 2249 ms [2157–2469]† | ~1.8× | 1237 ms [1227–1255]‡ | 2616 ms [2573–2644] | ~2.1× |
 
 #### §1c WASM phase breakdown (breakdown only — do not compare phases across releases)
 
 | Ontology | Op | init (one-off) | ingest (encode+sync) | reasoning | output decode | ingest→result | TS layer total ³ |
 |---|---|---|---|---|---|---|---|
-| LUBM schema | classification | 927 ms [872–1357]† | 1 ms [1–2]† | 294 ms [277–327]† | 2 ms [1–2]† | 297 ms [279–330]† | 456 ms [446–467] |
-| GALEN | classification | 916 ms [887–1044]† | 56 ms [54–63]† | 1516 ms [1501–1550] | 20 ms [19–21] | 1594 ms [1575–1627] | 1946 ms [1920–1967] |
-| Roberts family | realization | 975 ms [937–1382]†‡ | 7 ms [7–28]†‡ | 27100 ms [26236–27997]‡ | 403 ms [364–435]†‡ | 27471 ms [26645–28459]‡ | 29557 ms [29548–29572]‡ |
-| LUBM schema + data | realization | 934 ms [846–1098]† | 180 ms [173–189] | 2829 ms [2789–3006] | 541 ms [525–591]† | 3550 ms [3492–3785] | 4327 ms [4241–4371] |
+| LUBM schema | classification | 886 ms [840–1125]† | 1 ms [1–2]† | 259 ms [247–270] | 1 ms [1–1] | 261 ms [249–273] | 415 ms [400–449]† |
+| GALEN | classification | 917 ms [869–961] | 54 ms [49–58]† | 1051 ms [1024–1069] | 15 ms [14–27]† | 1126 ms [1098–1137] | 1649 ms [1639–1705] |
+| Roberts family | realization | 859 ms [841–1324]†‡ | 7 ms [6–13]†‡ | 29244 ms [28755–29905]‡ | 307 ms [271–383]†‡ | 29640 ms [29033–30218]‡ | 27643 ms [27471–31282]†‡ |
+| LUBM schema + data | realization | 854 ms [836–897] | 161 ms [158–162] | 2200 ms [2167–2216] | 255 ms [247–267] | 2616 ms [2573–2644] | 3702 ms [3651–3724] |
+
+**WASM column against the recorded 0.8.0 run (same columns, different day and load):** LUBM schema 297 → 261 ms (−12 %), GALEN 1,594 → 1,126 ms (−29 %), Roberts classification path 1,854 → 1,679 ms (−9 %), LUBM + data classification path 2,870 → 2,249 ms (−22 %), LUBM + data full realization 3,550 → 2,616 ms (−26 %). **Roberts full realization is slower: 27,471 → 29,640 ms (+8 %, outside the recorded range, 3 samples each).** Warm behaviour: Roberts "unchanged content" is 59 ms against 17 ms recorded (not investigated). The Roberts one-axiom-added cell of the earlier run (105,520 ms, range 28,592–155,490 ms) contained the intermittent slow call named below; this run's samples were all typical. The explanation graph for Roberts has 5,900 quads (5,905 before).
 
 **Reading these numbers:**
 
@@ -97,7 +101,7 @@ Native Konclude has no output path for role assertions, sameAs, or justification
 |---|---|---|---|---|---|---|---|---|
 | LUBM schema | SHI | classification | 0 | 0 | 0 | 44 | +0 (×1.0 total) | 55 |
 | GALEN | SHIF | classification | 0 | 0 | 0 | 3287 | +0 (×1.0 total) | 4752 |
-| Roberts family | SROIQ | realization | 348562 | 0 | 348648 | 4552 | +348648 (×77.6 total) | 5905 |
+| Roberts family | SROIQ | realization | 348562 | 0 | 348648 | 4552 | +348648 (×77.6 total) | 5900 |
 | LUBM schema + data | SHI | realization | 98497 | 0 | 98541 | 39981 | +98541 (×3.5 total) | 73984 |
 
 **Capabilities notes:**
@@ -115,10 +119,10 @@ Native Konclude has no output path for role assertions, sameAs, or justification
 
 | Ontology | Exp. | cold (first call) | unchanged content | identical content, new Store | one axiom added (full rebuild) |
 |---|---|---|---|---|---|
-| LUBM schema | SHI | 489 ms [437–521]† | 4 ms [3–6]† | 10 ms [7–12]† | 157 ms [130–160]† |
-| GALEN | SHIF | 2025 ms [1980–2034] | 88 ms [75–89]† | 136 ms [133–139] | 1429 ms [1427–1444] |
-| Roberts family | SROIQ | 29388 ms [29336–42890]†‡ | 17 ms [14–36]†‡ | 1706 ms [1635–1760]‡ | 105520 ms [28592–155490]†‡ |
-| LUBM schema + data | SHI | 4414 ms [4296–4486] | 277 ms [268–292] | 1383 ms [1371–1394] | 3746 ms [3661–3798] |
+| LUBM schema | SHI | 432 ms [403–502]† | 3 ms [2–8]† | 7 ms [5–15]† | 108 ms [86–119]† |
+| GALEN | SHIF | 1722 ms [1697–1771] | 83 ms [79–92]† | 132 ms [127–135] | 1067 ms [1057–1078] |
+| Roberts family | SROIQ | 28064 ms [27204–28614]‡ | 59 ms [58–67]†‡ | 1702 ms [1690–1741]‡ | 28585 ms [28209–28917]‡ |
+| LUBM schema + data | SHI | 3700 ms [3683–3717] | 285 ms [284–290] | 1327 ms [1316–1338] | 3274 ms [3251–3289] |
 
 **Scenario definitions:**
 - *cold*: first public call on a fresh `RdfReasoner` in a fresh process (includes Worker and WASM start). Each repetition of the four scenarios is its own process.
@@ -127,3 +131,19 @@ Native Konclude has no output path for role assertions, sameAs, or justification
 - *one axiom added*: `rdfs:subClassOf owl:Thing` for a new class; the digest changes, the generation bumps and the ontology is rebuilt (full recompute on a warm Worker).
 - Each scenario asserts the kernel counters (`syncStats` generation and rebuild count); the run aborts if the semantics differ.
 - Native Konclude is a stateless batch CLI; no warm figure exists, so no ratio is shown. For repeated changed-content calls (stability and memory) see `tests/bench/sequential-runner.mjs`.
+
+### § 4 PMDco, the Ontosphere sequence: 0.8.0 vs 0.9.x vs the current branch
+
+Sequence timed: `await reasoner.ready`, then `checkConsistency(store)`, then `materialize(store, { includeClassHierarchy: true })`, one fresh `RdfReasoner` per sample, init excluded. Fixture: Ontosphere PMDco (`pmdco.ttl` as N-Triples, 7,974 triples, 886 named direct subclass edges: `tests/fixtures/pmdco-ontosphere.nt`; 8 cores). Numbers are wall time and CPU-seconds (process CPU in Node, summed renderer-process CPU in Chromium 158). Repeat counts are 2–3 per cell on a quiet machine; **CPU-seconds are the stable figure**, wall time in Chromium varies by several seconds between runs when other work shares the host.
+
+| Build | Node total (consistency + materialize) | Node CPU | Chromium total | Chromium CPU |
+|---|---|---|---|---|
+| 0.8.0 | 1.3–1.4 s (0.9 + 0.5) | 4.8 s | 1.8–2.6 s (1.1 + 0.7) | 7.5–8.1 s |
+| 0.9.0 – 0.9.3 | 4.1–4.2 s (2.4 + 1.7) | 24.8 s | 17.4–19.3 s (9.7 + 9.0) | 111–114 s |
+| current branch (wasm EH, wasm-opt, consistency-only, OR-branching stop flag) | 1.9 s (0.43 + 1.45) | 10.2 s | 2.0 s (0.45 + 1.55) | 12.5–12.9 s |
+
+**Why 0.9.x was slower than 0.8.0 (the slowdown is real, and it is correctness work):** since 0.8.0 the KPSet classifier flushed its buffered possible-subsumption messages after it had collected the items to test, so ~4,760 candidate subsumptions (sibling pairs, almost all negative) were never tested and classification ended with untested candidates (0.8.0: 0 calculated tests; PMDco repo fixture loses 2 true edges, Pizza 70). Patch 009 (0.9.0) fixes this, which makes the classifier run the tests that unmodified Konclude runs. Unmodified native Konclude takes 9.6 s for the same classification on one worker; the WASM build takes 10.1–10.4 s on one pinned core, i.e. the WASM compute is within about 5–8 % of native. Bisect (variants of the 0.9.0 sources): patch 009 alone accounts for the whole Node and browser slowdown; patches 005–008 cost nothing.
+
+**Why the browser was 10x and Node 3x:** the tableau ends every OR-branching task with a C++ exception (`CCalculationStopProcessingException`), about 324,000 per classification. One throw cost 3.1 µs in Node and 77–79 µs in Chromium 158 (measured in situ, throw to catch): 25 of the 35 CPU-s of the intermediate build. The current branch (1) uses native WebAssembly exceptions (`-fwasm-exceptions`) instead of the JS-based `-fexceptions`, (2) lets Binaryen optimize the module (wasm 10.4 MB → 7.05 MB, about 2.1 MB gzipped), (3) runs `checkConsistency` only up to Konclude's consistency step instead of a full classification (consistency 2.4 s → 0.4 s in Node), and (4) ends the task by a status flag instead of the exception on the direct rule chain (patch 005). The inferred triple sets equal the 0.9.x output on the checked fixtures.
+
+Reproduce (`<pmdco.nt>` = `tests/fixtures/pmdco-ontosphere.nt`): `node tests/bench/pmdco-seq.mjs <packageRoot> <pmdco.nt>` (Node), `node tests/bench/browser-pmdco.mjs <packageRoot> <pmdco.nt> [runs]` (Chromium harness, CPU from the browser's process table), `scripts/bench-pmdco-node.sh <runs> label=<packageRoot>...` (alternating runs). Profiling builds with C++ function names: `KONCLUDE_PROFILING_FUNCS=ON make build-wasm`, then `node tests/bench/browser-profile.mjs <packageRoot> <pmdco.nt>`.

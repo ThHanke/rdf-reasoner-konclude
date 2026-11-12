@@ -512,6 +512,8 @@ struct KoncludeReasoner::Impl {
     bool mBuiltReal = false;                   // load variant of the loaded ontology
     int  mPipeLevel = 0;                       // 0 none, 1 classified, 2 realized (for the loaded ontology)
     int  mConsistState = -1;                   // -1 unknown, else memoised consistency() result
+    int  mConsistGen = -1;                     // content generation mConsistState was computed for
+    bool mConsistOnlyRun = false;              // the loaded ontology ran only the consistency step (no saturation/classification data)
     bool mHidden = false;                      // results hidden because a sync changed content since the build
     bool mHiddenClassified = false, mHiddenRealized = false;
     int  mLastAdded = 0, mLastRemoved = 0, mRebuilds = 0;
@@ -1974,7 +1976,7 @@ void KoncludeReasoner::buildOntology(const void* triplePtr, int tripleCount, con
 // therefore never a separate round-trip when realizing — it is a prerequisite
 // that Konclude satisfies as part of the same run.
 
-static void buildBaseRequirements(QList<COntologyProcessingRequirement*>& reqList) { // file-local helper
+static void buildBaseRequirements(QList<COntologyProcessingRequirement*>& reqList, bool consistencyOnly = false) { // file-local helper
     COntologyProcessingStepVector* stepVec =
         COntologyProcessingStepVector::getProcessingStepVectorInstance();
     auto addReq = [&](COntologyProcessingStep::PROCESSINGSTEPTYPE t) {
@@ -1990,16 +1992,18 @@ static void buildBaseRequirements(QList<COntologyProcessingRequirement*>& reqLis
     addReq(COntologyProcessingStep::OPSBUILD);
     addReq(COntologyProcessingStep::OPSPREPROCESS);
     addReq(COntologyProcessingStep::OPSCONSISTENCY);
+    // Consistency is a prerequisite OF classification, not the other way round: the native `consistency` command stops here.
+    if (consistencyOnly) return;
     addReq(COntologyProcessingStep::OPSPRECOMPUTESATURATION);
     addReq(COntologyProcessingStep::OPSCLASSCLASSIFY);
     addReq(COntologyProcessingStep::OPSOBJECTROPERTYCLASSIFY);
     addReq(COntologyProcessingStep::OPSDATAROPERTYCLASSIFY);
 }
 
-bool KoncludeReasoner::runPipeline(KoncludeReasoner::Impl* impl, bool includeRealization) {
+bool KoncludeReasoner::runPipeline(KoncludeReasoner::Impl* impl, bool includeRealization, bool consistencyOnly) {
 
     QList<COntologyProcessingRequirement*> reqList;
-    buildBaseRequirements(reqList);
+    buildBaseRequirements(reqList, consistencyOnly);
 
     if (includeRealization) {
         COntologyProcessingStepVector* stepVec =
@@ -2071,6 +2075,10 @@ bool KoncludeReasoner::runPipeline(KoncludeReasoner::Impl* impl, bool includeRea
         impl->mPreviousOntology = nullptr;
     }
 
+    if (consistencyOnly) {
+        // no classification data exists; success means the consistency result can be read
+        return impl->mOntology->getConsistence() != nullptr;
+    }
     return impl->mClassified;
 }
 
@@ -2208,11 +2216,15 @@ bool KoncludeReasoner::ensureBuilt(bool forRealization) {
         if (im->mHidden) { im->mClassified = im->mHiddenClassified; im->mRealized = im->mHiddenRealized; im->mHidden = false; }
         return true;
     }
+    // A consistency-only ontology is reloaded for classification/realization (a pipeline never runs twice on one
+    // ontology); its consistency answer stays valid for the same content generation.
+    const int keptConsist = (im->mConsistOnlyRun && im->mConsistGen == im->mGeneration) ? im->mConsistState : -1;
     if (im->mBuiltDirty) im->reset();
     im->mBuiltDirty = true;
     im->mBuiltGen = -1;
     im->mPipeLevel = 0;
-    im->mConsistState = -1;
+    im->mConsistState = keptConsist;
+    im->mConsistOnlyRun = false;
     im->mHidden = false;
     static const uint8_t emptyStr[4] = {0, 0, 0, 0};
     if (im->mHasContent)
@@ -2231,6 +2243,7 @@ bool KoncludeReasoner::ensureBuilt(bool forRealization) {
 // TBox only: class hierarchy + property hierarchy. No ABox realization.
 // Idempotent per generation: unchanged content returns the cached result without running Konclude.
 bool KoncludeReasoner::classification() {
+    if (mImpl->mConsistOnlyRun) mImpl->mBuiltGen = -1;   // no classification data on this ontology: reload
     if (!ensureBuilt(false)) return false;
     if (mImpl->mPipeLevel >= 1) return mImpl->mClassified;
     auto t0 = std::chrono::steady_clock::now();
@@ -2248,6 +2261,7 @@ bool KoncludeReasoner::classification() {
 // together via a single prepareOntology() call.  There is no separate
 // classification round-trip.
 bool KoncludeReasoner::realization() {
+    if (mImpl->mConsistOnlyRun) mImpl->mBuiltGen = -1;   // no classification data on this ontology: reload
     if (!ensureBuilt(true)) return false;
     if (mImpl->mPipeLevel >= 2) return mImpl->mClassified;
     auto t0 = std::chrono::steady_clock::now();
@@ -2260,15 +2274,28 @@ bool KoncludeReasoner::realization() {
 
 // consistency ──────────────────────────────────────────────────────────────────
 // Memoised per generation; needs the classification-variant ontology (native IFP semantics).
+// Runs only the consistency step (no saturation, no classification) unless classification already ran.
 
 bool KoncludeReasoner::consistency() {
+    Impl* im = mImpl;
     if (!ensureBuilt(false)) return false;
-    if (mImpl->mConsistState >= 0) return mImpl->mConsistState != 0;
-    if (mImpl->mTriviallyInconsistent) { mImpl->mConsistState = 0; return false; }
-    if (mImpl->mPipeLevel == 0 && !classification()) return false;
-    CConsistence* cons = mImpl->mOntology->getConsistence();
+    if (im->mConsistState >= 0) return im->mConsistState != 0;
+    if (im->mTriviallyInconsistent) { im->mConsistState = 0; im->mConsistGen = im->mGeneration; return false; }
+    if (im->mPipeLevel == 0) {
+        // Classification already ran (mPipeLevel >= 1): its consistency result is in memory, read it below.
+        // Otherwise run only up to the consistency step; classify/realize reload the ontology when asked.
+        bool ran = runPipeline(im, false, true);
+        im->mConsistOnlyRun = true;
+        if (im->mStalled) return false;
+        if (!ran) {                       // no consistency data: fall back to the full pipeline on a fresh load
+            im->mBuiltGen = -1;
+            if (!classification()) return false;
+        }
+    }
+    CConsistence* cons = im->mOntology->getConsistence();
     bool ok = cons ? cons->isOntologyConsistent() : true;
-    mImpl->mConsistState = ok ? 1 : 0;
+    im->mConsistState = ok ? 1 : 0;
+    im->mConsistGen = im->mGeneration;
     return ok;
 }
 

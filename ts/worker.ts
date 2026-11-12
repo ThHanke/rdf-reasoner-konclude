@@ -175,8 +175,9 @@ export async function handleMessage(
         break;
       }
       case "consistency": {
-        // consistency() runs the classification pipeline itself when it has not run yet (and reports an
-        // inconsistent ontology as a failed pipeline), so callers do not need a separate classification call.
+        // consistency() runs only up to the consistency step (no saturation, no classification) unless the
+        // classification of this content already ran, in which case its result is read from memory. Callers do not
+        // need a separate classification call; classification()/realization() reload the ontology afterwards.
         result = reasoner.consistency();
         if (reasoner.stalled?.()) throw new Error("KONCLUDE_STALLED");
         break;

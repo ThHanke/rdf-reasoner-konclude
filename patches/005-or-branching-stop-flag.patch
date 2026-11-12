@@ -1,0 +1,128 @@
+--- a/Source/Reasoner/Kernel/Algorithm/CCalculationTableauCompletionTaskHandleAlgorithm.h
++++ b/Source/Reasoner/Kernel/Algorithm/CCalculationTableauCompletionTaskHandleAlgorithm.h
+@@ -276,6 +276,10 @@
+ 
+ 						bool continueIndividualProcessing(CIndividualProcessNode*& indiProcNode, CCalculationAlgorithmContextBase* calcAlgContext);
+ 
++						// OR branching ends the task by flag instead of exception on the direct main-loop rule chain (see patch 005)
++						bool mKonStopPending = false;
++						bool mKonDirect = false;
++						bool mKonDirectOR = false;
+ 						bool tableauRuleProcessing(CIndividualProcessNode*& indiProcNode,CConceptProcessDescriptor*& conProcDes, CCalculationAlgorithmContextBase* calcAlgContext);
+ 						bool individualNodeInitializing(CIndividualProcessNode*& indiProcNode, CCalculationAlgorithmContextBase* calcAlgContext);
+ 						void individualNodeConclusion(CIndividualProcessNode*& indiProcNode, CCalculationAlgorithmContextBase* calcAlgContext);
+--- a/Source/Reasoner/Kernel/Algorithm/CCalculationTableauCompletionTaskHandleAlgorithm.cpp
++++ b/Source/Reasoner/Kernel/Algorithm/CCalculationTableauCompletionTaskHandleAlgorithm.cpp
+@@ -940,6 +940,9 @@
+ 						//}
+ 						CSatisfiableTaskRepresentativeBackendUpdatingAdapter* repCacheUpdAd = satCalcTask->getSatisfiableRepresentativeBackendCacheUpdatingAdapter();
+ 
++						mKonStopPending = false;
++						mKonDirect = false;
++						mKonDirectOR = false;
+ 						try {
+ 							mBackendCacheHandler->setWorkingOntology(satCalcTask->getProcessingDataBox()->getOntology());
+ 
+@@ -1181,7 +1184,14 @@
+ 											KONCLUCE_TASK_ALGORITHM_MODEL_STRING_INSTRUCTION(mBeforeRuleDebugIndiModelString = generateDebugIndiModelStringList(calcAlgContext));
+ 
+ 
+-											continueProcessingIndividual = tableauRuleProcessing(indiProcNode,conProcDes,mCalcAlgContext);
++											mKonStopPending = false;
++								mKonDirectOR = false;
++								continueProcessingIndividual = tableauRuleProcessing(indiProcNode,conProcDes,mCalcAlgContext);
++								if (mKonStopPending) {
++									mKonStopPending = false;
++									completed = true;   // what the CCalculationStopProcessingException(true) catch clause did
++									goto konStopHandled;
++								}
+ 
+ 
+ 											KONCLUCE_TASK_ALGORITHM_MODEL_STRING_INSTRUCTION(mAfterRuleDebugIndiModelString = generateDebugIndiModelStringList(calcAlgContext));
+@@ -1369,6 +1379,7 @@
+ 							error = true;
+ 							errorCode = 3;
+ 						}
++						konStopHandled:;
+ 
+ 						KONCLUCE_TASK_ALGORITHM_MODEL_STRING_INSTRUCTION(mEndTaskDebugIndiModelString = generateDebugIndiModelStringList(calcAlgContext));
+ 
+@@ -9513,6 +9524,7 @@
+ 					}
+ 
+ 
++					mKonDirect = true;   // consumed at the entry of tableauRuleChoice
+ 					tableauRuleChoice(indiProcNode,conProcDes,calcAlgContext);
+ 
+ 					return true;
+@@ -9526,19 +9538,33 @@
+ 					cint64 conOpCode = concept->getOperatorCode();
+ 
+ 					++mCurrentRecProcDepth;
++					const bool konDirect = mKonDirect;
++					mKonDirect = false;
+ 
+ 
+ 					TableauRuleFunction func = nullptr;
+ 					if (!conNeg) {
+ 						func = mPosJumpFuncVec[conOpCode];
+ 						if (func) {
++							const bool konSavedOR = mKonDirectOR;
++							mKonDirectOR = konDirect && (func == &CCalculationTableauCompletionTaskHandleAlgorithm::applyORRule || func == &CCalculationTableauCompletionTaskHandleAlgorithm::applyNegORRule);
+ 							(this->*func)(indiProcNode,conProcDes,false,calcAlgContext);
++							mKonDirectOR = konSavedOR;
++							if (mKonStopPending) {
++								return;   // the exception would have skipped mLastJumpFunc and --mCurrentRecProcDepth too
++							}
+ 						}
+ 						mLastJumpFunc = func;
+ 					} else {
+ 						func = mNegJumpFuncVec[conOpCode];
+ 						if (func) {
++							const bool konSavedOR = mKonDirectOR;
++							mKonDirectOR = konDirect && (func == &CCalculationTableauCompletionTaskHandleAlgorithm::applyORRule || func == &CCalculationTableauCompletionTaskHandleAlgorithm::applyNegORRule);
+ 							(this->*func)(indiProcNode,conProcDes,true,calcAlgContext);
++							mKonDirectOR = konSavedOR;
++							if (mKonStopPending) {
++								return;   // the exception would have skipped mLastJumpFunc and --mCurrentRecProcDepth too
++							}
+ 						}
+ 						mLastJumpFunc = func;
+ 					}
+@@ -16735,6 +16761,8 @@
+ 
+ 
+ 				void CCalculationTableauCompletionTaskHandleAlgorithm::executeORBranching(CIndividualProcessNode*& processIndi, CConceptProcessDescriptor*& conProDes, bool negate, CBranchingORProcessingRestrictionSpecification* plannedBranchingProcessRestriction, CCalculationAlgorithmContextBase* calcAlgContext) {
++					const bool konDirectHere = mKonDirectOR;
++					mKonDirectOR = false;
+ 					++mAppliedORRuleCount;
+ 					STATINC(OREXECUTIONCOUNT,calcAlgContext);
+ 					CConceptDescriptor* conDes = conProDes->getConceptDescriptor();
+@@ -16993,6 +17021,10 @@
+ 
+ 							processorContext->getTaskProcessorCommunicator()->communicateTaskCreation(newTaskList);
+ 
++							if (konDirectHere) {
++								mKonStopPending = true;   // handleTask() ends the task as the catch clause did
++								return;
++							}
+ 							throw CCalculationStopProcessingException(true);
+ 						} else {
+ 							// throw clash
+@@ -17016,6 +17048,8 @@
+ 
+ 
+ 				void CCalculationTableauCompletionTaskHandleAlgorithm::applyORRule(CIndividualProcessNode*& processIndi, CConceptProcessDescriptor*& conProDes, bool negate, CCalculationAlgorithmContextBase* calcAlgContext) {
++					const bool konDirectHere = mKonDirectOR;
++					mKonDirectOR = false;
+ 					STATINC(ORRULEAPPLICATIONCOUNT,calcAlgContext);
+ 					CConceptDescriptor* conDes = conProDes->getConceptDescriptor();
+ 					CConcept* concept = conDes->getConcept();
+@@ -17041,6 +17075,7 @@
+ 								addSatisfiableCachedAbsorbedDisjunctionConcept(conDes,processIndi,plannedBranchingProcessRestriction,depTrackPoint,calcAlgContext);
+ 							} else {
+ 								// delaying failed, execute OR rule
++								mKonDirectOR = konDirectHere;
+ 								executeORBranching(processIndi,conProDes,negate,plannedBranchingProcessRestriction,calcAlgContext);
+ 							}
+ 						}
