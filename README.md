@@ -593,7 +593,7 @@ more than the ontology (SHACL shapes, application metadata). Two options say wha
 repair and validation method honours them:
 
 - `inferredGraph` (per call, default `INFERRED_GRAPH_IRI`): the named graph that holds inferred triples. It is the graph you
-  passed to `materialize`/`classify`. Pass the **same name** to the explain calls.
+  passed to `materialize`/`classify`. The reasoner instance remembers every inferred graph it has been given (the last one is the default for later calls, and all of them are kept out of the axiom set), so passing it again is optional but harmless. A brand-new instance that was never told a non-default inferred graph treats it as content: pass `inferredGraph` or list it in `excludeGraphs`.
 - `excludeGraphs` (constructor option): named graphs that are never part of the ontology, for example shapes.
 
 ```typescript
@@ -607,8 +607,8 @@ const why = await reasoner.explainEntailment(
   RDF_TYPE,
   classIri,
   {
-    justificationMode: "minimal",
-    inferredGraph: INFERRED, // same graph as above
+    justificationMode: "exact",
+    inferredGraph: INFERRED, // optional: the instance remembers the graph of its last call
   },
 );
 ```
@@ -661,8 +661,8 @@ const justs = await reasoner.explain(store, quad, { maxJustifications: 3 });
 ### Explaining an entailment triple (`explainEntailment`)
 
 `explainEntailment` explains why a specific triple is entailed by the ontology.
-All 16 entailment types use native dep-chain cache or TS synthesis (~1ms).
-`justificationMode: "minimal"` is the opt-in search for guaranteed-minimal axiom sets: it returns every minimal
+All 16 entailment types use native dep-chain cache or TS synthesis (~1ms) in the default `"fast"` mode.
+`justificationMode: "exact"` is the opt-in search for guaranteed-minimal axiom sets: it returns every minimal
 justification up to `maxJustifications` (HermiT's "explanation" view), at the price of one reasoner call per probe.
 
 ```typescript
@@ -702,18 +702,21 @@ Full coverage matrix with test cases: [`docs/entailment-coverage.md`](docs/entai
 **Options:**
 
 - `justificationMode` — controls how justifications are computed:
-  - `"causal"` (default): native dep chain + TS synthesis. Returns the causal
-    proof path (~1ms). When the native path has none, `isEntailed` is `true` with an empty `justifications` list.
-  - `"minimal"`: guaranteed-minimal axiom sets over whole axioms (QuickXplain plus hitting-set tree), bounded by `timeout`.
+  - `"fast"` (default): native dep chain + TS synthesis (~1ms), at most one justification, not guaranteed minimal.
+    Every candidate is verified first (asserted triples only, and it alone entails the target). When none survives,
+    `isEntailed` is `true`, `justifications` is empty and `justificationUnavailable` is `true`: ask again with `"exact"`.
+    An empty list never means "directly asserted".
+  - `"exact"`: guaranteed-minimal axiom sets over whole axioms (QuickXplain plus hitting-set tree), bounded by `timeout`.
     Example: `some_silicon rdf:type semiconductor` in a 1 MB PMDco-based case returns both of HermiT's justifications, three
     axioms each, in about 18 s (`tests/integration/explain-entailment-hermit-fesi.test.ts`).
+- (`"causal"` and `"minimal"` are deprecated aliases of `"fast"` and `"exact"`.)
 - `objectIsClassLike: false` — treat the object as a non-class entity (e.g., literal).
   Enables data property explanation.
 - `maxJustifications` — maximum number of justifications to return (default: 1).
-  Only applies to the `"minimal"` mode; native/synthesis paths return at most one.
-- `inferredGraph` — the graph holding inferred triples; it must be named here, see
+  Only applies to the `"exact"` mode; the `"fast"` mode returns at most one.
+- `inferredGraph` — the graph holding inferred triples. The instance remembers the graph of its last call (e.g. `materialize`), so repeating it is optional; see
   [Which graphs count as axioms](#which-graphs-count-as-axioms-inferredgraph-excludegraphs).
-- `timeout` — wall-clock limit of the `"minimal"` search in ms (default 180 000, `0` disables it).
+- `timeout` — wall-clock limit of the `"exact"` search in ms (default 180 000, `0` disables it).
 
 ### Diagnosing an inconsistency (`explainInconsistency`)
 

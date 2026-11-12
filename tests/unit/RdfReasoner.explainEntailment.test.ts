@@ -894,11 +894,17 @@ describe("RdfReasoner — explainEntailment", () => {
     const reasoner = await makeReadyReasoner();
     const store = new Store([
       quad(alice, rdfType, namedNode("http://example.org/Student"), defaultGraph()),
+      // the native realization justification is only trusted when its axioms are asserted
+      quad(namedNode("http://example.org/Student"), subClassOf, Person, defaultGraph()),
     ]);
 
     mocks.workerPostMessage.mockImplementation((msg: unknown) => {
       const req = msg as { id: number; method: string; args: unknown[] };
-      if (req.method === "hasNativeJustification") {
+      if (req.method === "sync") {
+        simulateWorkerMessage({ id: req.id, result: fakeSync(req) });
+      } else if (req.method === "consistency") {
+        simulateWorkerMessage({ id: req.id, result: false }); // inconsistent with the negated entailment: entailed
+      } else if (req.method === "hasNativeJustification") {
         simulateWorkerMessage({ id: req.id, result: false });
       } else if (req.method === "hasJustificationByType") {
         const type = req.args[2] as number;
@@ -1010,6 +1016,8 @@ describe("RdfReasoner — explainEntailment", () => {
         simulateWorkerMessage({ id: req.id, result: false });
       } else if (req.method === "hasJustificationByType") {
         simulateWorkerMessage({ id: req.id, result: false });
+      } else if (req.method === "consistency") {
+        simulateWorkerMessage({ id: req.id, result: true });
       } else if (req.method === "isSubClassOf") {
         // Native classifier correctly reports A ⊑ C (transitive)
         const [sub, sup] = req.args as string[];

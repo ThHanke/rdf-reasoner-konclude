@@ -119,6 +119,12 @@ const workerRegistry = new FinalizationRegistry<Worker>((worker) => {
 
 type ResultCache = { gen: number; store: Store; graph: string; sig: string };
 
+/** Budget of the exact search that "fast" mode runs when no cheap candidate verifies. */
+const FAST_FALLBACK_SEARCH_MS = 5_000;
+/** ... and only for small ontologies (larger ones answer `justificationUnavailable`; use "exact"). */
+const FAST_FALLBACK_MAX_QUADS = 2_000;
+const NO_CAUSAL_JUSTIFICATION = "Entailed, but the fast (native/synthesised) path could not produce a sound justification; use justificationMode \"exact\" for the axioms.";
+
 export class RdfReasoner {
   /** Resolves when the Worker WASM module is ready; rejects on init failure. */
   readonly ready: Promise<void>;
@@ -431,13 +437,13 @@ export class RdfReasoner {
   }
 
   private _stamp(gen: number, store: Store, inferredGraph?: string): ResultCache {
-    const graph = inferredGraph ?? INFERRED_GRAPH_IRI;
+    const graph = this._igRead(inferredGraph);
     return { gen, store, graph, sig: graphSignature(getRawStore(store), graph) };
   }
 
   private _hit(cache: ResultCache | null, gen: number, store: Store, inferredGraph?: string): boolean {
     if (cache === null || cache.gen !== gen || cache.store !== store) return false;
-    const graph = inferredGraph ?? INFERRED_GRAPH_IRI;
+    const graph = this._igRead(inferredGraph);
     return cache.graph === graph && cache.sig === graphSignature(getRawStore(store), graph);
   }
 
@@ -451,7 +457,8 @@ export class RdfReasoner {
    * result caches. `ignoreGraph` (a custom inferredGraph) never counts as content.
    */
   private async _sync(store: Store, ignoreGraph?: string, direct = false): Promise<number> {
-    const { tripleBuffer, strTableBuffer } = encodeStoreToBuffers(store, ignoreGraph ? [ignoreGraph, ...this._excludeGraphs] : [...this._excludeGraphs]);
+    if (ignoreGraph) this._ig(ignoreGraph);
+    const { tripleBuffer, strTableBuffer } = encodeStoreToBuffers(store, [...this._inferredGraphs, ...this._excludeGraphs]);
     const call = direct ? this._callDirect.bind(this) : this._call.bind(this);
     const info = (await call("sync", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer])) as { generation?: number } | undefined;
     // A worker that does not report generations (e.g. test doubles) never yields a cache hit.
@@ -459,12 +466,35 @@ export class RdfReasoner {
     return this._lastGen;
   }
 
+  /** Inferred graphs this instance has been told about (default graph, every `inferredGraph` option seen). */
+  private readonly _inferredGraphs = new Set<string>([INFERRED_GRAPH_IRI]);
+  private _lastInferredGraph: string | undefined;
+  /** This instance loaded a probe/search ontology into the worker, so the store's base is no longer what is built. */
+  private _baseDisplaced = false;
+
+  /**
+   * The inferred graph a call WRITES to (materialize, classify, ...): the explicit option, else the default graph.
+   * An omitted option never reuses a graph of an earlier call. Every graph seen is remembered and never counts as
+   * base content (sync digest, explanation candidates).
+   */
+  private _ig(explicit?: string): string {
+    const ig = explicit ?? INFERRED_GRAPH_IRI;
+    this._inferredGraphs.add(ig);
+    this._lastInferredGraph = ig;
+    return ig;
+  }
+
+  /** The inferred graph a call READS (explain, validate, repair, ...): the explicit option, else the graph of this instance's last write. */
+  private _igRead(explicit?: string): string {
+    return explicit !== undefined ? this._ig(explicit) : (this._lastInferredGraph ?? INFERRED_GRAPH_IRI);
+  }
+
   /** `_sync` for ops that overwrite an inferred graph: if the sync fails the graph is left cleared, never stale. */
   private async _syncForOp(store: Store, inferredGraph: string | undefined): Promise<number> {
     try {
       return await this._sync(store, inferredGraph);
     } catch (e) {
-      clearGraph(getRawStore(store), inferredGraph ?? INFERRED_GRAPH_IRI);
+      clearGraph(getRawStore(store), this._ig(inferredGraph));
       throw e;
     }
   }
@@ -518,7 +548,7 @@ export class RdfReasoner {
 
       const rawStore = getRawStore(store);
       const inferredGraphNode = DataFactory.namedNode(
-        opts?.inferredGraph ?? INFERRED_GRAPH_IRI,
+        this._ig(opts?.inferredGraph),
       );
       clearGraph(rawStore, inferredGraphNode.value);
 
@@ -645,7 +675,7 @@ export class RdfReasoner {
     const wantExplanations = opts?.explanations === true;
     const result = this._queue.then(async () => {
       const inferredGraphNode = DataFactory.namedNode(
-        opts?.inferredGraph ?? INFERRED_GRAPH_IRI,
+        this._ig(opts?.inferredGraph),
       );
       const gen = await this._syncForOp(store, opts?.inferredGraph);
       await this._guardConsistent(gen, opts);
@@ -766,7 +796,7 @@ export class RdfReasoner {
 
       const rawStore = getRawStore(store);
       const inferredGraphNode = DataFactory.namedNode(
-        opts?.inferredGraph ?? INFERRED_GRAPH_IRI,
+        this._ig(opts?.inferredGraph),
       );
       clearGraph(rawStore, inferredGraphNode.value);
 
@@ -824,7 +854,7 @@ export class RdfReasoner {
   private async _classifyInline(store: Store, gen: number, inferredGraph?: string): Promise<void> {
     if (this._hit(this._classifyCache, gen, store, inferredGraph)) return;
     const rawStore = getRawStore(store);
-    const ig = DataFactory.namedNode(inferredGraph ?? INFERRED_GRAPH_IRI);
+    const ig = DataFactory.namedNode(this._ig(inferredGraph));
     clearGraph(rawStore, ig.value);
     await this._call("classification", []);
     const buf = (await this._call("getInferredTripleBuffer", [])) as ArrayBuffer;
@@ -841,7 +871,7 @@ export class RdfReasoner {
   private async _materializeInline(store: Store, gen: number, inferredGraph?: string): Promise<void> {
     if (this._hit(this._materializeCache, gen, store, inferredGraph)) return;
     const rawStore = getRawStore(store);
-    const ig = DataFactory.namedNode(inferredGraph ?? INFERRED_GRAPH_IRI);
+    const ig = DataFactory.namedNode(this._ig(inferredGraph));
     clearGraph(rawStore, ig.value);
     await this._call("realization", []);
     const buf = (await this._call("getInferredTripleBuffer", [])) as ArrayBuffer;
@@ -860,7 +890,7 @@ export class RdfReasoner {
   private async _classifyPropertiesInline(store: Store, gen: number, inferredGraph?: string): Promise<void> {
     if (this._hit(this._classifyPropertiesCache, gen, store, inferredGraph)) return;
     const rawStore = getRawStore(store);
-    const ig = DataFactory.namedNode(inferredGraph ?? INFERRED_GRAPH_IRI);
+    const ig = DataFactory.namedNode(this._ig(inferredGraph));
     clearGraph(rawStore, ig.value);
     await this._call("classification", []);
     const buf = (await this._call("getPropertyTripleBuffer", [])) as ArrayBuffer;
@@ -889,7 +919,7 @@ export class RdfReasoner {
     await this._guardConsistent(gen, guard, true);
     if (!this._hit(this._classifyCache, gen, store, inferredGraph)) {
       const rawStore = getRawStore(store);
-      const ig = DataFactory.namedNode(inferredGraph ?? INFERRED_GRAPH_IRI);
+      const ig = DataFactory.namedNode(this._igRead(inferredGraph));
       clearGraph(rawStore, ig.value);
       await this._callDirect("classification", []);
       const buf = (await this._callDirect("getInferredTripleBuffer", [])) as ArrayBuffer;
@@ -949,7 +979,7 @@ export class RdfReasoner {
   ): Promise<boolean | null> | Promise<(boolean | null)[]> {
     const isBatch = Array.isArray(axiomOrAxioms);
     const axioms: Quad[] = isBatch ? (axiomOrAxioms as Quad[]) : [axiomOrAxioms as Quad];
-    const igIri = opts?.inferredGraph ?? INFERRED_GRAPH_IRI;
+    const igIri = this._igRead(opts?.inferredGraph);
 
     // Fast-path unsupported check for single axiom (no queue entry needed)
     if (!isBatch) {
@@ -1060,7 +1090,7 @@ export class RdfReasoner {
   // REVIEW: whatIf re-runs materialize internally — consider whether callers
   // should handle this through DlReasoner instead.
   whatIf(store: Store, additions: Quad[], opts?: WhatIfOptions & { inferredGraph?: string }): Promise<{ added: Quad[]; removed: Quad[] }> {
-    const igIri = opts?.inferredGraph ?? INFERRED_GRAPH_IRI;
+    const igIri = this._igRead(opts?.inferredGraph);
     if (opts?.outputGraph === igIri) {
       return Promise.reject(new Error(`whatIf: outputGraph must not equal the inferred graph IRI`));
     }
@@ -1128,6 +1158,7 @@ export class RdfReasoner {
 
       // Invalidate all operation caches: WASM state now reflects hypothetical input,
       // not the real store. Next real call must re-load.
+        this._baseDisplaced = true;
       this._classifyCache = null;
       this._materializeCache = null;
       this._classifyPropertiesCache = null;
@@ -1395,7 +1426,7 @@ export class RdfReasoner {
   }
 
   private _synthesizeRestrictionJustification(
-    allBase: Quad[], store: Store, subjectIri: string, classIri: string,
+    allBase: Quad[], store: Store, subjectIri: string, classIri: string, ig: string = INFERRED_GRAPH_IRI,
   ): Quad[] | null {
     const OWL_EQUIV = "http://www.w3.org/2002/07/owl#equivalentClass";
     const OWL_ON_PROP = "http://www.w3.org/2002/07/owl#onProperty";
@@ -1404,7 +1435,6 @@ export class RdfReasoner {
     const OWL_HAS_VALUE = "http://www.w3.org/2002/07/owl#hasValue";
     const OWL_COMPLEMENT = "http://www.w3.org/2002/07/owl#complementOf";
     const RDFS_SUBCLASS = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
-    const ig = INFERRED_GRAPH_IRI;
 
     const restrictionNodes = allBase
       .filter(q =>
@@ -1517,7 +1547,7 @@ export class RdfReasoner {
       //   background    — built-in declarations always passed to WASM so Konclude
       //                   can recognise classes/properties, but never returned as
       //                   part of a justification
-      const igIri = opts?.inferredGraph ?? INFERRED_GRAPH_IRI;
+      const igIri = this._igRead(opts?.inferredGraph);
       const allCandidates: Quad[] = [];
       const background: Quad[] = [];
       for (const q of store.getQuads(null, null, null, null)) {
@@ -1572,12 +1602,12 @@ export class RdfReasoner {
    */
   explainInconsistency(store: Store, opts?: ExplainOptions): Promise<Quad[][]> {
     const result = this._queue.then(async () => {
-      const ig = opts?.inferredGraph ?? INFERRED_GRAPH_IRI;
+      const ig = this._igRead(opts?.inferredGraph);
       // Build base quads (exclude inferred/hypothetical graphs)
       // Annotation assertions never affect consistency (OWL 2 DL): leave them out of every check.
       const allBase = dropAnnotationTriples(store.getQuads(null, null, null, null).filter(q => {
         const g = q.graph.value;
-        return g !== ig && g !== HYPOTHETICAL_IRI && !this._excludeGraphs.has(g);
+        return g !== ig && !this._inferredGraphs.has(g) && g !== HYPOTHETICAL_IRI && !this._excludeGraphs.has(g);
       }));
 
       // The worker state tells what must be repeated: _sync() answers with the content generation. The same generation
@@ -1673,7 +1703,7 @@ export class RdfReasoner {
       return Promise.reject(new TypeError("weaken: culprit must be an Axiom ({ principal, quads })"));
     }
     const result = this._queue.then(async () => {
-      const ig = opts?.inferredGraph ?? INFERRED_GRAPH_IRI;
+      const ig = this._igRead(opts?.inferredGraph);
       const graphsToIgnore = new Set<string>([ig, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, ...this._excludeGraphs]);
       const base = store.getQuads(null, null, null, null).filter(q => !graphsToIgnore.has(q.graph.value));
       const timeoutMs = opts?.timeout ?? 180_000;
@@ -1716,7 +1746,7 @@ export class RdfReasoner {
     }
     if (edit === null || typeof edit !== "object") return Promise.reject(new TypeError("assessEdit: edit must be an object"));
     const result = this._queue.then(async () => {
-      const ig = opts?.inferredGraph ?? INFERRED_GRAPH_IRI;
+      const ig = this._igRead(opts?.inferredGraph);
       const graphsToIgnore = new Set<string>([ig, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, ...this._excludeGraphs]);
       const base = store.getQuads(null, null, null, null).filter(q => !graphsToIgnore.has(q.graph.value));
       const timeoutMs = opts?.timeout ?? 180_000;
@@ -1760,7 +1790,7 @@ export class RdfReasoner {
       return Promise.reject(new TypeError("repair: store must be an N3 Store"));
     }
     const result = this._queue.then(async () => {
-      const ig = opts?.inferredGraph ?? INFERRED_GRAPH_IRI;
+      const ig = this._igRead(opts?.inferredGraph);
       const graphsToIgnore = new Set<string>([ig, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, ...this._excludeGraphs]);
       // Annotation assertions never affect consistency (OWL 2 DL): leave them out of every check.
       const base = dropAnnotationTriples(store.getQuads(null, null, null, null).filter(q => !graphsToIgnore.has(q.graph.value)));
@@ -1800,7 +1830,7 @@ export class RdfReasoner {
    */
   async explainInconsistencyAxioms(store: Store, opts?: ExplainOptions): Promise<AxiomJustification[]> {
     const justifications = await this.explainInconsistency(store, opts);
-    const ignore = new Set<string>([opts?.inferredGraph ?? INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, ...this._excludeGraphs]);
+    const ignore = new Set<string>([this._igRead(opts?.inferredGraph), HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, ...this._excludeGraphs]);
     return justifications.map(j => groupJustification(j, store, ignore));
   }
 
@@ -1892,8 +1922,29 @@ export class RdfReasoner {
     });
   }
 
+  /**
+   * Slot-held: is `cand` a sound justification shortcut? Every triple must be asserted in the base graphs (never an
+   * inferred-only triple) and the units of the candidate (plus declarations) together with the negated entailment must
+   * be inconsistent. Replaces the loaded WASM state, so the result caches are invalidated.
+   */
+  private async _verifyShortcutJustification(
+    allBase: Quad[], cand: Quad[], s: string, p: string, o: string, objectIsClassLike: boolean,
+  ): Promise<boolean> {
+    const key = (q: Quad) => `${q.subject.termType}:${q.subject.value}|${q.predicate.value}|${q.object.termType}:${q.object.value}`;
+    const asserted = new Set(allBase.map(key));
+    if (cand.some(q => !asserted.has(key(q)))) return false;
+    const candKeys = new Set(cand.map(key));
+    const { units, background } = partitionIntoUnits(allBase);
+    const chosen = units.filter(u => u.some(q => candKeys.has(key(q))));
+    const probe = buildEntailmentProbe(s, p, o, objectIsClassLike, `probe_${++this._entailmentProbeCounter}`);
+    const res = await this._boundedInconsistencyCheck([...background, ...chosen.flat(), ...probe.probeQuads], Date.now() + 20_000);
+    this._invalidateResultCaches();
+    return res === true;
+  }
+
   /** Every generation-keyed result cache is stale (sub-calls replaced the WASM state). */
   private _invalidateResultCaches(): void {
+    this._baseDisplaced = true;
     this._classifyCache = null;
     this._materializeCache = null;
     this._classifyPropertiesCache = null;
@@ -2090,7 +2141,7 @@ export class RdfReasoner {
     const maxParts = opts?.laconicMaxParts ?? 40;
 
     const result = this._queue.then(async () => {
-      const ig = opts?.inferredGraph ?? INFERRED_GRAPH_IRI;
+      const ig = this._igRead(opts?.inferredGraph);
       // Get MIPS justifications (reuse explainInconsistency logic inline)
       const allBase = store.getQuads(null, null, null, null).filter(q => {
         const g = q.graph.value;
@@ -2245,11 +2296,14 @@ export class RdfReasoner {
     opts?: ExplainEntailmentOptions,
   ): Promise<EntailmentResult> {
     const maxJustifications = opts?.maxJustifications ?? 1;
+    const timeoutMs = opts?.timeout ?? 180_000;
     const objectIsClassLike = opts?.objectIsClassLike ?? true;
-    const mode = opts?.justificationMode ?? (opts?.nativeOnly ? "causal" : "causal");
+    // "causal"/"minimal" are the deprecated names of "fast"/"exact".
+    const requested = opts?.justificationMode;
+    const mode: "fast" | "exact" = requested === "exact" || requested === "minimal" ? "exact" : "fast";
 
     const result = this._queue.then(async () => {
-      const ig = opts?.inferredGraph ?? INFERRED_GRAPH_IRI;
+      const ig = this._igRead(opts?.inferredGraph);
       const allBase = store.getQuads(null, null, null, null).filter(q => {
         const g = q.graph.value;
         return g !== ig && g !== HYPOTHETICAL_IRI && !this._excludeGraphs.has(g);
@@ -2269,9 +2323,26 @@ export class RdfReasoner {
         return { isEntailed: false, justifications: [] as Quad[][] };
       }
 
-      // ── Dep-chain fallback (when no Store justification found) ──
-      // Uses the dep-chain cache from a prior classify()/reason() call.
-      // Zero WASM reloads — just O(1) lookups on the existing state.
+      // Reasoner state: a previous exact search or shortcut check loads probe ontologies, so the loaded ontology is only
+      // trusted when a cached result exists for the synced content generation (materialize/classify built it). Then the
+      // native caches are read as they are; otherwise the base is classified again (the worker rebuilds lazily).
+      if (mode === "fast" && this._baseDisplaced) {
+        this._baseDisplaced = false;
+        const gen = await this._sync(store, ig, true);
+        if (this._classifyCache?.gen !== gen && this._materializeCache?.gen !== gen) await this._callDirect("classification", []);
+      }
+
+      // Shortcut gate. The native dep-chain cache and the TS synthesisers produce cheap candidate justifications, but a
+      // classification edge A subClassOf B is its own "justification" in that cache (an inferred hierarchy edge, not an
+      // ontology axiom), so a candidate is trusted only when every triple is asserted AND the candidate alone entails
+      // the target (one small reasoner check). "exact" mode never takes a shortcut: it must return every minimal set.
+      // Candidates are only recorded here and verified at the end of the causal path: verifying reloads a tiny
+      // ontology into the worker, which would invalidate the classification state the other lookups still read.
+      const shortcutCands: Quad[][] = [];
+      const accept = async (cand: Quad[]): Promise<boolean> => {
+        if (mode !== "exact" && cand.length > 0) shortcutCands.push(cand);
+        return false;
+      };
 
       if (probeKind === "subClassOf") {
         const hasNative = await this._hasNativeJustificationDirect(subjectIri, objectIri);
@@ -2279,17 +2350,17 @@ export class RdfReasoner {
           const ntriples = await this._getSubClassJustificationDirect(subjectIri, objectIri);
           const justQuads = this._parseNTriplesJustification(ntriples);
           if (justQuads.length > 0) {
-            return { isEntailed: true, justifications: [justQuads] };
+            { const cand = justQuads; if (await accept(cand)) return { isEntailed: true, justifications: [cand] }; }
           }
         }
       }
 
       if (probeKind === "type") {
-        if (mode === "causal") {
+        if (mode === "fast") {
           await this._ensureExplanationGraphFromBuffer(store, "getInferredTripleBuffer");
           const justQuads = this._lookupJustificationFromStore(store, subjectIri, predicateIri, objectIri);
           if (justQuads !== null && justQuads.length > 0) {
-            return { isEntailed: true, justifications: [justQuads] };
+            { const cand = justQuads; if (await accept(cand)) return { isEntailed: true, justifications: [cand] }; }
           }
         }
 
@@ -2317,7 +2388,7 @@ export class RdfReasoner {
             DataFactory.namedNode(RDF_TYPE),
             DataFactory.namedNode(assertedType),
           );
-          return { isEntailed: true, justifications: [[typeQuad as Quad, ...subClassQuads]] };
+          { const cand = [typeQuad as Quad, ...subClassQuads]; if (await accept(cand)) return { isEntailed: true, justifications: [cand] }; }
         }
 
         // Domain-chain: inferred rdf:type A (with triple justification), A ⊑ B → rdf:type B
@@ -2333,12 +2404,12 @@ export class RdfReasoner {
             tjQuads = this._synthesizeDomainRangeJustification(allBase, subjectIri, inferredType);
           }
           if (!tjQuads || tjQuads.length === 0) {
-            tjQuads = this._synthesizeRestrictionJustification(allBase, store, subjectIri, inferredType);
+            tjQuads = this._synthesizeRestrictionJustification(allBase, store, subjectIri, inferredType, ig);
           }
           if (!tjQuads || tjQuads.length === 0) continue;
           const scQuads = this._parseNTriplesJustification(scNtriples);
           if (scQuads.length === 0) continue;
-          return { isEntailed: true, justifications: [[...tjQuads, ...scQuads]] };
+          { const cand = [...tjQuads, ...scQuads]; if (await accept(cand)) return { isEntailed: true, justifications: [cand] }; }
         }
 
         // Realization-based: clash-path hook captured dep chain during tableau
@@ -2349,20 +2420,20 @@ export class RdfReasoner {
             subjectIri, objectIri, RdfReasoner._ET_REALIZATION);
           const justQuads = this._parseNTriplesJustification(ntriples);
           if (justQuads.length > 0) {
-            return { isEntailed: true, justifications: [justQuads] };
+            { const cand = justQuads; if (await accept(cand)) return { isEntailed: true, justifications: [cand] }; }
           }
         }
 
         // Domain/range synthesis: subject uses property P, P has domain/range C
         const domainSynthesis = this._synthesizeDomainRangeJustification(allBase, subjectIri, objectIri);
         if (domainSynthesis && domainSynthesis.length > 0) {
-          return { isEntailed: true, justifications: [domainSynthesis] };
+          { const cand = domainSynthesis; if (await accept(cand)) return { isEntailed: true, justifications: [cand] }; }
         }
 
         // OWL restriction synthesis: equivalentClass/subClassOf restriction patterns
-        const restrictionSynthesis = this._synthesizeRestrictionJustification(allBase, store, subjectIri, objectIri);
+        const restrictionSynthesis = this._synthesizeRestrictionJustification(allBase, store, subjectIri, objectIri, ig);
         if (restrictionSynthesis && restrictionSynthesis.length > 0) {
-          return { isEntailed: true, justifications: [restrictionSynthesis] };
+          { const cand = restrictionSynthesis; if (await accept(cand)) return { isEntailed: true, justifications: [cand] }; }
         }
 
         // sameAs type propagation: subject sameAs partner, partner rdf:type object
@@ -2377,7 +2448,7 @@ export class RdfReasoner {
             const sameAsQuad = store.getQuads(subjectIri, OWL_SAME_AS, partner, null)[0]
               ?? store.getQuads(partner, OWL_SAME_AS, subjectIri, null)[0];
             if (sameAsQuad) {
-              return { isEntailed: true, justifications: [[sameAsQuad as Quad, typeQuads[0] as Quad]] };
+              { const cand = [sameAsQuad as Quad, typeQuads[0] as Quad]; if (await accept(cand)) return { isEntailed: true, justifications: [cand] }; }
             }
           }
         }
@@ -2391,7 +2462,7 @@ export class RdfReasoner {
         for (const pa of propAssertions) {
           const domainQuads = store.getQuads(pa.predicate.value, RDFS_DOMAIN, objectIri, null);
           if (domainQuads.length > 0) {
-            return { isEntailed: true, justifications: [[pa as Quad, domainQuads[0] as Quad]] };
+            { const cand = [pa as Quad, domainQuads[0] as Quad]; if (await accept(cand)) return { isEntailed: true, justifications: [cand] }; }
           }
         }
 
@@ -2402,7 +2473,7 @@ export class RdfReasoner {
         for (const pa of asObject) {
           const rangeQuads = store.getQuads(pa.predicate.value, RDFS_RANGE, objectIri, null);
           if (rangeQuads.length > 0) {
-            return { isEntailed: true, justifications: [[pa as Quad, rangeQuads[0] as Quad]] };
+            { const cand = [pa as Quad, rangeQuads[0] as Quad]; if (await accept(cand)) return { isEntailed: true, justifications: [cand] }; }
           }
         }
 
@@ -2423,7 +2494,7 @@ export class RdfReasoner {
             for (const pa2 of store.getQuads(subjectIri, propIri, null, null)) {
               const fillerTypes = store.getQuads(pa2.object, RDF_TYPE, fillerClass, null);
               if (fillerTypes.length > 0) {
-                return { isEntailed: true, justifications: [[pa2 as Quad, fillerTypes[0] as Quad]] };
+                { const cand = [pa2 as Quad, fillerTypes[0] as Quad]; if (await accept(cand)) return { isEntailed: true, justifications: [cand] }; }
               }
             }
             // Check inverse property: filler <invProp> indi
@@ -2437,7 +2508,7 @@ export class RdfReasoner {
               for (const pa2 of store.getQuads(null, invPropTerm, subjectIri, null)) {
                 const fillerTypes = store.getQuads(pa2.subject, RDF_TYPE, fillerClass, null);
                 if (fillerTypes.length > 0) {
-                  return { isEntailed: true, justifications: [[pa2 as Quad, fillerTypes[0] as Quad]] };
+                  { const cand = [pa2 as Quad, fillerTypes[0] as Quad]; if (await accept(cand)) return { isEntailed: true, justifications: [cand] }; }
                 }
               }
             }
@@ -2449,7 +2520,7 @@ export class RdfReasoner {
             const valTerm = hvQuads[0].object;
             const directMatch = store.getQuads(subjectIri, propIri, valTerm, null);
             if (directMatch.length > 0) {
-              return { isEntailed: true, justifications: [[directMatch[0] as Quad]] };
+              { const cand = [directMatch[0] as Quad]; if (await accept(cand)) return { isEntailed: true, justifications: [cand] }; }
             }
             // Inverse: val <invProp> indi
             const invQuads2 = store.getQuads(propTerm, OWL_INVERSE_OF, null, null);
@@ -2463,7 +2534,7 @@ export class RdfReasoner {
               if (invMatch.length > 0) {
                 const invOfQuad = store.getQuads(propTerm, OWL_INVERSE_OF, invPropTerm, null)[0]
                   ?? store.getQuads(invPropTerm, OWL_INVERSE_OF, propTerm, null)[0];
-                return { isEntailed: true, justifications: [[invOfQuad as Quad, invMatch[0] as Quad]] };
+                { const cand = [invOfQuad as Quad, invMatch[0] as Quad]; if (await accept(cand)) return { isEntailed: true, justifications: [cand] }; }
               }
             }
           }
@@ -2480,13 +2551,13 @@ export class RdfReasoner {
           for (const pa3 of propAssertions) {
             const domQ = store.getQuads(pa3.predicate.value, RDFS_DOMAIN, inferredType, null);
             if (domQ.length > 0) {
-              return { isEntailed: true, justifications: [[pa3 as Quad, domQ[0] as Quad, ...scQuads2]] };
+              { const cand = [pa3 as Quad, domQ[0] as Quad, ...scQuads2]; if (await accept(cand)) return { isEntailed: true, justifications: [cand] }; }
             }
           }
           for (const pa3 of asObject) {
             const rngQ = store.getQuads(pa3.predicate.value, RDFS_RANGE, inferredType, null);
             if (rngQ.length > 0) {
-              return { isEntailed: true, justifications: [[pa3 as Quad, rngQ[0] as Quad, ...scQuads2]] };
+              { const cand = [pa3 as Quad, rngQ[0] as Quad, ...scQuads2]; if (await accept(cand)) return { isEntailed: true, justifications: [cand] }; }
             }
           }
         }
@@ -2519,7 +2590,7 @@ export class RdfReasoner {
         }
 
         // FP/IFP workaround: check inferred graph (populated by materialize)
-        const igIri2 = (opts as { inferredGraph?: string } | undefined)?.inferredGraph ?? INFERRED_GRAPH_IRI;
+        const igIri2 = this._igRead(opts?.inferredGraph);
         const inferredSameAs = store.getQuads(
           DataFactory.namedNode(subjectIri),
           DataFactory.namedNode(OWL_SAME_AS),
@@ -2578,7 +2649,7 @@ export class RdfReasoner {
           }
         }
         // Causal fallback: check inferred graph for subPropertyOf in both directions
-        if (mode === "causal") {
+        if (mode === "fast") {
           const fwdInferred = store.getQuads(
             subjectIri, RDFS_SUB_PROPERTY_OF, objectIri,
             DataFactory.namedNode(ig));
@@ -2586,7 +2657,7 @@ export class RdfReasoner {
             objectIri, RDFS_SUB_PROPERTY_OF, subjectIri,
             DataFactory.namedNode(ig));
           if (fwdInferred.length > 0 && revInferred.length > 0) {
-            return { isEntailed: true, justifications: [] as Quad[][] };
+            return { isEntailed: true, justifications: [] as Quad[][], justificationUnavailable: true, reason: NO_CAUSAL_JUSTIFICATION };
           }
         }
         return { isEntailed: false, justifications: [] as Quad[][] };
@@ -2636,13 +2707,13 @@ export class RdfReasoner {
           }
         }
         // Causal fallback: check inferred graph
-        if (mode === "causal") {
+        if (mode === "fast") {
           const inferredGraph = store.getQuads(
             subjectIri, RDFS_SUB_PROPERTY_OF, objectIri,
             DataFactory.namedNode(ig),
           );
           if (inferredGraph.length > 0) {
-            return { isEntailed: true, justifications: [] as Quad[][] };
+            return { isEntailed: true, justifications: [] as Quad[][], justificationUnavailable: true, reason: NO_CAUSAL_JUSTIFICATION };
           }
         }
         return { isEntailed: false, justifications: [] as Quad[][] };
@@ -2697,11 +2768,12 @@ export class RdfReasoner {
       }
 
       // ── Justification search (fallback) ─────────────────────────────────────────────
-      // Only used in "minimal" mode. In "causal" mode (default), check
+      // Only used in "exact" mode. In "fast" mode (default), check
       // inferred graph for the triple — if present, it's entailed but we
       // couldn't synthesize a justification. If absent, not entailed.
 
-      if (mode === "causal") {
+      if (mode === "fast") {
+        const causalFallback = async () => {
         const inferredGraph = store.getQuads(
           subjectIri, predicateIri, objectIri,
           DataFactory.namedNode(ig),
@@ -2711,15 +2783,20 @@ export class RdfReasoner {
                q.predicate.value === predicateIri &&
                q.object.value === objectIri,
         );
-        if (inferredGraph.length > 0 || assertedMatch) {
-          return { isEntailed: true, justifications: [] as Quad[][] };
+        if (assertedMatch) {
+          return { isEntailed: true, justifications: [[allBase.find(
+            q => q.subject.value === subjectIri && q.predicate.value === predicateIri && q.object.value === objectIri,
+          )!]] };
+        }
+        if (inferredGraph.length > 0) {
+          return { isEntailed: true, justifications: [] as Quad[][], justificationUnavailable: true, reason: NO_CAUSAL_JUSTIFICATION };
         }
         // buildInferredTripleBuffer suppresses X subClassOf owl:Nothing,
         // so check satisfiability directly for that case.
         if (objectIri === OWL_NOTHING && predicateIri === RDFS_SUB_CLASS_OF) {
           const sat = await this._isSatisfiableClassDirect(subjectIri);
           if (!sat) {
-            return { isEntailed: true, justifications: [] as Quad[][] };
+            return { isEntailed: true, justifications: [] as Quad[][], vacuous: true, reason: "Subject class is unsatisfiable; it is a subclass of anything (vacuous truth)." };
           }
         }
         // buildInferredTripleBuffer emits the Hasse diagram (direct edges only),
@@ -2729,10 +2806,43 @@ export class RdfReasoner {
         if (predicateIri === RDFS_SUB_CLASS_OF) {
           const entailed = await this._isSubClassOfDirect(subjectIri, objectIri);
           if (entailed) {
-            return { isEntailed: true, justifications: [] as Quad[][] };
+            return { isEntailed: true, justifications: [] as Quad[][], justificationUnavailable: true, reason: NO_CAUSAL_JUSTIFICATION };
           }
         }
         return { isEntailed: false, justifications: [] as Quad[][] };
+        };
+        let fb = await causalFallback();
+        // A native-cache hit or a synthesised candidate is itself evidence that the triple is entailed.
+        if (!fb.isEntailed && shortcutCands.length > 0) {
+          fb = { isEntailed: true, justifications: [] as Quad[][], justificationUnavailable: true, reason: NO_CAUSAL_JUSTIFICATION };
+        }
+        if (fb.isEntailed) {
+          for (const cand of shortcutCands) {
+            if (await this._verifyShortcutJustification(allBase, cand, subjectIri, predicateIri, objectIri, objectIsClassLike)) {
+              return { isEntailed: true, justifications: [cand] };
+            }
+          }
+        }
+        // No candidate survived: a short exact search (bounded, one justification) before giving up.
+        if (fb.isEntailed === true && fb.justifications.length === 0 && !fb.vacuous && maxJustifications !== 0 && allBase.length <= FAST_FALLBACK_MAX_QUADS) {
+          const budget = Math.min(timeoutMs > 0 ? timeoutMs : Infinity, FAST_FALLBACK_SEARCH_MS);
+          const probe = buildEntailmentProbe(subjectIri, predicateIri, objectIri, objectIsClassLike, `probe_${++this._entailmentProbeCounter}`);
+          if (!(await this._checkInconsistencyDirect(allBase))) {
+            const found = await this._minimalUnitSets(
+              [...allBase, ...probe.probeQuads],
+              (quads, d) => this._boundedInconsistencyCheck(quads, d),
+              1,
+              Date.now() + budget,
+              false,
+            );
+            this._invalidateResultCaches();
+            const js = found
+              .map(j => j.filter(q => !probe.probeKeys.has(probeTripleKey(q.subject.value, q.predicate.value, q.object.value))))
+              .filter(j => j.length > 0);
+            if (js.length > 0) return { isEntailed: true, justifications: js };
+          }
+        }
+        return fb;
       }
 
       // C1: ontology must be consistent for the reduction to be sound
@@ -2778,6 +2888,7 @@ export class RdfReasoner {
       }
 
       // Invalidate caches — sub-calls modify WASM state
+      this._baseDisplaced = true;
       this._classifyCache = null;
       this._materializeCache = null;
       this._classifyPropertiesCache = null;
@@ -2789,7 +2900,6 @@ export class RdfReasoner {
       // explainInconsistency (a triple-level search cannot work on real ontologies: it falls back to one reasoner
       // probe per triple). The negated entailment (probe) is part of the input, so every inconsistent unit set
       // contains it; it is stripped from each result. Declarations are fixed background of every check.
-      const timeoutMs = opts?.timeout ?? 180_000;
       const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : Infinity;
       const candidates = opts?.axiomFilter
         ? allBase.filter(q => isDeclaration(q) || opts.axiomFilter!(q))
@@ -2830,7 +2940,7 @@ export class RdfReasoner {
     const result = this._queue.then(async () => {
       const maxErr  = opts?.maxJustificationsPerError  ?? 1;
       const maxWarn = opts?.maxJustificationsPerWarning ?? 1;
-      const igIri = opts?.inferredGraph ?? INFERRED_GRAPH_IRI;
+      const igIri = this._igRead(opts?.inferredGraph);
       const validateTimeoutMs = opts?.timeout ?? 180_000;
       const validateDeadline = validateTimeoutMs > 0 ? Date.now() + validateTimeoutMs : Infinity;
 

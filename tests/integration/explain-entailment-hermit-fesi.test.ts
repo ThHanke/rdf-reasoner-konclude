@@ -141,7 +141,7 @@ describe.skipIf(!wasmExists)("explainEntailment vs HermiT (FeSi case)", () => {
       RDF + "type",
       PMD + "0090000",
       {
-        justificationMode: "minimal",
+        justificationMode: "exact",
         maxJustifications: 5,
         inferredGraph: INFERRED,
       },
@@ -154,21 +154,18 @@ describe.skipIf(!wasmExists)("explainEntailment vs HermiT (FeSi case)", () => {
     expect(found).toEqual([HERMIT_J1.join("\n"), HERMIT_J2.join("\n")].sort());
   }, 180_000);
 
-  it("without `inferredGraph` the inferred triple is treated as an axiom and explains itself", async () => {
-    const res = await reasoner.explainEntailment(
-      store,
-      SILICON,
-      RDF + "type",
-      PMD + "0090000",
-      {
-        justificationMode: "minimal",
-        maxJustifications: 5,
-      },
-    );
+  it("an inferredGraph named on an earlier call of the same instance is remembered (no option needed)", async () => {
+    // Before 0.9.5 the inferred triple counted as an axiom and explained itself when the option was left out; the
+    // instance now remembers every inferred graph it was told about. (A brand-new instance that was never told still
+    // treats a non-default inferred graph in the store as content.)
+    const res = await reasoner.explainEntailment(store, SILICON, RDF + "type", PMD + "0090000", {
+      justificationMode: "exact",
+      maxJustifications: 5,
+    });
     expect(res.isEntailed).toBe(true);
-    expect(res.justifications).toHaveLength(1);
-    expect(canonicalAxioms(res.justifications[0])).toEqual([
+    expect(res.justifications).toHaveLength(2);
+    expect(res.justifications.flat().map((q) => `${q.subject.value} ${q.predicate.value} ${q.object.value}`)).not.toContain(
       `${SILICON} ${RDF}type ${PMD}0090000`,
-    ]);
+    );
   }, 180_000);
 });

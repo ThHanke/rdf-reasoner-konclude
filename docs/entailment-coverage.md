@@ -39,7 +39,7 @@ Validated by: `tests/integration/entailment-coverage.test.ts`,
 
 | Mode | Behavior | Speed |
 |------|----------|-------|
-| `"causal"` (default) | Native dep chain + TS synthesis. No search fallback: an entailment without a native path returns no justification. | ~1ms |
-| `"minimal"` | QuickXplain over axiom units plus hitting-set tree. Guaranteed minimal axiom sets, all of them up to `maxJustifications`. | seconds (about 18 s for the 1 MB FeSi case), bounded by `timeout` |
+| `"fast"` (default; was `"causal"`) | Native dep chain + TS synthesis, every candidate verified. When no candidate verifies: a bounded exact search (5 s, one justification) on ontologies up to 2,000 quads, otherwise no justification and `justificationUnavailable: true`. | ~1ms |
+| `"exact"` (was `"minimal"`) | QuickXplain over axiom units plus hitting-set tree. Guaranteed minimal axiom sets, all of them up to `maxJustifications`. | seconds (about 18 s for the 1 MB FeSi case), bounded by `timeout` |
 
 `explainInconsistency` always uses the axiom-unit search (a minimal inconsistent set cannot be read off the native clash; see the README section "From a failed reasoning call to the explanation").

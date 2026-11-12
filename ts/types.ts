@@ -464,7 +464,14 @@ export interface EntailmentResult {
   ontologyInconsistent?: boolean;
   /** Set to `true` when entailment holds but only vacuously (subject class unsatisfiable). */
   vacuous?: boolean;
-  /** Human-readable explanation of a special case (inconsistent / vacuous). */
+  /**
+   * `true` when `isEntailed` is `true` but no justification was produced (fast mode could not derive a sound one;
+   * every returned justification is verified: asserted triples only, and it alone entails the target). An empty
+   * `justifications` list never means "directly asserted" - an asserted triple is returned as its own justification.
+   * Use `justificationMode: "exact"` to obtain the axioms.
+   */
+  justificationUnavailable?: boolean;
+  /** Human-readable explanation of a special case (inconsistent / vacuous / justification unavailable). */
   reason?: string;
 }
 
@@ -513,21 +520,23 @@ export interface ExplainEntailmentOptions extends ExplainOptions {
    */
   objectIsClassLike?: boolean;
   /**
-   * @deprecated Use `justificationMode: "causal"` instead. When both are set,
+   * @deprecated Use `justificationMode: "fast"` instead. When both are set,
    * `justificationMode` takes precedence.
    */
   nativeOnly?: boolean;
   /**
    * Controls how justifications are computed.
    *
-   * - `"causal"` (default): uses native dep-chain cache and TS synthesis.
-   *   Returns the causal proof path (~1ms). If the native path misses,
-   *   returns `isEntailed: true` with empty justifications.
-   * - `"minimal"`: finds guaranteed-minimal axiom sets (QuickXplain over axiom units plus a
-   *   hitting-set tree, the engine shared with `explainInconsistency`, with the negated
-   *   entailment as part of the input). One reasoner call per probe, about 2*k*log2(n/k) probes
-   *   for a justification of k axioms; bounded by `timeout`. Returns every justification up
-   *   to `maxJustifications`.
+   * - `"fast"` (default): uses the native dep-chain cache and TS synthesis, about 1 ms when a candidate exists.
+   *   Every candidate is verified before it is returned (asserted triples only, and it alone entails the target);
+   *   a failing candidate is dropped, never returned. It returns at most one justification, which is not guaranteed
+   *   minimal. If no candidate survives it returns `isEntailed: true`, empty justifications and
+   *   `justificationUnavailable: true`.
+   * - `"exact"`: finds guaranteed-minimal axiom sets (QuickXplain over axiom units plus a hitting-set tree, the
+   *   engine shared with `explainInconsistency`, with the negated entailment as part of the input). One reasoner call
+   *   per probe, about 2*k*log2(n/k) probes for a justification of k axioms; bounded by `timeout` (seconds on large
+   *   ontologies). Returns every justification up to `maxJustifications`. Never takes a shortcut.
+   * - `"causal"` / `"minimal"`: deprecated names of `"fast"` / `"exact"`.
    */
-  justificationMode?: "causal" | "minimal";
+  justificationMode?: "fast" | "exact" | "causal" | "minimal";
 }
