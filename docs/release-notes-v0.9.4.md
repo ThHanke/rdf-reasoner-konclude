@@ -1,4 +1,4 @@
-# Release Notes — v0.9.4 (draft)
+# Release Notes — v0.9.4
 
 ## Summary
 
@@ -30,10 +30,11 @@ v0.9.4 fixes the PMDco slowdown that started in v0.9.0 and is largest in the bro
 
 - The stop flag covers the direct chain only. Throws through the nested immediate-processing path, the other `CCalculationStopProcessingException(true)` sites (task completion, backend reuse, merging) and clash/error exceptions remain. A generator for the full conversion is scaffolded in `scripts/returncode/`.
 - Classification still runs the ~4,760 sibling tests (same as native Konclude). The transitive-subsumption skip and re-enabling the pseudo-model pre-test were tried and gave no reduction.
+- Two benchmark numbers did not improve against the recorded 0.8.0-era run and have not been investigated: Roberts family full realization is 8 % slower (27,471 → 29,640 ms), and the warm "unchanged content" call on Roberts takes 59 ms against 17 ms. GALEN, LUBM and LUBM + data are faster (−12 % to −29 %).
 - PMDco wall time in Chromium varies by several seconds between runs when other work shares the machine; CPU-seconds are the stable figure.
 
 ## Verification
 
-- Full vitest suite on the final build: 751 passed, 9 skipped, 0 failed.
+- Full vitest suite on the released tree: 756 passed, 9 skipped, 0 failed; Playwright browser suite: 13 passed (Chromium, including the Roberts family and LUBM comparisons with native Konclude).
 - Inferred triples identical to the shipped v0.9.3 on Roberts family (352,108), LUBM, mini-family, GALEN, PMDco; blank-node round trip (real `BlankNode` terms, labels with `:` and non-ASCII) byte-identical to v0.9.3.
-- Benchmarks and method: `docs/benchmark.md` §4.
+- Benchmarks and method: `docs/benchmark.md` §4 (PMDco) and §1–§3 (WASM columns re-measured; native Konclude and HermiT figures are the recorded ones).

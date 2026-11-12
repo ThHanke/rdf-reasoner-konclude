@@ -35,7 +35,8 @@ const OWL  = "http://www.w3.org/2002/07/owl#";
 const RDFS = "http://www.w3.org/2000/01/rdf-schema#";
 const RDF  = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
 
-type Status = "FULL" | "PARTIAL" | "MISSING";
+// FLAGGED: entailed, no cheap sound justification, and the result says so (`justificationUnavailable`); not a silent gap.
+type Status = "FULL" | "PARTIAL" | "MISSING" | "FLAGGED";
 interface AuditResult {
   triple: string;
   predicate: string;
@@ -108,6 +109,8 @@ async function auditOntology(
         status = "MISSING";
       } else if (result.justifications.length > 0) {
         status = "FULL";
+      } else if (result.justificationUnavailable) {
+        status = "FLAGGED";
       } else {
         status = "PARTIAL";
       }
