@@ -101,10 +101,11 @@ export function buildEntailmentProbe(
 
   if (kind === "subClassOf") {
     const subjNode = namedNode(subjectIri);
-    const witness = blankNode(`vg_wit_${probeId}`);
-    const witnessKey = `vg_wit_${probeId}`;
-    push(subjNode, subjectIri, RDFS_SUBCLASSOF, negClass, negClassKey);
+    const witnessKey = `urn:vg:witness:${probeId}`;
+    const witness = namedNode(witnessKey);
+    // Fresh witness in A and in ¬B; NO global A ⊑ ¬B axiom (it would clash with any record individual that is both A and B).
     push(witness, witnessKey, RDF_TYPE, subjNode, subjectIri);
+    push(witness, witnessKey, RDF_TYPE, negClass, negClassKey);
   } else {
     const subjNode = namedNode(subjectIri);
     push(subjNode, subjectIri, RDF_TYPE, negClass, negClassKey);

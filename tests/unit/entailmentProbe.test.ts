@@ -70,7 +70,11 @@ describe("buildEntailmentProbe", () => {
     const preds = plan.probeQuads.map((q) => q.predicate.value);
     expect(preds).toContain(RDF_TYPE);
     expect(preds).toContain("http://www.w3.org/2002/07/owl#complementOf");
-    expect(preds).toContain(RDFS_SUBCLASSOF);
+    // no global A ⊑ ¬B axiom: witness is typed A and ¬B instead
+    expect(preds).not.toContain(RDFS_SUBCLASSOF);
+    const wit = plan.probeQuads.filter((q) => q.subject.termType === "NamedNode" && q.subject.value.startsWith("urn:vg:witness:"));
+    expect(wit.map((q) => q.object.value)).toContain("http://ex.org/A");
+    expect(wit).toHaveLength(2);
   });
 
   it("rdf:type probe generates complement class assertion", () => {
