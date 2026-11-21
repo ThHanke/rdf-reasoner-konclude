@@ -694,8 +694,8 @@ const result = await reasoner.explainEntailment(
 | `rdfs:domain` / `rdfs:range`     | Native (GCI in taxonomy)                                       | ~1ms  |
 | `disjointUnionOf` → `subClassOf` | Synthesized (RDF list walk)                                    | <1ms  |
 | `owl:oneOf` → `rdf:type`         | Synthesized (member scan)                                      | <1ms  |
-| Data property assertions         | Asserted-triple lookup                                         | <1ms  |
-| Object property assertions       | Asserted-triple lookup                                         | <1ms  |
+| Data property assertions         | Asserted triple; declared data property: nominal probe `a : not (P value v)` (exact justification) | ~0.5s check |
+| Object property assertions       | Asserted triple; declared object property: nominal probe `a : not (R value b)` (exact justification) | ~0.5s check |
 
 Full coverage matrix with test cases: [`docs/entailment-coverage.md`](docs/entailment-coverage.md)
 
@@ -765,6 +765,8 @@ const cost = await reasoner.assessEdit(store, edit);
 const { weakenings } = await reasoner.weaken(store, culpritAxiom);
 // most specific replacements first ('generalize' a conjunct to a superclass, 'dropConjunct'), the deletion last;
 // each has .remove, .add (quads to add) and was verified: consistent and the target class stays satisfiable
+// conflict with several justifications: pass the other members of the repair; checks run on base - alsoRemove - culprit
+const multi = await reasoner.weaken(store, culpritAxiom, { alsoRemove: otherRepairAxioms });
 ```
 
 Notes:
@@ -920,7 +922,7 @@ Restriction constructs verified working over ABox individuals:
 | `rdfs:subPropertyOf` (property hierarchy) | Available via `classifyProperties(store)` |
 | `owl:sameAs` entailments                  | Emitted by `materialize()` ✓              |
 | `owl:differentFrom` entailments           | Not emitted (accepted as input ✓)         |
-| Data property assertions                  | Emitted by `materialize()` ✓              |
+| Data property assertions                  | Asserted values and values entailed through data subproperty/equivalence axioms emitted by `materialize()` ✓; values entailed by other axioms (e.g. `owl:hasValue` on an inferred type) not emitted |
 
 ## Browser deployment
 

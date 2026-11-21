@@ -1,3 +1,7 @@
+import { BOTTOM_DP, NPA as OWL_NPA, CLASS_CONSTRUCTORS, HAS_KEY, PROP_DISJOINT, ALL_DISJOINT_PROPS } from "./inputNormalize.js";
+import { encodeToBuffers } from "./intern.js";
+import { DataFactory as DF } from "n3";
+const NN = (iri: string) => DF.namedNode(iri);
 import type { Store } from "n3";
 import type { EncodedBuffers } from "./intern.js";
 import { isSkolemIri, skolemIriToBlankLabel, blankLabelToSkolemIri } from "./intern.js";
@@ -280,6 +284,20 @@ const enc = new TextEncoder();
 export function encodeStoreToBuffers(store: Store, extraExcludedGraphs: readonly string[] = []): EncodedBuffers {
   assertN3Internals(store);
   const s = store as any;
+  // Rewrites for constructs Konclude's RDF mapper reads wrongly (inputNormalize.ts): when the store holds one of them,
+  // take the quad path, which applies the rewrites (rare; PMDco and the benchmark datasets hold none).
+  const skip = (g: string) => EXCLUDED_GRAPHS.has(g) || extraExcludedGraphs.includes(g);
+  const live = (qs: { graph: { value: string }; subject: { termType: string; value: string } }[], namedSubject = false) =>
+    qs.some((q) => !skip(q.graph.value) && (!namedSubject || (q.subject.termType === "NamedNode" && !isSkolemIri(q.subject.value))));
+  const rewrite =
+    live(store.getQuads(null, NN(RDF_TYPE), NN(OWL_NPA), null)) ||
+    live(store.getQuads(null, NN(RDF_TYPE), NN(ALL_DISJOINT_PROPS), null)) ||
+    live(store.getQuads(null, NN(HAS_KEY), null, null)) || live(store.getQuads(null, NN(PROP_DISJOINT), null, null)) ||
+    live(store.getQuads(NN(BOTTOM_DP), null, null, null)) || live(store.getQuads(null, NN(BOTTOM_DP), null, null)) ||
+    live(store.getQuads(null, null, NN(BOTTOM_DP), null)) ||
+    CLASS_CONSTRUCTORS.some((c) => live(store.getQuads(null, NN(c), null, null), true));
+  if (rewrite) return encodeToBuffers(store.getQuads(null, null, null, null).filter((q) => !skip(q.graph.value)));
+
   const entities = s._entityIndex._entities;
   const graphs = s._graphs;
 

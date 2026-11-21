@@ -137,6 +137,13 @@ export interface WeakenOptions {
   timeout?: number;
   /** Named graph IRI that holds inferred triples in the store (excluded from the ontology). Default `INFERRED_GRAPH_IRI`. */
   inferredGraph?: string;
+  /**
+   * The other axioms of a repair (hitting set) that will be removed together with the culprit, for a conflict with
+   * several justifications: every consistency/satisfiability check then runs on base - alsoRemove - culprit (+ the
+   * weaker axiom), so `removal-does-not-restore-consistency` is judged against that ontology. The returned weakenings
+   * remove and add only culprit triples; the caller removes `alsoRemove` itself. Default: none (the culprit alone).
+   */
+  alsoRemove?: Axiom[];
 }
 
 export interface Weakening {
@@ -519,6 +526,13 @@ export interface ExplainEntailmentOptions extends ExplainOptions {
    * Defaults to `true`.
    */
   objectIsClassLike?: boolean;
+  /**
+   * Literal of a data-property assertion (`objectIsClassLike: false`, predicate declared `owl:DatatypeProperty`): its
+   * datatype IRI or language tag. When neither is given, the literal stored for the subject with this lexical form is
+   * used, else xsd:string.
+   */
+  objectDatatype?: string;
+  objectLanguage?: string;
   /**
    * @deprecated Use `justificationMode: "fast"` instead. When both are set,
    * `justificationMode` takes precedence.

@@ -4,6 +4,7 @@
 // Prints one JSON line {ms, inferred, ...}. Everything else (alternation, repetition, statistics) is the caller's job.
 import { Worker as NodeWorker } from 'node:worker_threads';
 import { readFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 import { Store, Parser } from 'n3';
 
 const [root, fixture, op, flag] = process.argv.slice(2);
@@ -21,7 +22,7 @@ class WorkerShim { // adapts worker_threads.Worker to the Web Worker surface Rdf
 }
 globalThis.Worker = WorkerShim;
 
-const { RdfReasoner, INFERRED_GRAPH_IRI, EXPLANATION_GRAPH_IRI } = await import(`${root}/dist/index.js`);
+const { RdfReasoner, INFERRED_GRAPH_IRI, EXPLANATION_GRAPH_IRI } = await import(pathToFileURL(`${root}/dist/index.js`).href);
 const store = new Store(fixture.split(',').flatMap((f) => new Parser({ format: 'N-Triples' }).parse(readFileSync(f, 'utf8'))));
 const before = store.size;
 

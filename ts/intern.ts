@@ -1,6 +1,7 @@
 import type { Quad, Term } from "@rdfjs/types";
 import { DataFactory } from "n3";
 import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI } from "./types.js";
+import { normalizeQuads, mapBackIri } from "./inputNormalize.js";
 
 export interface EncodedBuffers {
   tripleBuffer: ArrayBuffer;
@@ -291,7 +292,7 @@ function decodeTerm(
       return DataFactory.literal(value);
     }
     default: // 0 = NamedNode; the kernel also names anonymous class expressions after their (retagged) label
-      return DataFactory.namedNode(blankLabelToSkolemIri(raw) ?? raw);
+      return DataFactory.namedNode(blankLabelToSkolemIri(raw) ?? mapBackIri(raw));
   }
 }
 
@@ -299,7 +300,8 @@ export function encodeToBuffers(quads: Iterable<Quad>): EncodedBuffers {
   const table = new InternTable();
   const ids: number[] = [];
 
-  for (const quad of quads) {
+  // Rewrites for constructs Konclude's RDF mapper reads wrongly (see inputNormalize.ts).
+  for (const quad of normalizeQuads([...quads])) {
     ids.push(
       table.encodeTerm(quad.subject),
       table.encodeTerm(quad.predicate),

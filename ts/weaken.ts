@@ -11,6 +11,9 @@
  * edited ontology AND satisfiability of the target class X (for an unsatisfiable class without instances consistency alone
  * passes for any replacement, including the culprit itself). Candidates that are already entailed without the culprit are
  * skipped: they would repair nothing the deletion does not.
+ *
+ * With `alsoRemove` (the other members of a repair, for a conflict with several justifications) every check runs on
+ * base - alsoRemove - culprit (+ the weaker axiom); the returned weakenings still remove and add only culprit triples.
  */
 import type { Quad } from "@rdfjs/types";
 import { DataFactory } from "n3";
@@ -119,8 +122,10 @@ export async function computeWeakenings(args: {
   culprit: Axiom;
   oracle: AssessOracle;
   deadline: number;
+  /** The other members of a repair: removed from the base before every check (see WeakenOptions.alsoRemove). */
+  alsoRemove?: readonly Axiom[];
 }): Promise<WeakenResult> {
-  const { base, culprit, oracle, deadline } = args;
+  const { base, culprit, oracle, deadline, alsoRemove = [] } = args;
   const result: WeakenResult = { weakenings: [], incomplete: false };
   const fail = (reason: NonNullable<WeakenResult["reason"]>, incomplete = false): WeakenResult => {
     result.reason = reason;
@@ -132,7 +137,7 @@ export async function computeWeakenings(args: {
   const present = new Set(base.map(quadKey));
   if (!culprit.quads.every(q => present.has(quadKey(q)))) return fail("culprit-not-in-store");
 
-  const removeKeys = new Set(culprit.quads.map(quadKey));
+  const removeKeys = new Set([culprit, ...alsoRemove].flatMap(a => a.quads.map(quadKey)));
   const rest = base.filter(q => !removeKeys.has(quadKey(q)));
   const expired = () => Date.now() >= deadline;
   const inc = await oracle.inconsistent(dropAnnotationTriples(rest));

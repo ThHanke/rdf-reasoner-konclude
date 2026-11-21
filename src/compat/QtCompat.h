@@ -42,6 +42,7 @@
 #include <climits>    // ULONG_MAX
 #include <algorithm>  // std::max, std::min
 #include <iostream>   // std::cerr for qDebug stubs
+#include <cstdio>     // snprintf (QDateTime::toString)
 #include <regex>
 #include <thread>     // std::thread::hardware_concurrency
 #include <chrono>     // std::this_thread::sleep_for
@@ -1539,18 +1540,25 @@ struct QAtomicPointer {
 };
 
 // ---------------------------------------------------------------------------
-// QTime stub — workload measurement is disabled in WASM build.
-// ---------------------------------------------------------------------------
-
+// QTime / QDate / QDateTime: real implementations of the parts the kernel uses (xsd:dateTime literal parsing,
+// ordering and arithmetic in the date-time value space). All values are kept as UTC milliseconds since the epoch;
+// the WASM build has no local time zone. The former stubs returned invalid values, so no date-time literal ever
+// got a value and date-time facet clashes were never found. Timing helpers (start/elapsed) stay no-ops.
 struct QTime {
+    int mMs = 0; bool mValid = false;
+    QTime() = default;
+    QTime(int h, int m, int s = 0, int ms = 0)
+        : mMs(((h * 60 + m) * 60 + s) * 1000 + ms),
+          mValid(h >= 0 && h < 24 && m >= 0 && m < 60 && s >= 0 && s < 60 && ms >= 0 && ms < 1000) {}
     void start() {}
     int elapsed() const { return 0; }
     int restart() { return 0; }
-    bool isValid() const { return false; }
-    int msec() const { return 0; }
-    int second() const { return 0; }
-    int minute() const { return 0; }
-    int hour() const { return 0; }
+    bool isValid() const { return mValid; }
+    int msecsSinceStartOfDay() const { return mMs; }
+    int msec() const { return mMs % 1000; }
+    int second() const { return (mMs / 1000) % 60; }
+    int minute() const { return (mMs / 60000) % 60; }
+    int hour() const { return mMs / 3600000; }
     static QTime currentTime() { return {}; }
 };
 
@@ -1570,41 +1578,101 @@ namespace Qt {
     enum CaseSensitivity { CaseInsensitive = 0, CaseSensitive = 1 };
 }
 
-// QDate stub — minimal for date/time literal parsing
 struct QDate {
     int mYear = 0, mMonth = 0, mDay = 0;
     QDate() = default;
     QDate(int y, int m, int d) : mYear(y), mMonth(m), mDay(d) {}
-    bool isValid() const { return mMonth >= 1 && mMonth <= 12 && mDay >= 1; }
+    static bool isLeapYear(int y) { return (y % 4 == 0 && y % 100 != 0) || y % 400 == 0; }
+    static int daysInMonth(int y, int m) {
+        static const int d[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+        return (m == 2 && isLeapYear(y)) ? 29 : d[m - 1];
+    }
+    bool isValid() const { return mMonth >= 1 && mMonth <= 12 && mDay >= 1 && mDay <= daysInMonth(mYear, mMonth); }
     int year()  const { return mYear; }
     int month() const { return mMonth; }
     int day()   const { return mDay; }
+    // days since 1970-01-01 (proleptic Gregorian calendar, days_from_civil algorithm)
+    long long daysSinceEpoch() const {
+        long long y = mYear - (mMonth <= 2);
+        long long era = (y >= 0 ? y : y - 399) / 400;
+        long long yoe = y - era * 400;
+        long long doy = (153 * (mMonth + (mMonth > 2 ? -3 : 9)) + 2) / 5 + mDay - 1;
+        long long doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+        return era * 146097 + doe - 719468;
+    }
+    static QDate fromDaysSinceEpoch(long long z) {
+        z += 719468;
+        long long era = (z >= 0 ? z : z - 146096) / 146097;
+        long long doe = z - era * 146097;
+        long long yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+        long long y = yoe + era * 400;
+        long long doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        long long mp = (5 * doy + 2) / 153;
+        long long d = doy - (153 * mp + 2) / 5 + 1;
+        long long m = mp + (mp < 10 ? 3 : -9);
+        return QDate((int)(y + (m <= 2)), (int)m, (int)d);
+    }
 };
 
-// QDateTime stub — used for watchdog timestamp recording and date-time value-space arithmetic.
 struct QDateTime {
-    long long mSecs = 0;
+    long long mMs = 0;            // UTC milliseconds since the epoch
     bool mValid = false;
     Qt::TimeSpec mSpec = Qt::LocalTime;
     QDateTime() = default;
-    // Constructor from QDate + QTime + TimeSpec (stub: ignores date/time, stores spec)
-    QDateTime(const QDate&, const QTime&, Qt::TimeSpec spec = Qt::LocalTime) : mValid(true), mSpec(spec) {}
+    QDateTime(const QDate& d, const QTime& t, Qt::TimeSpec spec = Qt::LocalTime)
+        : mMs(d.daysSinceEpoch() * 86400000LL + t.msecsSinceStartOfDay()), mValid(d.isValid() && t.isValid()), mSpec(spec) {}
     static QDateTime currentDateTime() { return QDateTime{}; }
     bool isValid() const { return mValid; }
-    long long secsTo(const QDateTime& other) const { return other.mSecs - mSecs; }
-    QDateTime addSecs(long long s) const { QDateTime r; r.mSecs = mSecs + s; r.mValid = mValid; r.mSpec = mSpec; return r; }
+    long long secsTo(const QDateTime& other) const { return (other.mMs - mMs) / 1000; }
+    QDateTime addSecs(long long s) const { QDateTime r(*this); r.mMs += s * 1000; return r; }
     Qt::TimeSpec timeSpec() const { return mSpec; }
-    QDate date() const { return QDate{}; }
-    QTime time() const { return QTime{}; }
+    QDate date() const {
+        long long days = mMs / 86400000LL; if (mMs % 86400000LL < 0) --days;
+        return QDate::fromDaysSinceEpoch(days);
+    }
+    QTime time() const {
+        long long ms = mMs % 86400000LL; if (ms < 0) ms += 86400000LL;
+        return QTime((int)(ms / 3600000), (int)((ms / 60000) % 60), (int)((ms / 1000) % 60), (int)(ms % 1000));
+    }
     QDateTime toUTC() const { QDateTime r(*this); r.mSpec = Qt::UTC; return r; }
-    static QDateTime fromString(const QString&, Qt::DateFormat = Qt::ISODate) { return QDateTime{}; }
-    QString toString(Qt::DateFormat = Qt::ISODate) const { return QString("1970-01-01T00:00:00"); }
+    // ISO 8601: yyyy-MM-dd[Thh:mm[:ss[.f+]]][Z]; fractions are cut to milliseconds. Offsets are stripped by the caller.
+    static QDateTime fromString(const QString& str, Qt::DateFormat = Qt::ISODate) {
+        const char* p = str.c_str(); QDateTime bad;
+        auto num = [&](int digits, int& out) { out = 0; for (int i = 0; i < digits; ++i) { if (*p < '0' || *p > '9') return false; out = out * 10 + (*p++ - '0'); } return true; };
+        int sign = 1; if (*p == '-') { sign = -1; ++p; }
+        int y, mo, d, h = 0, mi = 0, s = 0, ms = 0;
+        if (!num(4, y)) return bad;
+        y *= sign;
+        if (*p++ != '-' || !num(2, mo) || *p++ != '-' || !num(2, d)) return bad;
+        Qt::TimeSpec spec = Qt::LocalTime;
+        if (*p == 'T' || *p == ' ') {
+            ++p;
+            if (!num(2, h) || *p++ != ':' || !num(2, mi)) return bad;
+            if (*p == ':') { ++p; if (!num(2, s)) return bad; }
+            if (*p == '.' || *p == ',') {
+                ++p; int digits = 0;
+                if (*p < '0' || *p > '9') return bad;
+                while (*p >= '0' && *p <= '9') { if (digits < 3) { ms = ms * 10 + (*p - '0'); ++digits; } ++p; }
+                while (digits++ < 3) ms *= 10;
+            }
+        }
+        if (*p == 'Z') { spec = Qt::UTC; ++p; }
+        if (*p != '\0') return bad;
+        QDateTime r(QDate(y, mo, d), QTime(h, mi, s, ms), spec);
+        return r.mValid ? r : bad;
+    }
+    QString toString(Qt::DateFormat = Qt::ISODate) const {
+        QDate dt = date(); QTime tm = time(); char b[48];
+        snprintf(b, sizeof b, "%04d-%02d-%02dT%02d:%02d:%02d", dt.year(), dt.month(), dt.day(), tm.hour(), tm.minute(), tm.second());
+        return QString(b);
+    }
     QString toString(const QString&) const { return QString("00:00:00:000"); }
-    bool operator==(const QDateTime& o) const { return mSecs == o.mSecs; }
-    bool operator!=(const QDateTime& o) const { return mSecs != o.mSecs; }
-    bool operator<(const QDateTime& o) const { return mSecs < o.mSecs; }
-    bool operator<=(const QDateTime& o) const { return mSecs <= o.mSecs; }
-    bool operator>(const QDateTime& o) const { return mSecs > o.mSecs; }
+    bool operator==(const QDateTime& o) const { return mMs == o.mMs; }
+    bool operator!=(const QDateTime& o) const { return mMs != o.mMs; }
+    bool operator<(const QDateTime& o) const { return mMs < o.mMs; }
+    bool operator<=(const QDateTime& o) const { return mMs <= o.mMs; }
+    bool operator>(const QDateTime& o) const { return mMs > o.mMs; }
+    bool operator>=(const QDateTime& o) const { return mMs >= o.mMs; }
 };
 
 // ---------------------------------------------------------------------------

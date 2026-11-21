@@ -1036,4 +1036,47 @@ describe("RdfReasoner — explainEntailment", () => {
 
     expect(result.isEntailed).toBe(true);
   });
+
+  // -------------------------------------------------------------------------
+  // Property assertions of declared properties: nominal probe a : not (R value b)
+  // -------------------------------------------------------------------------
+
+  describe("object property assertion (declared property)", () => {
+    const R = namedNode("http://example.org/R");
+    const Rinv = namedNode("http://example.org/Rinv");
+    const bob = namedNode("http://example.org/bob");
+    const OWL = "http://www.w3.org/2002/07/owl#";
+    // 2 declarations + inverseOf + bob Rinv alice = 4 base triples; the probe adds 6
+    const store = () => new Store([
+      quad(R, rdfType, namedNode(`${OWL}ObjectProperty`), defaultGraph()),
+      quad(Rinv, rdfType, namedNode(`${OWL}ObjectProperty`), defaultGraph()),
+      quad(R, namedNode(`${OWL}inverseOf`), Rinv, defaultGraph()),
+      quad(bob, Rinv, alice, defaultGraph()),
+    ]);
+
+    it("exact mode: entailed via the probe, justification without probe triples", async () => {
+      const reasoner = await makeReadyReasoner();
+      mockEntailmentViaProbe(8); // declarations + probe alone are consistent, one more axiom makes them inconsistent
+      const result = await reasoner.explainEntailment(store(), alice.value, R.value, bob.value, { justificationMode: "exact" });
+      expect(result.isEntailed).toBe(true);
+      expect(result.justifications).toHaveLength(1);
+      expect(result.justifications[0].length).toBeGreaterThan(0);
+      expect(result.justifications[0].some((q) => q.subject.termType === "BlankNode" || q.object.termType === "BlankNode")).toBe(false);
+    });
+
+    it("exact mode: not entailed when the probe stays consistent", async () => {
+      const reasoner = await makeReadyReasoner();
+      mockAlwaysConsistent();
+      const result = await reasoner.explainEntailment(store(), alice.value, R.value, bob.value, { justificationMode: "exact" });
+      expect(result.isEntailed).toBe(false);
+    });
+
+    it("isEntailed decides the assertion with the probe (no longer null)", async () => {
+      const reasoner = await makeReadyReasoner();
+      mockEntailmentViaProbe(8);
+      expect(await reasoner.isEntailed(store(), quad(alice, R, bob))).toBe(true);
+      mockAlwaysConsistent();
+      expect(await reasoner.isEntailed(store(), quad(alice, R, bob))).toBe(false);
+    });
+  });
 });

@@ -103,6 +103,8 @@ function mockWorkerSequence(inferredQuads: Quad[]) {
       simulateWorkerMessage({ id: req.id, result: fakeSync(req) });
     } else if (req.method === "classification") {
       simulateWorkerMessage({ id: req.id, result: true });
+    } else if (req.method === "getUnsatisfiableClassBuffer") {
+      simulateWorkerMessage({ id: req.id, result: "" });
     } else if (req.method === "realization") {
       simulateWorkerMessage({ id: req.id, result: true });
     } else if (req.method === "getInferredTripleBuffer") {
@@ -426,6 +428,8 @@ describe("RdfReasoner — Store API", () => {
         const req = msg as { id: number; method: string };
         if (req.method === "sync") {
           simulateWorkerMessage({ id: req.id, result: fakeSync(req) });
+        } else if (req.method === "getUnsatisfiableClassBuffer") {
+          simulateWorkerMessage({ id: req.id, result: "" });
         } else if (req.method === "realization") {
           simulateWorkerMessage({ id: req.id, result: true });
         } else if (req.method === "getInferredTripleBuffer") {
@@ -604,6 +608,8 @@ describe("RdfReasoner — Store API", () => {
         const req = msg as { id: number; method: string };
         if (req.method === "sync") {
           simulateWorkerMessage({ id: req.id, result: fakeSync(req) });
+        } else if (req.method === "getUnsatisfiableClassBuffer") {
+          simulateWorkerMessage({ id: req.id, result: "" });
         } else if (req.method === "realization") {
           simulateWorkerMessage({ id: req.id, result: true });
         } else if (req.method === "getInferredTripleBuffer") {
@@ -736,6 +742,7 @@ describe("RdfReasoner — Store API", () => {
       mocks.workerPostMessage.mockImplementation((msg: unknown) => {
         const req = msg as { id: number; method: string };
         if (req.method === "sync") simulateWorkerMessage({ id: req.id, result: fakeSync(req) });
+        else if (req.method === "getUnsatisfiableClassBuffer") simulateWorkerMessage({ id: req.id, result: "" });
         else if (req.method === "realization") simulateWorkerMessage({ id: req.id, result: true });
         else if (req.method === "getInferredTripleBuffer") simulateWorkerMessage({ id: req.id, result: buf });
       });
@@ -932,6 +939,7 @@ describe("RdfReasoner — Store API", () => {
       mocks.workerPostMessage.mockImplementation((msg: unknown) => {
         const req = msg as { id: number; method: string };
         if (req.method === "sync") simulateWorkerMessage({ id: req.id, result: fakeSync(req) });
+        else if (req.method === "getUnsatisfiableClassBuffer") simulateWorkerMessage({ id: req.id, result: "" });
         else if (req.method === "realization") simulateWorkerMessage({ id: req.id, result: true });
         else if (req.method === "getInferredTripleBuffer") simulateWorkerMessage({ id: req.id, result: buf });
       });
@@ -1044,6 +1052,7 @@ describe("RdfReasoner — Store API", () => {
       mocks.workerPostMessage.mockImplementation((msg: unknown) => {
         const req = msg as { id: number; method: string };
         if (req.method === "sync") simulateWorkerMessage({ id: req.id, result: fakeSync(req) });
+        else if (req.method === "getUnsatisfiableClassBuffer") simulateWorkerMessage({ id: req.id, result: "" });
         else if (req.method === "realization") simulateWorkerMessage({ id: req.id, result: true });
         else if (req.method === "getInferredTripleBuffer") {
           // First call (from materialize) returns empty; second (from isEntailed) returns entailed quad
@@ -1281,6 +1290,8 @@ describe("RdfReasoner — Store API", () => {
         const req = msg as { id: number; method: string };
         if (req.method === "sync") {
           simulateWorkerMessage({ id: req.id, result: fakeSync(req) });
+        } else if (req.method === "getUnsatisfiableClassBuffer") {
+          simulateWorkerMessage({ id: req.id, result: "" });
         } else if (req.method === "realization") {
           simulateWorkerMessage({ id: req.id, result: true });
         } else if (req.method === "getInferredTripleBuffer") {

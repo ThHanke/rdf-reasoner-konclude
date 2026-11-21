@@ -18,7 +18,7 @@ Validated by: `tests/integration/entailment-coverage.test.ts`,
 | 5 | `rdf:type` (realization) | Native (clash-path hook) | A | via roberts-family materialize |
 | 6 | `rdf:type` (someValuesFrom) | Synthesized (restriction + role scan) | B+1 | `alice PetOwner ≡ ∃hasAnimal.Dog`: `rex rdf:type Dog` is NOT entailed (2026-11-09 correction) |
 | 7 | `rdf:type` (minCardinality) | Synthesized (restriction + filler count) | B+1 | `dave rdf:type AtLeastOneHobby` |
-| 8 | Object property assertions | Asserted lookup (returns triple) | B | `asserted object property returns entailed` |
+| 8 | Object property assertions | Asserted lookup (returns triple); declared `owl:ObjectProperty`: nominal probe `a : not (R value b)`, exact justification and `isEntailed` | B | `asserted object property returns entailed` |
 | 9 | `owl:sameAs` (native) | Native (realization cache) | A | `sameAs: not entailed for distinct individuals` |
 | 10 | `owl:sameAs` (FP/IFP) | Synthesized (TS workaround) | B | `alice sameAs bob via FunctionalProperty` |
 | 11 | `rdfs:subPropertyOf` | Synthesized (asserted + property subsumption cache) | B | `hasFather subPropertyOf hasParent` |
@@ -26,7 +26,7 @@ Validated by: `tests/integration/entailment-coverage.test.ts`,
 | 13 | `owl:equivalentProperty` | Synthesized (assertion scan) | B | `likes equivalentProperty isInterestedIn` |
 | 14 | `disjointUnionOf` → `subClassOf` | Synthesized (RDF list walk) | B | `Cat subClassOf Animal via disjointUnionOf` |
 | 15 | `owl:oneOf` → `rdf:type` | Synthesized (member scan) | B | `Red rdf:type PrimaryColor via oneOf` |
-| 16 | Data property assertions | Asserted lookup (returns triple) | B | `asserted data property (entailed)` |
+| 16 | Data property assertions | Asserted values plus values of super data properties (role hierarchy); other entailed values not emitted. Declared `owl:DatatypeProperty` (`objectIsClassLike: false`): nominal probe `a : not (P value v)`, exact justification and `isEntailed` | B | `asserted data property (entailed)` |
 | 17 | Inconsistency (MIPS) | QuickXplain over axiom units (retained) | -- | via `explainInconsistency` (separate API) |
 | 18 | `rdf:type` (hasValue) | Synthesized (restriction + value match) | B | `mario rdf:type Italian via hasValue` |
 | 19 | `rdf:type` (allValuesFrom) | Synthesized (type + restriction + role → filler type) | B | `grass rdf:type Plant via allValuesFrom` |

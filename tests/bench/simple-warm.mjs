@@ -3,6 +3,7 @@
 // Kernel counters (syncStats) are asserted for each scenario so a label can never describe something the kernel did not do.
 import { Worker as NodeWorker } from 'node:worker_threads';
 import { readFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 import { Store, Parser, DataFactory } from 'n3';
 
 const [root, fixture, op] = process.argv.slice(2);
@@ -19,7 +20,7 @@ class WorkerShim {
 }
 globalThis.Worker = WorkerShim;
 
-const { RdfReasoner } = await import(`${root}/dist/index.js`);
+const { RdfReasoner } = await import(pathToFileURL(`${root}/dist/index.js`).href);
 const quads = fixture.split(',').flatMap((f) => new Parser({ format: 'N-Triples' }).parse(readFileSync(f, 'utf8')));
 const reasoner = new RdfReasoner();
 await reasoner.ready;

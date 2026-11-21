@@ -10,6 +10,10 @@ const OWL_EQUIVALENT_PROPERTY = "http://www.w3.org/2002/07/owl#equivalentPropert
 const OWL_DISJOINT_WITH = "http://www.w3.org/2002/07/owl#disjointWith";
 const OWL_EQUIVALENT_CLASS = "http://www.w3.org/2002/07/owl#equivalentClass";
 const RDFS_SUB_PROPERTY_OF = "http://www.w3.org/2000/01/rdf-schema#subPropertyOf";
+const OWL_RESTRICTION = "http://www.w3.org/2002/07/owl#Restriction";
+const OWL_ON_PROPERTY = "http://www.w3.org/2002/07/owl#onProperty";
+const OWL_HAS_VALUE = "http://www.w3.org/2002/07/owl#hasValue";
+const XSD_STRING = "http://www.w3.org/2001/XMLSchema#string";
 
 export type ProbeKind =
   | "subClassOf"
@@ -20,7 +24,20 @@ export type ProbeKind =
   | "equivalentClass"
   | "subPropertyOf"
   | "dataProperty"
+  | "objectPropertyAssertion"
+  | "dataPropertyAssertion"
   | "unsupported";
+
+/** Declared kind of the predicate of a property assertion `a P o` (the caller looks up the declaration). */
+export type AssertionPropertyType = "object" | "data";
+
+export interface ProbeOptions {
+  /** Predicate is a declared object / data property: `a P o` is a property assertion with an exact probe. */
+  propertyType?: AssertionPropertyType;
+  /** Literal of a data-property assertion (default xsd:string, or rdf:langString with `objectLanguage`). */
+  objectDatatype?: string;
+  objectLanguage?: string;
+}
 
 export interface ProbePlan {
   kind: ProbeKind;
@@ -36,17 +53,19 @@ export function tripleKey(s: string, p: string, o: string): string {
 export function classifyAxiom(
   predicateIri: string,
   objectIsClassLike: boolean,
+  propertyType?: AssertionPropertyType,
 ): ProbeKind {
   if (predicateIri === OWL_SAME_AS) return "sameAs";
   if (predicateIri === OWL_EQUIVALENT_PROPERTY) return "equivalentProperty";
 
-  if (!objectIsClassLike) return "dataProperty";
+  if (!objectIsClassLike) return propertyType === "data" ? "dataPropertyAssertion" : "dataProperty";
 
   if (predicateIri === RDFS_SUBCLASSOF) return "subClassOf";
   if (predicateIri === RDF_TYPE) return "type";
   if (predicateIri === OWL_DISJOINT_WITH) return "disjointWith";
   if (predicateIri === OWL_EQUIVALENT_CLASS) return "equivalentClass";
   if (predicateIri === RDFS_SUB_PROPERTY_OF) return "subPropertyOf";
+  if (propertyType === "object") return "objectPropertyAssertion";
   return "unsupported";
 }
 
@@ -56,8 +75,9 @@ export function buildEntailmentProbe(
   objectIri: string,
   objectIsClassLike: boolean,
   probeId = "p0",
+  opts: ProbeOptions = {},
 ): ProbePlan {
-  const kind = classifyAxiom(predicateIri, objectIsClassLike);
+  const kind = classifyAxiom(predicateIri, objectIsClassLike, opts.propertyType);
   if (kind === "unsupported") {
     return {
       kind,
@@ -65,6 +85,10 @@ export function buildEntailmentProbe(
       probeKeys: new Set(),
       reason: `predicate ${predicateIri} is not a supported entailment shape`,
     };
+  }
+
+  if (kind === "objectPropertyAssertion" || kind === "dataPropertyAssertion") {
+    return propertyAssertionProbe(kind, subjectIri, predicateIri, objectIri, probeId, opts);
   }
 
   if (kind !== "subClassOf" && kind !== "type") {
@@ -112,4 +136,34 @@ export function buildEntailmentProbe(
   }
 
   return { kind, probeQuads: quads, probeKeys: keys };
+}
+
+/**
+ * `R(a, b)` is entailed iff O plus `a : not (R value b)` is inconsistent; the same for a data property `P(a, v)` with
+ * the literal v. `not (R value b)` is the class `forall R. not {b}` (OWL 2 DL, nominals); the hasValue form needs no
+ * owl:oneOf list and no owl:datatypeComplementOf, so object and data properties share one encoding.
+ */
+function propertyAssertionProbe(
+  kind: ProbeKind, subjectIri: string, predicateIri: string, objectValue: string, probeId: string, opts: ProbeOptions,
+): ProbePlan {
+  const { namedNode, blankNode, literal, quad, defaultGraph } = DataFactory;
+  const g = defaultGraph();
+  const negKey = `vg_neg_${probeId}`;
+  const resKey = `vg_res_${probeId}`;
+  const neg = blankNode(negKey);
+  const res = blankNode(resKey);
+  const value = kind === "dataPropertyAssertion"
+    ? literal(objectValue, opts.objectLanguage ? opts.objectLanguage : namedNode(opts.objectDatatype ?? XSD_STRING))
+    : namedNode(objectValue);
+  const triples: Array<[any, string, any]> = [
+    [neg, RDF_TYPE, namedNode(OWL_CLASS)],
+    [neg, OWL_COMPLEMENT_OF, res],
+    [res, RDF_TYPE, namedNode(OWL_RESTRICTION)],
+    [res, OWL_ON_PROPERTY, namedNode(predicateIri)],
+    [res, OWL_HAS_VALUE, value],
+    [namedNode(subjectIri), RDF_TYPE, neg],
+  ];
+  const probeQuads = triples.map(([s, p, o]) => quad(s, namedNode(p), o, g) as Quad);
+  const probeKeys = new Set(probeQuads.map(q => tripleKey(q.subject.value, q.predicate.value, q.object.value)));
+  return { kind, probeQuads, probeKeys };
 }

@@ -5,7 +5,7 @@
 //        import { benchAll as binaryBenchAll, BINARY_CASES } from './binary-runner.mjs'
 
 import { readFileSync, existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 import { Parser as N3Parser, Writer as N3Writer } from 'n3';
 
@@ -59,7 +59,7 @@ export async function benchAll(cases = BINARY_CASES, opts = { warmup: 2, runs: 5
     throw new Error(`dist/intern.js not found: ${INTERN_PATH}\nRun 'npm run build' first.`);
   }
 
-  const { encodeToBuffers } = await import(INTERN_PATH);
+  const { encodeToBuffers } = await import(pathToFileURL(INTERN_PATH).href);
 
   const results = [];
 
