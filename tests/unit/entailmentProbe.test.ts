@@ -3,6 +3,9 @@ import {
   buildEntailmentProbe,
   classifyAxiom,
   tripleKey,
+  buildCharacteristicProbe,
+  CHARACTERISTIC_CLASSES,
+  DECLARATION_CLASSES,
 } from "../../ts/entailmentProbe.js";
 
 const RDFS_SUBCLASSOF = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
@@ -188,5 +191,38 @@ describe("property assertion probes (nominals)", () => {
     const plan = buildEntailmentProbe("http://ex.org/a", R, "http://ex.org/b", true, "u1");
     expect(plan.kind).toBe("unsupported");
     expect(plan.probeQuads).toHaveLength(0);
+  });
+
+  describe("property characteristics and declarations", () => {
+    const P = "http://ex.org/p";
+    const preds = (qs: ReturnType<typeof buildCharacteristicProbe>) => qs.map((q) => q.predicate.value.split("#").pop());
+
+    it("maps the characteristic and declaration classes", () => {
+      expect(CHARACTERISTIC_CLASSES["http://www.w3.org/2002/07/owl#TransitiveProperty"]).toBe("transitive");
+      expect(Object.values(CHARACTERISTIC_CLASSES).sort()).toEqual(["asymmetric", "functional", "inverseFunctional", "irreflexive", "reflexive", "symmetric", "transitive"]);
+      expect(DECLARATION_CLASSES.has("http://www.w3.org/2000/01/rdf-schema#Datatype")).toBe(true);
+    });
+
+    it("transitive probe: x P y, y P z and x not (P value z)", () => {
+      const qs = buildCharacteristicProbe("transitive", P, "t1");
+      expect(qs.filter((q) => q.predicate.value === P)).toHaveLength(2);
+      const hv = qs.find((q) => q.predicate.value.endsWith("#hasValue"))!;
+      expect(hv.object.value).toBe("urn:vg:probe:z_t1");
+      expect(preds(qs)).toContain("complementOf");
+    });
+
+    it("symmetric and asymmetric probes", () => {
+      expect(buildCharacteristicProbe("symmetric", P, "s").filter((q) => q.predicate.value === P)).toHaveLength(1);
+      const asym = buildCharacteristicProbe("asymmetric", P, "a").filter((q) => q.predicate.value === P);
+      expect(asym.map((q) => `${q.subject.value}>${q.object.value}`).sort()).toEqual(["urn:vg:probe:x_a>urn:vg:probe:y_a", "urn:vg:probe:y_a>urn:vg:probe:x_a"]);
+    });
+
+    it("reflexive probe asserts not Self, irreflexive asserts Self, functional uses differentFrom", () => {
+      expect(preds(buildCharacteristicProbe("reflexive", P, "r"))).toEqual(expect.arrayContaining(["hasSelf", "complementOf"]));
+      expect(preds(buildCharacteristicProbe("irreflexive", P, "i"))).not.toContain("complementOf");
+      expect(preds(buildCharacteristicProbe("functional", P, "f"))).toContain("differentFrom");
+      const inv = buildCharacteristicProbe("inverseFunctional", P, "g").filter((q) => q.predicate.value === P);
+      expect(new Set(inv.map((q) => q.object.value))).toEqual(new Set(["urn:vg:probe:x_g"]));
+    });
   });
 });

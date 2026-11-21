@@ -37,7 +37,7 @@ import { dropAnnotationTriples } from "./annotations.js";
 import { computeRepairs, REPAIR_DEFAULT_TIMEOUT_MS, type RepairOracle } from "./repair.js";
 import { computeAssessment, probeQuads, PROBE_NS, type AssessOracle } from "./assessEdit.js";
 import { computeWeakenings } from "./weaken.js";
-import { buildEntailmentProbe, classifyAxiom, tripleKey as probeTripleKey, type AssertionPropertyType } from "./entailmentProbe.js";
+import { buildEntailmentProbe, classifyAxiom, tripleKey as probeTripleKey, type AssertionPropertyType, CHARACTERISTIC_CLASSES, DECLARATION_CLASSES, buildCharacteristicProbe } from "./entailmentProbe.js";
 import { parseRules, applyRules, Facts } from "./swrl.js";
 
 const SWRL_IMP = "http://www.w3.org/2003/11/swrl#Imp";
@@ -1047,7 +1047,7 @@ export class RdfReasoner {
     // Fast-path unsupported check for single axiom (no queue entry needed)
     if (!isBatch) {
       const op = this._opForPredicate((axiomOrAxioms as Quad).predicate.value);
-      if (op === null && !this._isDisjointAxiom(axiomOrAxioms as Quad) && !this._propertyAssertionType(store, axiomOrAxioms as Quad)) {
+      if (op === null && !this._specialAxiomKind(axiomOrAxioms as Quad) && !this._isDisjointAxiom(axiomOrAxioms as Quad) && !this._propertyAssertionType(store, axiomOrAxioms as Quad)) {
         console.warn(`isEntailed: unsupported predicate <${(axiomOrAxioms as Quad).predicate.value}>`);
         return Promise.resolve(null);
       }
@@ -1055,13 +1055,15 @@ export class RdfReasoner {
 
     const result = this._queue.then(async () => {
       const ig = DataFactory.namedNode(igIri);
+      // declarations and property characteristics are decided here, not by classification or materialization
+      const opOf = (q: Quad) => (this._specialAxiomKind(q) ? null : this._opForPredicate(q.predicate.value));
       const gen = await this._sync(store, igIri);
       await this._guardConsistent(gen, opts);
 
       // Determine which operations are needed
-      const needsClassify = axioms.some(a => this._opForPredicate(a.predicate.value) === "classify");
-      const needsMaterialize = axioms.some(a => this._opForPredicate(a.predicate.value) === "materialize");
-      const needsClassifyProps = axioms.some(a => this._opForPredicate(a.predicate.value) === "classifyProperties");
+      const needsClassify = axioms.some(a => opOf(a) === "classify");
+      const needsMaterialize = axioms.some(a => opOf(a) === "materialize");
+      const needsClassifyProps = axioms.some(a => opOf(a) === "classifyProperties");
 
       // Run needed operations in order; each cross-invalidates others
       const dg = DataFactory.defaultGraph();
@@ -1073,7 +1075,7 @@ export class RdfReasoner {
       if (needsClassify) {
         await this._classifyInline(store, gen, igIri);
         for (const a of axioms) {
-          if (this._opForPredicate(a.predicate.value) === "classify") {
+          if (opOf(a) === "classify") {
             classifyResults.set(a, inferred(a));
           }
         }
@@ -1083,7 +1085,7 @@ export class RdfReasoner {
       if (needsMaterialize) {
         await this._materializeInline(store, gen, igIri);
         for (const a of axioms) {
-          if (this._opForPredicate(a.predicate.value) === "materialize") {
+          if (opOf(a) === "materialize") {
             materializeResults.set(a, inferred(a));
           }
         }
@@ -1093,7 +1095,7 @@ export class RdfReasoner {
       if (needsClassifyProps) {
         await this._classifyPropertiesInline(store, gen, igIri);
         for (const a of axioms) {
-          if (this._opForPredicate(a.predicate.value) === "classifyProperties") {
+          if (opOf(a) === "classifyProperties") {
             classifyPropsResults.set(a, inferred(a));
           }
         }
@@ -1109,7 +1111,7 @@ export class RdfReasoner {
       }
 
       // Object/data property assertions of declared properties: one nominal probe per axiom (see entailmentProbe.ts)
-      const propAxioms = axioms.filter(a => this._opForPredicate(a.predicate.value) === null && !this._isDisjointAxiom(a) && this._propertyAssertionType(store, a));
+      const propAxioms = axioms.filter(a => opOf(a) === null && !this._isDisjointAxiom(a) && this._propertyAssertionType(store, a));
       const propResults = new Map<Quad, boolean | null>();
       if (propAxioms.length > 0) {
         const res = await this._propertyAssertionEntailmentsDirect(store, igIri, propAxioms);
@@ -1117,12 +1119,25 @@ export class RdfReasoner {
         this._invalidateResultCaches();
       }
 
+      // Declarations (always entailed) and property characteristics (probe with fresh individuals)
+      const specialResults = new Map<Quad, boolean | null>();
+      for (const a of axioms) {
+        const k = this._specialAxiomKind(a);
+        if (!k) continue;
+        if (k === "declaration") { specialResults.set(a, true); continue; }
+        const base = dropAnnotationTriples(store.getQuads(null, null, null, null).filter(q => !new Set<string>([igIri, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, ...this._excludeGraphs]).has(q.graph.value)));
+        const r = await this._boundedInconsistencyCheck([...base, ...buildCharacteristicProbe(k, a.subject.value, `char_${++this._entailmentProbeCounter}`)], Infinity);
+        specialResults.set(a, r === "aborted" ? null : r);
+        this._invalidateResultCaches();
+      }
+
       // Assemble results
       if (!isBatch) {
         const axiom = axioms[0];
+        if (specialResults.has(axiom)) return specialResults.get(axiom) ?? null;
         if (this._isDisjointAxiom(axiom)) return disjointResults.get(axiom) ?? null;
         if (propResults.has(axiom)) return propResults.get(axiom) ?? null;
-        const op = this._opForPredicate(axiom.predicate.value);
+        const op = opOf(axiom);
         if (op === "classify") return classifyResults.get(axiom) ?? false;
         if (op === "materialize") return materializeResults.get(axiom) ?? false;
         if (op === "classifyProperties") return classifyPropsResults.get(axiom) ?? false;
@@ -1130,9 +1145,10 @@ export class RdfReasoner {
       }
 
       return axioms.map(a => {
+        if (specialResults.has(a)) return specialResults.get(a) ?? null;
         if (this._isDisjointAxiom(a)) return disjointResults.get(a) ?? null;
         if (propResults.has(a)) return propResults.get(a) ?? null;
-        const op = this._opForPredicate(a.predicate.value);
+        const op = opOf(a);
         if (op === null) {
           console.warn(`isEntailed: unsupported predicate <${a.predicate.value}>`);
           return null;
@@ -1964,6 +1980,13 @@ export class RdfReasoner {
   }
 
   /** `X owl:disjointWith Y` between two named classes. */
+  /** `X rdf:type <declaration class>` (always entailed) or `P rdf:type <property characteristic>` (decided by a probe). */
+  private _specialAxiomKind(a: Quad): "declaration" | import("./entailmentProbe.js").CharacteristicKind | null {
+    if (a.predicate.value !== RDF_TYPE || a.object.termType !== "NamedNode" || a.subject.termType !== "NamedNode") return null;
+    if (DECLARATION_CLASSES.has(a.object.value)) return "declaration";
+    return CHARACTERISTIC_CLASSES[a.object.value] ?? null;
+  }
+
   private _isDisjointAxiom(q: Quad): boolean {
     return q.predicate.value === "http://www.w3.org/2002/07/owl#disjointWith" && q.subject.termType === "NamedNode" && q.object.termType === "NamedNode";
   }

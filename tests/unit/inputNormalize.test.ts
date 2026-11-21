@@ -92,4 +92,19 @@ describe("inputNormalize", () => {
     const sub = normalizeQuads(parse(`ex:C owl:hasKey ( ex:k ) . ex:D rdfs:subClassOf ex:C . ex:a a ex:D ; ex:k "1" . ex:b a ex:C ; ex:k "1" .`));
     expect(sub.filter((q) => q.predicate.value.endsWith("#sameAs"))).toHaveLength(1);
   });
+
+  it("asserts ObjectHasSelf membership for reflexive assertions when the input uses owl:hasSelf", () => {
+    const out = normalizeQuads(parse(`ex:Peter ex:likes ex:Peter . ex:Peter ex:knows ex:Meg . ex:Peter ex:likes ex:Meg .
+      [ a owl:Restriction ; owl:onProperty ex:hates ; owl:hasSelf true ] .`));
+    const types = out.filter((q) => q.subject.value === "http://ex.org/Peter" && q.predicate.value === T && q.object.termType === "BlankNode");
+    expect(types).toHaveLength(1); // only likes(Peter, Peter) is reflexive
+    const r = types[0].object;
+    expect(out.some((q) => q.subject.equals(r) && q.predicate.value.endsWith("#onProperty") && q.object.value === "http://ex.org/likes")).toBe(true);
+    expect(out.some((q) => q.subject.equals(r) && q.predicate.value.endsWith("#hasSelf"))).toBe(true);
+  });
+
+  it("does not touch reflexive assertions when owl:hasSelf is not used", () => {
+    const qs = parse(`ex:Peter ex:likes ex:Peter .`);
+    expect(normalizeQuads(qs)).toHaveLength(qs.length);
+  });
 });

@@ -167,3 +167,63 @@ function propertyAssertionProbe(
   const probeKeys = new Set(probeQuads.map(q => tripleKey(q.subject.value, q.predicate.value, q.object.value)));
   return { kind, probeQuads, probeKeys };
 }
+
+// ---------------------------------------------------------------------------
+// Property characteristics and declarations (round 66)
+// ---------------------------------------------------------------------------
+
+const OWL_NS = "http://www.w3.org/2002/07/owl#";
+const SAME_AS_DIFFERENT = OWL_NS + "differentFrom";
+/** Characteristic classes `P rdf:type C` that are decided by a probe with fresh individuals. */
+export type CharacteristicKind = "transitive" | "symmetric" | "asymmetric" | "reflexive" | "irreflexive" | "functional" | "inverseFunctional";
+export const CHARACTERISTIC_CLASSES: Readonly<Record<string, CharacteristicKind>> = {
+  [OWL_NS + "TransitiveProperty"]: "transitive",
+  [OWL_NS + "SymmetricProperty"]: "symmetric",
+  [OWL_NS + "AsymmetricProperty"]: "asymmetric",
+  [OWL_NS + "ReflexiveProperty"]: "reflexive",
+  [OWL_NS + "IrreflexiveProperty"]: "irreflexive",
+  [OWL_NS + "FunctionalProperty"]: "functional",
+  [OWL_NS + "InverseFunctionalProperty"]: "inverseFunctional",
+};
+/** `X rdf:type C` for these C is a declaration: it has no semantics and every ontology entails it (OWL 2 direct semantics). */
+export const DECLARATION_CLASSES: ReadonlySet<string> = new Set([
+  OWL_NS + "Class", OWL_NS + "ObjectProperty", OWL_NS + "DatatypeProperty", OWL_NS + "AnnotationProperty", OWL_NS + "NamedIndividual",
+  "http://www.w3.org/2000/01/rdf-schema#Datatype",
+]);
+
+/**
+ * `P` has the characteristic iff O plus the probe is inconsistent. The probe uses fresh individuals: e.g. transitivity of P
+ * is refuted by `x P y`, `y P z`, `x : not (P value z)`; reflexivity by `x : not Self(P)`; functionality by `x P y`, `x P z`, `y differentFrom z`.
+ */
+export function buildCharacteristicProbe(kind: CharacteristicKind, propertyIri: string, probeId: string): Quad[] {
+  const { namedNode, blankNode, quad, defaultGraph } = DataFactory;
+  const g = defaultGraph();
+  const ind = (n: string) => namedNode(`urn:vg:probe:${n}_${probeId}`);
+  const P = namedNode(propertyIri);
+  const out: Quad[] = [];
+  const add = (s: any, p: string, o: any) => out.push(quad(s, namedNode(p), o, g) as Quad);
+  const notHasValue = (n: string, subject: any, value: any) => {
+    const res = blankNode(`vg_res_${n}_${probeId}`), neg = blankNode(`vg_neg_${n}_${probeId}`);
+    add(res, RDF_TYPE, namedNode(OWL_RESTRICTION)); add(res, OWL_ON_PROPERTY, P); add(res, OWL_HAS_VALUE, value);
+    add(neg, RDF_TYPE, namedNode(OWL_CLASS)); add(neg, OWL_COMPLEMENT_OF, res); add(subject, RDF_TYPE, neg);
+  };
+  const selfClass = (n: string, subject: any, negated: boolean) => {
+    const res = blankNode(`vg_self_${n}_${probeId}`);
+    add(res, RDF_TYPE, namedNode(OWL_RESTRICTION)); add(res, OWL_ON_PROPERTY, P);
+    add(res, OWL_NS + "hasSelf", DataFactory.literal("true", namedNode("http://www.w3.org/2001/XMLSchema#boolean")));
+    if (!negated) { add(subject, RDF_TYPE, res); return; }
+    const neg = blankNode(`vg_negself_${n}_${probeId}`);
+    add(neg, RDF_TYPE, namedNode(OWL_CLASS)); add(neg, OWL_COMPLEMENT_OF, res); add(subject, RDF_TYPE, neg);
+  };
+  const x = ind("x"), y = ind("y"), z = ind("z");
+  switch (kind) {
+    case "transitive": add(x, propertyIri, y); add(y, propertyIri, z); notHasValue("t", x, z); break;
+    case "symmetric": add(x, propertyIri, y); notHasValue("s", y, x); break;
+    case "asymmetric": add(x, propertyIri, y); add(y, propertyIri, x); break;
+    case "reflexive": selfClass("r", x, true); break;
+    case "irreflexive": selfClass("i", x, false); break;
+    case "functional": add(x, propertyIri, y); add(x, propertyIri, z); add(y, SAME_AS_DIFFERENT, z); break;
+    case "inverseFunctional": add(y, propertyIri, x); add(z, propertyIri, x); add(y, SAME_AS_DIFFERENT, z); break;
+  }
+  return out;
+}

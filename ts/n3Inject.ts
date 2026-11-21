@@ -1,4 +1,4 @@
-import { BOTTOM_DP, NPA as OWL_NPA, CLASS_CONSTRUCTORS, HAS_KEY, PROP_DISJOINT, ALL_DISJOINT_PROPS } from "./inputNormalize.js";
+import { BOTTOM_DP, NPA as OWL_NPA, CLASS_CONSTRUCTORS, HAS_KEY, HAS_SELF, PROP_DISJOINT, ALL_DISJOINT_PROPS } from "./inputNormalize.js";
 import { encodeToBuffers } from "./intern.js";
 import { DataFactory as DF } from "n3";
 const NN = (iri: string) => DF.namedNode(iri);
@@ -292,7 +292,8 @@ export function encodeStoreToBuffers(store: Store, extraExcludedGraphs: readonly
   const rewrite =
     live(store.getQuads(null, NN(RDF_TYPE), NN(OWL_NPA), null)) ||
     live(store.getQuads(null, NN(RDF_TYPE), NN(ALL_DISJOINT_PROPS), null)) ||
-    live(store.getQuads(null, NN(HAS_KEY), null, null)) || live(store.getQuads(null, NN(PROP_DISJOINT), null, null)) ||
+    live(store.getQuads(null, NN(HAS_KEY), null, null)) ||
+    live(store.getQuads(null, NN(HAS_SELF), null, null)) || live(store.getQuads(null, NN(PROP_DISJOINT), null, null)) ||
     live(store.getQuads(NN(BOTTOM_DP), null, null, null)) || live(store.getQuads(null, NN(BOTTOM_DP), null, null)) ||
     live(store.getQuads(null, null, NN(BOTTOM_DP), null)) ||
     CLASS_CONSTRUCTORS.some((c) => live(store.getQuads(null, NN(c), null, null), true));

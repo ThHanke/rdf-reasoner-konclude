@@ -14,6 +14,8 @@
  * 4. owl:propertyDisjointWith / owl:AllDisjointProperties between data properties are not enforced by the kernel.
  *    For every literal in the input and every disjoint pair (p, q) the axiom `owl:Thing ⊑ ¬(∃p.{v} ⊓ ∃q.{v})` is added
  *    (skipped above DISJOINT_DP_LIMIT literal/pair combinations).
+ * 6. A reflexive assertion `a P a` does not make `a` an instance of `ObjectHasSelf(P)` in the kernel. When the input uses owl:hasSelf,
+ *    `a rdf:type [ owl:onProperty P ; owl:hasSelf true ]` is added for each such assertion on a named individual.
  * 5. owl:hasKey is ignored by the kernel. Named individuals that are asserted instances of the key class (or of a
  *    subclass; owl:Thing = all) and share a value for every key property are made owl:sameAs (the DL-safe reading of
  *    HasKey: it only applies to named individuals and asserted values).
@@ -35,12 +37,13 @@ const CONSTRUCTOR_SET = new Set(CLASS_CONSTRUCTORS);
 /** A named class, not an anonymous class expression (Ontosphere stores blank nodes as skolem IRIs). */
 const namedClass = (t: Term) => t.termType === "NamedNode" && !isSkolemIri(t.value);
 
-const { namedNode, blankNode, quad } = DataFactory;
+const { namedNode, blankNode, quad, literal } = DataFactory;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const nn = (iri: string): any => namedNode(iri);
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const q4 = (s: any, p: any, o: any, g?: any): Quad => quad(s, p, o, g) as unknown as Quad;
 
+export const HAS_SELF = OWL + "hasSelf";
 export const HAS_KEY = OWL + "hasKey";
 export const PROP_DISJOINT = OWL + "propertyDisjointWith";
 export const ALL_DISJOINT_PROPS = OWL + "AllDisjointProperties";
@@ -51,7 +54,7 @@ export const DISJOINT_DP_LIMIT = 50000;
 /** True when the input contains a construct that one of the rewrites changes. */
 export function needsRewrite(quads: Iterable<Quad>): boolean {
   for (const q of quads) {
-    if (q.predicate.value === HAS_KEY || q.predicate.value === PROP_DISJOINT) return true;
+    if (q.predicate.value === HAS_KEY || q.predicate.value === PROP_DISJOINT || q.predicate.value === HAS_SELF) return true;
     if (q.predicate.value === TYPE && (q.object.value === NPA || q.object.value === ALL_DISJOINT_PROPS)) return true;
     if (q.subject.value === BOTTOM_DP || q.predicate.value === BOTTOM_DP || q.object.value === BOTTOM_DP) return true;
     if (namedClass(q.subject) && CONSTRUCTOR_SET.has(q.predicate.value)) return true;
@@ -102,7 +105,31 @@ export function normalizeQuads(input: readonly Quad[]): Quad[] {
       q4(e, nn(TYPE), nn(RDFS + "Datatype")), q4(e, nn(OWL + "datatypeComplementOf"), nn(RDFS + "Literal")),
       q4(nn(RDFS + "Literal"), nn(TYPE), nn(RDFS + "Datatype")));
   }
-  out.push(...disjointDataPropertyAxioms(input, bySubject), ...keySameAs(input, bySubject));
+  out.push(...disjointDataPropertyAxioms(input, bySubject), ...keySameAs(input, bySubject), ...selfAssertions(input));
+  return out;
+}
+
+/** 6. `a rdf:type [ owl:onProperty P ; owl:hasSelf true ]` for each asserted `a P a`, when the input uses owl:hasSelf. */
+function selfAssertions(input: readonly Quad[]): Quad[] {
+  if (!input.some((q) => q.predicate.value === HAS_SELF)) return [];
+  const out: Quad[] = [];
+  const restriction = new Map<string, Term>();
+  const seen = new Set<string>();
+  for (const q of input) {
+    const p = q.predicate.value;
+    if (q.subject.termType !== "NamedNode" || q.object.termType !== "NamedNode" || q.subject.value !== q.object.value) continue;
+    if (p.startsWith(RDF) || p.startsWith(RDFS) || p.startsWith(OWL)) continue;
+    const id = `${q.subject.value}|${p}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    let r = restriction.get(p);
+    if (!r) {
+      r = blankNode(`self_${p.replace(/[^A-Za-z0-9]/g, "_")}`);
+      restriction.set(p, r);
+      out.push(q4(r, nn(TYPE), nn(OWL + "Restriction")), q4(r, nn(OWL + "onProperty"), q.predicate), q4(r, nn(HAS_SELF), literal("true", nn("http://www.w3.org/2001/XMLSchema#boolean"))));
+    }
+    out.push(q4(q.subject, nn(TYPE), r));
+  }
   return out;
 }
 
