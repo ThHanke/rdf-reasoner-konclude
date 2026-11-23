@@ -11,6 +11,9 @@ Collects the changes of the PR #18 adoption. Rename this file to `release-notes-
 - `isEntailed` decides property assertions, property characteristics and declarations.
 - Input rewrites before reasoning: negative property assertions, the bottom data property, OWL 1 boolean constructors, disjoint data properties, `owl:hasKey`.
 - `weaken()` gets an `alsoRemove` option.
+- **`closure: true`** (opt-in) on `classify`, `classifyProperties` and `materialize` (with `includeClassHierarchy`): writes the transitive closure of the class / property hierarchy into the inferred graph (equivalents subsume each other, `equivalentClass` / `equivalentProperty` between all group members). Default stays the reduced hierarchy. About 6-9x the direct edges (PMDco 1,612 to 10,572 pairs).
+- **`isEntailed`** decides `owl:sameAs` (symmetric, transitive, reflexive), `owl:equivalentProperty`, `rdfs:range` and `rdfs:domain` (datatype and class hierarchy conclusions such as `p range byte` entails `p range short`), and answers `subClassOf` / `subPropertyOf` / `equivalentClass` over the transitive-reflexive closure of the hierarchy. Before, `sameAs` and `equivalentProperty` returned `null` and `A ⊑ C` for `A ⊑ B ⊑ C`, `A ⊑ A` and `A ≡ B` as `A ⊑ B` returned `false`. A `false` means not entailed (open world), not refuted.
+- **`illTypedLiterals`** option (`"report"` default, `"error"`, `"ignore"`) and `RdfReasoner.lastLiteralIssues`: ill-typed or out-of-range numeric and boolean literals are listed (or rejected with `InvalidLiteralError`) instead of being dropped silently by the kernel.
 
 ## Fixed (kernel)
 
@@ -20,6 +23,8 @@ Collects the changes of the PR #18 adoption. Rename this file to `release-notes-
 - Use-after-free and double free in `buildComplexABoxAxioms` for a blank-node class expression shared by several individuals (patch 004).
 - The minimum of `xsd:byte`, `xsd:short` and `xsd:int` was one too high in upstream Konclude (-127, -32767, -2147483647), so valid values `-128`, `-32768` and `-2147483648` made an ontology inconsistent (patch 002).
 - Data values follow `rdfs:subPropertyOf` for data properties (`hasAge ⊑ hasNumber`: `Alice hasNumber 30` is materialized).
+
+- OWL 1 constructors on a named class: a class with several `owl:oneOf` lists is the intersection of them (one rewritten class per triple); fixes W3C `description-logic-502`.
 
 ## Changed
 

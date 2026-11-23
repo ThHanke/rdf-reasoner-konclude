@@ -25,6 +25,9 @@ Branch `adopt/pr18-folded-patches` is built on the head of PR #18 (`dafcc7e`, ev
 | D5 | **`isEntailed` decides `owl:sameAs`, `owl:equivalentProperty`, `rdfs:range` and `rdfs:domain`.** | `sameAs` and `equivalentProperty` always returned `null`. Range/domain are decided by refutation probes (datatype hierarchy: `p range byte` entails `p range short`), `null` on an inconsistent ontology. Tests that pinned `sameAs` as unsupported now assert the decided answers. | `ts/index.ts`, `ts/entailmentProbe.ts` |
 | D6 | **`closure: true` (opt-in) writes the transitive hierarchy closure to the inferred graph** for `classify`, `classifyProperties` and `materialize` with `includeClassHierarchy`. Default stays the reduced hierarchy. | Consumers of the graph (SPARQL, SHACL, the app) need every entailed subsumption as a triple. Size is about 6-9x the direct edges (PMDco 1,612 to 10,572 pairs; GALEN 3,382 to 30,795), computing takes milliseconds. Opt-in so existing output does not change. | `ts/index.ts`, `ts/types.ts` |
 | D7 | **Signed integer minimums fixed (patch 002).** byte -128, short -32768, int -2147483648. | Upstream Konclude had -127, -32767, -2147483647, so the valid minima made an ontology inconsistent. | `patches/002-...`, `tests/integration/datatype-bounds.test.ts` |
+| D9 | **Ill-typed numeric literals are reported, not rejected, by default.** `RdfReasoner.illTypedLiterals`: `"report"` (default, fills `lastLiteralIssues`), `"error"` (`InvalidLiteralError`), `"ignore"` (no scan). Covers integer-derived datatypes with their bounds, decimal, float, double, boolean. | The kernel drops ill-typed literals silently (`"5abc"^^xsd:integer`, `"1.5"^^xsd:integer`, hex floats, integers beyond 64 bits), so the verdict ignores them. Rejecting by default would break loads of real-world data that contains sloppy literals; reporting makes the silent drop visible and `"error"` is there for strict users. Decided without your answer: change the default if you prefer strict. | `ts/literalValidation.ts`, `ts/index.ts`, `ts/types.ts` |
+| D10 | **OWL 1 constructors: one rewritten class per triple.** A class with several `owl:oneOf` lists is now the intersection of them. Fixes W3C `description-logic-502`. | The rewrite merged every list into one class, so the kernel read one list. Label derives from the triple (stable across calls). | `ts/inputNormalize.ts` |
+| D11 | **Data cardinality over enumerated data ranges stays a known gap.** `owl:oneOf` of two distinct non-integer values with `minCardinality 2` is wrongly inconsistent (W3C `New-Feature-Rational-003`); `{a}` with `minCardinality 2` is wrongly consistent. | Not rational parsing: integer and string enumerations work. Kernel value counting (excluded by PR #18). Pinned in `tests/integration/data-cardinality-gaps.test.ts`. | tests, docs |
 | D8 | **Entailment conformance work was narrowed.** 4 wrong and 20 unsupported W3C entailment tests: not pursued as a general feature. | Native Konclude is wrong on all four; most unsupported cases are harness limits (blank-node or annotation conclusions that ROBOT could not turn into probes), and `isEntailed` returns `null` there, never a wrong answer. Port 60 correct / 4 wrong / 20 unsupported against native 59 / 9 / 16. The datatype-hierarchy conclusions, which users need, were implemented (D5). Details: `docs/solutions/capability-gaps/pr18-known-conformance-gaps-2026-11-23.md`. | docs |
 
 ## 3. Findings that are not fixed (and why)
@@ -35,12 +38,18 @@ Branch `adopt/pr18-folded-patches` is built on the head of PR #18 (`dafcc7e`, ev
 | 10 W3C consistency verdicts wrong (float/double value spaces, `owl:rational`, `description-logic-035/-105` where native Konclude is wrong too, `-502`, `miscellaneous-203/-204`) | Pinned in `tests/integration/w3c-conformance-pr18.test.ts`; table in the known-gaps note |
 | Realization deadlock for two ROBOT-normalized premises (`SymmetricProperty-002`, `TransitiveProperty-002`) | See section 4 |
 
-## 4. Open at the time of writing
+## 4. Realization stall (`SymmetricProperty-002`, `TransitiveProperty-002`, ROBOT-normalized)
 
-Updated at the end of the work; see the git log of this file.
+- Detection works today through the TypeScript watchdog: with a small `stallTimeoutMs` the call rejects with `ReasonerStalledError` (about 38 s for 15 s, because `_call` restarts the worker and retries once; the retry stalls again) and a following call on the same reasoner works. `KonStall` (C++) does not fire in this state.
+- Root-cause lead found with the native test binary under gdb: SIGSEGV in `CBackendAssociationCacheHandler::getLoadedNominalIndividualIndirectConnectionData` (`this=0`, individual id 7), because `getIndividualAssociationLoadingData` returns `nullptr` when the backend cache has no association data for the individual and the result is dereferenced. The reader already treats a null result as "no indirect connections". Patch 006 adds the null guard.
+- Open: whether the guard also removes the WebAssembly stall (address 0 is valid memory there, so the same bug would read garbage instead of crashing: a hypothesis until the wasm is rebuilt and tested).
 
-## 5. Reproducing
+## 5. Process notes
 
-- Tests: `npx vitest run` (full suite, about 4 minutes). New files: `pr18-kernel`, `w3c-conformance-pr18`, `swrl-fixpoint`, `data-superproperty`, `input-normalize-determinism`, `datatype-bounds`, `entailment-range-domain`, `entailment-equivalence`, `hierarchy-closure`.
+- The Docker build image and part of the disk were removed during the work (disk full); a wasm rebuild needs the image rebuilt first.
+
+## 6. Reproducing
+
+- Tests: `npx vitest run` (full suite, about 4 minutes). New files: `pr18-kernel`, `w3c-conformance-pr18`, `swrl-fixpoint`, `data-superproperty`, `input-normalize-determinism`, `datatype-bounds`, `entailment-range-domain`, `entailment-equivalence`, `hierarchy-closure`, `literal-validation`, `data-cardinality-gaps` and the unit tests `literalValidation`, `inputNormalize`.
 - SWRL benchmark: `node tests/bench/swrl-bench.mjs --materials 300 --runs 3` (`--nofire` for rules that never match).
 - The author's reviewer kit (`docs/experiments/pr18-reviewer-kit/`, 43 MB) is not committed; the W3C cases used are copied as small N-Triples fixtures in `tests/fixtures/w3c-pr18/` and `tests/fixtures/pr18/`.
