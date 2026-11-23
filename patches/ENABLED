@@ -1,8 +1,9 @@
 # Vendor patches applied to vendor/konclude (order = filename order; each is written against the post-previous state).
-# Aggregated 2026-10-15 from the per-fix patches 000-041; 0.9.0 patches 005-009 and 0.9.1 patches 005-006 folded into 002/004 (see patches/README.md).
+# 0.9.0 patches 005-009, 0.9.1 patches 005-006 and the PR #18 patches 006-009 are folded into 002/004 (see patches/README.md).
 000  # Qt type substitutions
 001  # WASM port base (compile prereqs, pthread core, cache sync, perf, conformance, KPSet classifier, drain-loop/processing-set fixes)
 002  # Realizer/kernel correctness fixes
 003  # Stall detection hooks
 004  # Per-call memory lifecycle (pool/item/cache release, virtual dtors) + diagnostic counters
 005  # OR branching ends the task by status flag instead of a C++ exception on the direct rule chain (324k throws per PMDco classification, ~78 us each in Chromium)
+006  # Completion graph: links of non-child neighbours are moved to the merge target (nominal counting, W3C one_two) and a null guard on the merged association data

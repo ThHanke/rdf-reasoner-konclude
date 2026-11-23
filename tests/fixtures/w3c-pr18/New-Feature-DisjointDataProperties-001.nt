@@ -1,0 +1,6 @@
+_:df_9_1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .
+<http://example.org/hasName> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<http://example.org/hasAddress> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<http://example.org/hasName> <http://www.w3.org/2002/07/owl#propertyDisjointWith> <http://example.org/hasAddress> .
+<http://example.org/Peter> <http://example.org/hasName> "Peter Griffin" .
+<http://example.org/Peter> <http://example.org/hasAddress> "Peter Griffin" .

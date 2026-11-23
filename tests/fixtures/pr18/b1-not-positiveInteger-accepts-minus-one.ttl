@@ -1,0 +1,9 @@
+@prefix : <http://ex.org/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+# expect: consistent
+# Negated derived datatype: -1 is not a positiveInteger, so it is in the complement. Must stay consistent
+# (with datatype concepts typed correctly but the value space closed for the negated datatype, this became inconsistent).
+:p a owl:DatatypeProperty ; rdfs:range [ a rdfs:Datatype ; owl:datatypeComplementOf xsd:positiveInteger ] .
+:a a owl:NamedIndividual ; :p "-1"^^xsd:integer .

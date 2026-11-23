@@ -1,0 +1,11 @@
+--- a/Source/Reasoner/Kernel/Algorithm/CCalculationTableauCompletionTaskHandleAlgorithm.cpp
++++ b/Source/Reasoner/Kernel/Algorithm/CCalculationTableauCompletionTaskHandleAlgorithm.cpp
+@@ -21211,7 +21211,7 @@
+ 
+ 							} else {
+ 								CIndividualProcessNode* locConnIndi = getLocalizedIndividual(connID,calcAlgContext);
+-								if (individual->isNominalIndividualNode() || locConnIndi->isNominalIndividualNode() || individual->isIndividualAncestor(locConnIndi) || mergeIntoIndividualNode->hasSuccessorIndividualNode(locConnIndi)) {
++								if (individual->isNominalIndividualNode() || locConnIndi->isNominalIndividualNode() || individual->isIndividualAncestor(locConnIndi) || mergeIntoIndividualNode->hasSuccessorIndividualNode(locConnIndi) || !locConnIndi->isIndividualAncestor(individual)) {
+ 
+ 									if (!individual->isNominalIndividualNode() || !locConnIndi->isIndividualAncestor(individual)) {
+ 

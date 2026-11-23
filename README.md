@@ -5,6 +5,17 @@
 
 OWL-DL tableau reasoning via [Konclude](https://github.com/konclude/Konclude) compiled to WebAssembly, with an async TypeScript API using RDF.js Quad types.
 
+## Documentation
+
+| Document | Content |
+|---|---|
+| [API reference](docs/api.md) | every method, property, error and constant of `RdfReasoner` |
+| [Options reference](docs/options.md) | every option with default, cost and when to change it; what is on by default (opt-out) and what is opt-in |
+| [SWRL rules](docs/swrl.md) | DL-safe rules in `materialize`: scope, semantics, limits, cost |
+| [OWL 2 DL conformance](docs/owl2-conformance.md) | W3C test results, supported features, datatypes, known gaps |
+| [PR #18 handover](docs/pr18-handover.md) | what changed in the 0.9.7 adoption of PR #18, before and after, open items |
+| [Release notes 0.9.7](docs/release-notes-v0.9.7.md) | changes, behaviour changes, known limits |
+
 ## Installation
 
 ```bash
@@ -267,6 +278,7 @@ interface MaterializeStoreOptions {
   inferredGraph?: string; // default: INFERRED_GRAPH_IRI
   includeClassHierarchy?: boolean; // also emit subClassOf/equivalentClass; default false
   failOnInconsistent?: boolean; // default false
+  swrl?: boolean; // apply the store's DL-safe SWRL rules; default true, see "SWRL rules in materialize"
 }
 ```
 
@@ -401,6 +413,24 @@ To also receive the class hierarchy in the same call:
 
 ```typescript
 await reasoner.materialize(store, { includeClassHierarchy: true });
+```
+
+### SWRL rules in `materialize`
+
+Konclude has no SWRL support, so `materialize()` applies the DL-safe SWRL rules (`swrl:Imp`) found in the store itself:
+the rules are run over the named individuals of the realized ABox, their head statements are added to the reasoning input, and the ontology is realized again until no rule adds a statement. The consequences are written to the inferred graph.
+
+- Supported atoms: class atoms with a named class, individual and data property atoms, `sameIndividual`, `differentIndividuals`. A rule with another atom (built-ins, data ranges, class expressions as predicate) is skipped and reported.
+- Rule chains (a head that feeds another rule's body) are closed in TypeScript; the kernel runs again only when new facts appeared.
+- **Detection and cost.** A store without `swrl:Imp` triples pays nothing. Rules whose bodies never match cost one matching pass (about 3% on a 300-material benchmark). Rules that derive many statements make the kernel realize a larger ABox: on the benchmark (4,863 derived triples) `materialize` takes 2.5x as long as without rules (1.4 s against 0.56 s, `tests/bench/swrl-bench.mjs`).
+- **Opt out:** `materialize(store, { swrl: false })` skips rule processing.
+- `reasoner.lastSwrl` reports the last call: `{ rules, unsupported, rounds, derived, applied }`. With `swrl: false` it still lists the rules found, with `applied: false`.
+- Explanations (`explanations: true`) stay those of the first realization, without the rule consequences. A rule consequence that makes the ontology inconsistent rejects with `InconsistentOntologyError`.
+
+```typescript
+await reasoner.materialize(store); // rules applied (default)
+console.log(reasoner.lastSwrl); // { rules: 2, unsupported: [], rounds: 2, derived: 4863, applied: true }
+await reasoner.materialize(store, { swrl: false }); // rules ignored
 ```
 
 ### ABox: materialize the full role closure
@@ -694,8 +724,8 @@ const result = await reasoner.explainEntailment(
 | `rdfs:domain` / `rdfs:range`     | Native (GCI in taxonomy)                                       | ~1ms  |
 | `disjointUnionOf` → `subClassOf` | Synthesized (RDF list walk)                                    | <1ms  |
 | `owl:oneOf` → `rdf:type`         | Synthesized (member scan)                                      | <1ms  |
-| Data property assertions         | Asserted-triple lookup                                         | <1ms  |
-| Object property assertions       | Asserted-triple lookup                                         | <1ms  |
+| Data property assertions         | Asserted triple; declared data property: nominal probe `a : not (P value v)` (exact justification) | ~0.5s check |
+| Object property assertions       | Asserted triple; declared object property: nominal probe `a : not (R value b)` (exact justification) | ~0.5s check |
 
 Full coverage matrix with test cases: [`docs/entailment-coverage.md`](docs/entailment-coverage.md)
 
@@ -765,6 +795,8 @@ const cost = await reasoner.assessEdit(store, edit);
 const { weakenings } = await reasoner.weaken(store, culpritAxiom);
 // most specific replacements first ('generalize' a conjunct to a superclass, 'dropConjunct'), the deletion last;
 // each has .remove, .add (quads to add) and was verified: consistent and the target class stays satisfiable
+// conflict with several justifications: pass the other members of the repair; checks run on base - alsoRemove - culprit
+const multi = await reasoner.weaken(store, culpritAxiom, { alsoRemove: otherRepairAxioms });
 ```
 
 Notes:
@@ -920,7 +952,7 @@ Restriction constructs verified working over ABox individuals:
 | `rdfs:subPropertyOf` (property hierarchy) | Available via `classifyProperties(store)` |
 | `owl:sameAs` entailments                  | Emitted by `materialize()` ✓              |
 | `owl:differentFrom` entailments           | Not emitted (accepted as input ✓)         |
-| Data property assertions                  | Emitted by `materialize()` ✓              |
+| Data property assertions                  | Asserted values and values entailed through data subproperty/equivalence axioms emitted by `materialize()` ✓; values entailed by other axioms (e.g. `owl:hasValue` on an inferred type) not emitted |
 
 ## Browser deployment
 

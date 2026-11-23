@@ -1,0 +1,14 @@
+diff --git a/Source/Reasoner/Generator/CConcreteOntologyRedlandTriplesDataExpressionMapper.cpp b/Source/Reasoner/Generator/CConcreteOntologyRedlandTriplesDataExpressionMapper.cpp
+--- a/Source/Reasoner/Generator/CConcreteOntologyRedlandTriplesDataExpressionMapper.cpp	2026-11-21 03:38:16.325754277 +0000
++++ b/Source/Reasoner/Generator/CConcreteOntologyRedlandTriplesDataExpressionMapper.cpp	2026-11-21 03:38:16.328229988 +0000
+@@ -263,8 +263,9 @@
+ 									if (axiomExpression) {
+ 										axiomExpressionList.append(axiomExpression);
+ 									}
+-									delete processingDataList;
+ 								}
++									// WASM port: the list was deleted inside the loop over it (use after free, double free for two or more individuals)
++									delete processingDataList;
+ 							}
+ 
+ 						}

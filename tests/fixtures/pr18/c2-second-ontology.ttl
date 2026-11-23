@@ -1,0 +1,9 @@
+@prefix : <http://ex.org/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+# expect: consistent
+# A second, different ontology loaded into the same reasoner after c1 (the crash showed on the next load).
+:q a owl:ObjectProperty . :D a owl:Class .
+:x a owl:NamedIndividual , _:s . :y a owl:NamedIndividual , _:s . :z a owl:NamedIndividual , _:s .
+_:s a owl:Restriction ; owl:onProperty :q ; owl:minCardinality "1"^^xsd:nonNegativeInteger .

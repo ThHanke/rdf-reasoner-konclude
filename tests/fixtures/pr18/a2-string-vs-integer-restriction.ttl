@@ -1,0 +1,9 @@
+@prefix : <http://ex.org/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+# expect: inconsistent
+# The same clash through a universal restriction instead of a range axiom.
+:age a owl:DatatypeProperty .
+:Person a owl:Class ; rdfs:subClassOf [ a owl:Restriction ; owl:onProperty :age ; owl:allValuesFrom xsd:integer ] .
+:alice a :Person ; :age "forty"^^xsd:string .

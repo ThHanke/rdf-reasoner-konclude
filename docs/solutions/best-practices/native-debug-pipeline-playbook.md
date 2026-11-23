@@ -3,7 +3,7 @@ title: Native C++ debug pipeline — playbook (correctness hunts and performance
 module: native/, src/native_repro.cpp, scripts/oracle, scripts/repro-sample.sh
 tags: [native-harness, debugging, oracle, determinism, gdb, asan, performance, bisect]
 problem_type: best-practice
-updated: 2026-10-09
+updated: 2026-11-23
 ---
 
 # Native debug pipeline playbook
@@ -81,3 +81,12 @@ The harness is a good performance bench because it removes TS/worker/serializati
 4. Add a state dump for the structure you suspect; compare good vs bad.
 5. Fix via patch; re-run the deterministic vectors; then the sampler; then WASM (`make reset-patches`, `make build-wasm`, vitest to a file).
 6. Document in `docs/solutions/` (ce-compound) and update `patches/ENABLED` comments.
+
+## Update 2026-11-23: current binary, op letters, stack sweeps, parallel agents
+
+- The binary now lives in **`build-native-ordered/konclude_repro`** (the older `build-native/` tree was removed). A native rebuild after a vendor change recompiles every file whose timestamp changed (`apply-patches.sh --force` touches all patched files); applying one patch with `git -C vendor/konclude apply` and then `make` is incremental.
+- Seq ops: `k` consistency, `c` classification, `m` realization: `REPRO_CONTINUE=1 konclude_repro --timeout 40 --seq "k:/abs/file.nt"`; output containing "not ok" means inconsistent, "step 1:" consistent.
+- **Stack sweep:** `ulimit -s <KiB>` before the run (new threads inherit it) finds stack-depth bugs; gdb `bt` at the crash shows the recursion. This located the wasm "stall" ([stall doc](../runtime-errors/wasm-pthread-stack-overflow-realization-stall-2026-11-23.md)).
+- gdb `jump` / forced returns on the unpatched binary emulate a fix before any rebuild.
+- Several gaps at once: parallel read-only investigation agents, see [parallel-agent-kernel-investigation-w3c-regression-gate-2026-11-23.md](../workflow-issues/parallel-agent-kernel-investigation-w3c-regression-gate-2026-11-23.md).
+

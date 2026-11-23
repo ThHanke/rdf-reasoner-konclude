@@ -18,7 +18,7 @@
 
 import { spawnSync, execFileSync } from 'node:child_process';
 import { writeFileSync, readFileSync, unlinkSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { loadavg } from 'node:os';
 import { dirname, join } from 'node:path';
 import { benchAll as nativeBenchAll, NATIVE_CASES } from './native-runner.mjs';
@@ -34,9 +34,10 @@ function runInSubprocess(scriptPath, funcName, args, timeoutMs = 600_000) {
   const ts = Date.now();
   const tmpScript = join(__dirname, `_bench_sub_${ts}.mjs`);
   const tmpResult = join(__dirname, `_bench_res_${ts}.json`);
+  const scriptUrl = pathToFileURL(join(__dirname, scriptPath)).href;
   const wrapper = `
 import { writeFileSync } from 'node:fs';
-import { ${funcName} } from '${scriptPath}';
+import { ${funcName} } from ${JSON.stringify(scriptUrl)};
 const result = await ${funcName}(...${JSON.stringify(args)});
 writeFileSync('${tmpResult.replaceAll('\\', '\\\\')}', JSON.stringify(result));
 `;

@@ -132,6 +132,8 @@ function mockEmptyClassify() {
       simulateWorkerMessage({ id: req.id, result: fakeSync(req) });
     } else if (req.method === "classification") {
       simulateWorkerMessage({ id: req.id, result: true });
+    } else if (req.method === "getUnsatisfiableClassBuffer") {
+      simulateWorkerMessage({ id: req.id, result: "" });
     } else if (req.method === "realization") {
       simulateWorkerMessage({ id: req.id, result: true });
     } else if (req.method === "getInferredTripleBuffer") {
@@ -153,6 +155,8 @@ function mockWorkerSequence(inferredQuads: Quad[]) {
       simulateWorkerMessage({ id: req.id, result: fakeSync(req) });
     } else if (req.method === "classification") {
       simulateWorkerMessage({ id: req.id, result: true });
+    } else if (req.method === "getUnsatisfiableClassBuffer") {
+      simulateWorkerMessage({ id: req.id, result: "" });
     } else if (req.method === "realization") {
       simulateWorkerMessage({ id: req.id, result: true });
     } else if (req.method === "getInferredTripleBuffer") {

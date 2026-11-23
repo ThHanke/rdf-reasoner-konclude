@@ -29,15 +29,24 @@ export { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, KJ_NS, KJ_
 export { createInlineWorker } from "./inlineWorker.js";
 export { createManagedStore } from "./n3Inject.js";
 import type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions, LaconicPart, LaconicJustification, LaconicExplainOptions, Axiom, AxiomJustification, RepairOptions, Repair, RepairResult, Edit, DisjointPair, AssessEditOptions, EditAssessment, WeakenOptions, Weakening, WeakenResult, InconsistencyGuardOptions } from "./types.js";
-import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, KJ_JUSTIFIES, KJ_AXIOM, ReasonerStalledError, InconsistentOntologyError } from "./types.js";
-export { ReasonerStalledError, InconsistentOntologyError } from "./types.js";
+import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, KJ_JUSTIFIES, KJ_AXIOM, ReasonerStalledError, InconsistentOntologyError, InvalidLiteralError } from "./types.js";
+import { findLiteralIssues, type LiteralIssue } from "./literalValidation.js";
+import { planConclusion, existsProbeQuads, type Statement } from "./entailmentGraph.js";
+export { ReasonerStalledError, InconsistentOntologyError, InvalidLiteralError } from "./types.js";
 import { injectExplanationsFromBuffer, encodeStoreToBuffers, existsInSourceGraphs, clearGraph, createManagedStore, getRawStore, graphSignature } from "./n3Inject.js";
 import { groupJustification, isDeclaration, partitionIntoUnits } from "./axiomGrouping.js";
 import { dropAnnotationTriples } from "./annotations.js";
 import { computeRepairs, REPAIR_DEFAULT_TIMEOUT_MS, type RepairOracle } from "./repair.js";
 import { computeAssessment, probeQuads, PROBE_NS, type AssessOracle } from "./assessEdit.js";
 import { computeWeakenings } from "./weaken.js";
-import { buildEntailmentProbe, classifyAxiom, tripleKey as probeTripleKey } from "./entailmentProbe.js";
+import { buildEntailmentProbe, classifyAxiom, tripleKey as probeTripleKey, type AssertionPropertyType, CHARACTERISTIC_CLASSES, DECLARATION_CLASSES, buildCharacteristicProbe, buildRangeDomainProbe, buildPropertySubsumptionProbe } from "./entailmentProbe.js";
+import { parseRules, applyRules, Facts } from "./swrl.js";
+
+const SWRL_IMP = "http://www.w3.org/2003/11/swrl#Imp";
+/** Graph of the rule consequences inside the augmented reasoning input; they are written to the inferred graph. */
+const SWRL_GRAPH_IRI = "urn:konclude:swrl";
+// ponytail: each round is a full realization; rule chains deeper than this are not expected in practice.
+const SWRL_MAX_ROUNDS = 10;
 import { computeLaconicAsync, groupQuadsIntoAxioms, splitAxiom, axiomKey } from "./laconicJustification.js";
 
 // ---------------------------------------------------------------------------
@@ -117,7 +126,7 @@ const workerRegistry = new FinalizationRegistry<Worker>((worker) => {
   }
 });
 
-type ResultCache = { gen: number; store: Store; graph: string; sig: string };
+type ResultCache = { gen: number; store: Store; graph: string; sig: string; closure: boolean };
 
 /** Budget of the exact search that "fast" mode runs when no cheap candidate verifies. */
 const FAST_FALLBACK_SEARCH_MS = 5_000;
@@ -153,6 +162,8 @@ export class RdfReasoner {
   // another inferred graph, rewrites it instead of trusting the cache.
   private _classifyCache: ResultCache | null = null;
   private _materializeCache: ResultCache | null = null;
+  /** The `swrl` setting of the call that filled `_materializeCache`: a call with the other setting must not hit it. */
+  private _materializeSwrl = true;
   private _classifyPropertiesCache: ResultCache | null = null;
   private _consistencyCache: { gen: number; result: boolean } | null = null;
   /** Result of the last explainInconsistency() for the store content of generation `key` (the kernel's content generation, so
@@ -182,6 +193,7 @@ export class RdfReasoner {
     this._stallTimeoutMs = opts?.stallTimeoutMs ?? 600_000;
     this._recycleHeapBytes = opts?.recycleHeapBytes ?? 2 * 1024 ** 3;
     this._excludeGraphs = new Set(opts?.excludeGraphs ?? []);
+    this.illTypedLiterals = opts?.illTypedLiterals ?? "report";
     this._workerFactory = opts?.workerFactory;
     if (opts?.workerFactory) {
       this.worker = opts.workerFactory();
@@ -436,13 +448,16 @@ export class RdfReasoner {
     });
   }
 
-  private _stamp(gen: number, store: Store, inferredGraph?: string): ResultCache {
+  private _stamp(gen: number, store: Store, inferredGraph?: string, closure = false): ResultCache {
     const graph = this._igRead(inferredGraph);
-    return { gen, store, graph, sig: graphSignature(getRawStore(store), graph) };
+    return { gen, store, graph, sig: graphSignature(getRawStore(store), graph), closure };
   }
 
-  private _hit(cache: ResultCache | null, gen: number, store: Store, inferredGraph?: string): boolean {
+  /** `closure`: the call wants the hierarchy closure in the inferred graph; a result written without it (or with it, for a call
+   *  without) is not served. Internal callers (isEntailed, getUnsatisfiableClasses) pass nothing and accept either. */
+  private _hit(cache: ResultCache | null, gen: number, store: Store, inferredGraph?: string, closure?: boolean): boolean {
     if (cache === null || cache.gen !== gen || cache.store !== store) return false;
+    if (closure !== undefined && cache.closure !== closure) return false;
     const graph = this._igRead(inferredGraph);
     return cache.graph === graph && cache.sig === graphSignature(getRawStore(store), graph);
   }
@@ -456,8 +471,18 @@ export class RdfReasoner {
    * invalidates its cached results when it changed; the returned generation keys the per-store
    * result caches. `ignoreGraph` (a custom inferredGraph) never counts as content.
    */
+  /** See `RdfReasonerOptions.illTypedLiterals`; may be changed between calls. */
+  illTypedLiterals: "report" | "error" | "ignore";
+  /** Numeric / boolean literals of the last synced store that are outside their datatype's lexical or value space (the kernel drops them). */
+  lastLiteralIssues: { issues: LiteralIssue[]; total: number } = { issues: [], total: 0 };
+
   private async _sync(store: Store, ignoreGraph?: string, direct = false): Promise<number> {
     if (ignoreGraph) this._ig(ignoreGraph);
+    if (this.illTypedLiterals !== "ignore") {
+      const skip = new Set<string>([...this._inferredGraphs, ...this._excludeGraphs]);
+      this.lastLiteralIssues = findLiteralIssues(store.getQuads(null, null, null, null).filter((q) => !skip.has(q.graph.value)));
+      if (this.illTypedLiterals === "error" && this.lastLiteralIssues.total > 0) throw new InvalidLiteralError(this.lastLiteralIssues.issues, this.lastLiteralIssues.total);
+    }
     const { tripleBuffer, strTableBuffer } = encodeStoreToBuffers(store, [...this._inferredGraphs, ...this._excludeGraphs]);
     const call = direct ? this._callDirect.bind(this) : this._call.bind(this);
     const info = (await call("sync", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer])) as { generation?: number } | undefined;
@@ -539,7 +564,7 @@ export class RdfReasoner {
       const gen = await this._syncForOp(store, opts?.inferredGraph);
       await this._guardConsistent(gen, opts);
       // Cache hit: same store instance with same content as last classify call
-      if (this._hit(this._classifyCache, gen, store, opts?.inferredGraph)) {
+      if (this._hit(this._classifyCache, gen, store, opts?.inferredGraph, opts?.closure === true)) {
         if (wantExplanations) {
           await this._ensureExplanationGraphFromBuffer(store, "getInferredTripleBuffer");
         }
@@ -573,7 +598,8 @@ export class RdfReasoner {
         this._lastExplBuffer = null;
       }
 
-      this._classifyCache = this._stamp(gen, store, opts?.inferredGraph);
+      if (opts?.closure === true) this._addHierarchyClosure(store, rawStore, inferredGraphNode, "class");
+      this._classifyCache = this._stamp(gen, store, opts?.inferredGraph, opts?.closure === true);
       this._materializeCache = null;
       this._classifyPropertiesCache = null;
       this._lastPropertyExplBuffer = null;
@@ -681,7 +707,7 @@ export class RdfReasoner {
       await this._guardConsistent(gen, opts);
 
       // Cache hit: same store instance with same content as last materialize call
-      if (this._hit(this._materializeCache, gen, store, opts?.inferredGraph)) {
+      if (this._materializeSwrl === (opts?.swrl !== false) && this._hit(this._materializeCache, gen, store, opts?.inferredGraph, opts?.closure === true && opts?.includeClassHierarchy === true)) {
         if (wantExplanations) {
           await this._ensureExplanationGraphFromBuffer(store, "getInferredTripleBuffer");
         }
@@ -724,6 +750,25 @@ export class RdfReasoner {
       }
 
 
+      // DL-safe SWRL rules: realize again over the store plus the rule consequences until no rule adds a statement.
+      // ponytail: explanations (wantExplanations) stay those of the first realization.
+      const swrl = await this._swrlFixpoint(store, allQuads, opts?.swrl !== false);
+      if (swrl) allQuads = [...swrl.quads, ...swrl.derived];
+
+      // Konclude's consistency step can miss a named individual that belongs to an unsatisfiable class (W3C OWL 2
+      // tests WebOnt-description-logic-008, -012, ...; native Konclude v0.7.0 misses them as well, HermiT finds them).
+      // Realization has classified, so this is a taxonomy lookup.
+      const unsat = new Set(((await this._call("getUnsatisfiableClassBuffer", [])) as string).split("\n").filter(Boolean));
+      unsat.add(OWL_NOTHING);
+      const skipGraph = new Set([...this._inferredGraphs, ...this._excludeGraphs, INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI]);
+      const clash = [
+        ...store.getQuads(null, DataFactory.namedNode(RDF_TYPE), null, null).filter((q) => !skipGraph.has(q.graph.value)),
+        ...allQuads.filter((q) => q.predicate.value === RDF_TYPE),
+      ].find((q) => unsat.has(q.object.value));
+      if (clash) {
+        throw new InconsistentOntologyError(`${clash.subject.value} belongs to the unsatisfiable class ${clash.object.value}.`);
+      }
+
       let inferredQuads = opts?.includeClassHierarchy === true
         ? allQuads
         : allQuads.filter(
@@ -739,7 +784,10 @@ export class RdfReasoner {
         );
       }
 
-      this._materializeCache = this._stamp(gen, store, opts?.inferredGraph);
+      const closureWanted = opts?.closure === true && opts?.includeClassHierarchy === true;
+      if (closureWanted) this._addHierarchyClosure(store, rawStore, inferredGraphNode, "class");
+      this._materializeCache = this._stamp(gen, store, opts?.inferredGraph, closureWanted);
+      this._materializeSwrl = opts?.swrl !== false;
       this._classifyCache = null;
       this._classifyPropertiesCache = null;
       this._lastPropertyExplBuffer = null;
@@ -770,6 +818,59 @@ export class RdfReasoner {
     return result as Promise<void> | Promise<{ delta: InferenceDelta }>;
   }
 
+  /** Rules, fixpoint rounds and derived statements of the last `materialize()` (see ts/swrl.ts). */
+  lastSwrl: { rules: number; unsupported: string[]; rounds: number; derived: number; applied: boolean } = { rules: 0, unsupported: [], rounds: 0, derived: 0, applied: false };
+
+  /**
+   * DL-safe SWRL fixpoint over the realized ABox. Returns null when the store holds no applicable rule or no rule fires;
+   * otherwise the realization output over store + rule consequences, and the consequences themselves.
+   * The worker then holds the augmented content, so the next call on the store re-syncs (no cache hit after rules fired).
+   */
+  private async _swrlFixpoint(store: Store, first: Quad[], apply = true): Promise<{ quads: Quad[]; derived: Quad[] } | null> {
+    this.lastSwrl = { rules: 0, unsupported: [], rounds: 0, derived: 0, applied: false };
+    const imp = store.getQuads(null, DataFactory.namedNode(RDF_TYPE), DataFactory.namedNode(SWRL_IMP), null);
+    if (imp.length === 0) return null;
+    const skip = new Set([...this._inferredGraphs, ...this._excludeGraphs, INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI]);
+    const base = store.getQuads(null, null, null, null).filter((q) => !skip.has(q.graph.value));
+    const { rules, unsupported } = parseRules(base);
+    this.lastSwrl = { rules: rules.length, unsupported, rounds: 0, derived: 0, applied: false };
+    if (rules.length === 0 || !apply) return null;
+    this.lastSwrl.applied = true;
+    // Rule chains (a head feeding another rule's body) need no kernel: close them in TypeScript over base + kernel output +
+    // derived facts, and call the kernel only when the closure produced facts it has not seen. `rounds` counts these
+    // passes (closure, then a kernel round if something new was derived); the last pass is the empty confirming one.
+    const facts = new Facts([...base, ...first]);
+    const derived: Quad[] = [];
+    let quads = first;
+    let synced = 0; // derived facts the kernel has already been given
+    let delta: Facts | undefined; // facts new since the previous pass; undefined = first pass, match everything
+    for (let round = 1; round <= SWRL_MAX_ROUNDS; round++) {
+      this.lastSwrl.rounds = round;
+      for (let add = applyRules(rules, facts, delta); add.length > 0; add = applyRules(rules, facts, delta)) {
+        delta = new Facts([]);
+        for (const [s, p, o] of add) {
+          facts.add(s, p, o);
+          delta.add(s, p, o);
+          derived.push(DataFactory.quad(s as Quad["subject"], DataFactory.namedNode(p), o as Quad["object"], DataFactory.namedNode(SWRL_GRAPH_IRI)));
+        }
+      }
+      this.lastSwrl.derived = derived.length;
+      if (derived.length === synced) return derived.length ? { quads, derived } : null;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const augmented = new Store([...base, ...derived] as any[]);
+      await this._sync(augmented);
+      if (!((await this._call("consistency", [])) as boolean)) {
+        throw new InconsistentOntologyError("The ontology together with the consequences of its SWRL rules is inconsistent.");
+      }
+      await this._call("realization", []);
+      quads = decodeBuffers((await this._call("getInferredTripleBuffer", [false])) as ArrayBuffer);
+      synced = derived.length;
+      delta = new Facts([]);
+      for (const q of quads) if (facts.add(q.subject, q.predicate.value, q.object)) delta.add(q.subject, q.predicate.value, q.object);
+    }
+    throw new Error(`SWRL rules did not reach a fixpoint within ${SWRL_MAX_ROUNDS} rounds.`);
+  }
+
   // -------------------------------------------------------------------------
   // classifyProperties()
   // -------------------------------------------------------------------------
@@ -787,7 +888,7 @@ export class RdfReasoner {
       const gen = await this._syncForOp(store, opts?.inferredGraph);
       await this._guardConsistent(gen, opts);
       // Cache hit: same store instance with same content as last classifyProperties call
-      if (this._hit(this._classifyPropertiesCache, gen, store, opts?.inferredGraph)) {
+      if (this._hit(this._classifyPropertiesCache, gen, store, opts?.inferredGraph, opts?.closure === true)) {
         if (wantExplanations) {
           await this._ensureExplanationGraphFromBuffer(store, "getPropertyTripleBuffer");
         }
@@ -821,7 +922,8 @@ export class RdfReasoner {
         this._lastPropertyExplBuffer = null;
       }
 
-      this._classifyPropertiesCache = this._stamp(gen, store, opts?.inferredGraph);
+      if (opts?.closure === true) this._addHierarchyClosure(store, rawStore, inferredGraphNode, "property");
+      this._classifyPropertiesCache = this._stamp(gen, store, opts?.inferredGraph, opts?.closure === true);
       this._classifyCache = null;
       this._materializeCache = null;
       this._lastExplBuffer = null;
@@ -845,9 +947,54 @@ export class RdfReasoner {
       case "http://www.w3.org/1999/02/22-rdf-syntax-ns#type":
         return "materialize";
       case "http://www.w3.org/2000/01/rdf-schema#subPropertyOf":
+      case "http://www.w3.org/2002/07/owl#equivalentProperty":
         return "classifyProperties";
+      case "http://www.w3.org/2002/07/owl#sameAs":
+        return "materialize";
       default:
         return null;
+    }
+  }
+
+  /**
+   * Opt-in (`closure: true`): write the transitive closure of the hierarchy the classifier reports (the reduced taxonomy) into
+   * the inferred graph, so consumers of the graph (SPARQL, SHACL, apps) need no reasoning to see every entailed subsumption.
+   * kind "class": subClassOf over subClassOf and equivalentClass (equivalents subsume each other), plus equivalentClass between all
+   * members of an equivalence group; kind "property": the same for subPropertyOf / equivalentProperty. Triples already in a source graph
+   * or in the inferred graph are not added again. This is the OWL 2 direct-semantics deductive closure of the subsumption relation
+   * (reflexive pairs are not written); it is open-world and adds nothing the classification did not entail.
+   */
+  private _addHierarchyClosure(store: Store, rawStore: Store, inferredGraphNode: ReturnType<typeof DataFactory.namedNode>, kind: "class" | "property"): void {
+    const OWLNS = "http://www.w3.org/2002/07/owl#", RDFSNS = "http://www.w3.org/2000/01/rdf-schema#";
+    const subP = RDFSNS + (kind === "class" ? "subClassOf" : "subPropertyOf");
+    const eqP = OWLNS + (kind === "class" ? "equivalentClass" : "equivalentProperty");
+    const sub = new Map<string, Set<string>>();
+    const link = (x: string, y: string) => { (sub.get(x) ?? sub.set(x, new Set()).get(x)!).add(y); };
+    for (const g of [DataFactory.defaultGraph(), inferredGraphNode]) {
+      for (const q of store.getQuads(null, DataFactory.namedNode(subP), null, g)) {
+        if (q.subject.termType === "NamedNode" && q.object.termType === "NamedNode") link(q.subject.value, q.object.value);
+      }
+      for (const q of store.getQuads(null, DataFactory.namedNode(eqP), null, g)) {
+        if (q.subject.termType === "NamedNode" && q.object.termType === "NamedNode") { link(q.subject.value, q.object.value); link(q.object.value, q.subject.value); }
+      }
+    }
+    const reach = new Map<string, Set<string>>();
+    for (const a of sub.keys()) {
+      const seen = new Set<string>(); const stack = [a];
+      while (stack.length) for (const y of sub.get(stack.pop()!) ?? []) if (!seen.has(y)) { seen.add(y); stack.push(y); }
+      seen.delete(a);
+      reach.set(a, seen);
+    }
+    const add = (s: string, p: string, o: string) => {
+      const sn = DataFactory.namedNode(s), pn = DataFactory.namedNode(p), on = DataFactory.namedNode(o);
+      if (existsInSourceGraphs(store, sn, pn, on, this._excludeGraphs)) return;
+      rawStore.addQuad(DataFactory.quad(sn, pn, on, inferredGraphNode));
+    };
+    for (const [a, targets] of reach) {
+      for (const b of targets) {
+        add(a, subP, b);
+        if (reach.get(b)?.has(a)) add(a, eqP, b); // mutual subsumption: equivalent
+      }
     }
   }
 
@@ -984,7 +1131,7 @@ export class RdfReasoner {
     // Fast-path unsupported check for single axiom (no queue entry needed)
     if (!isBatch) {
       const op = this._opForPredicate((axiomOrAxioms as Quad).predicate.value);
-      if (op === null && !this._isDisjointAxiom(axiomOrAxioms as Quad)) {
+      if (op === null && !this._specialAxiomKind(axiomOrAxioms as Quad) && !this._isDisjointAxiom(axiomOrAxioms as Quad) && !this._propertyAssertionType(store, axiomOrAxioms as Quad) && !this._rangeDomainAxiom(store, axiomOrAxioms as Quad)) {
         console.warn(`isEntailed: unsupported predicate <${(axiomOrAxioms as Quad).predicate.value}>`);
         return Promise.resolve(null);
       }
@@ -992,13 +1139,15 @@ export class RdfReasoner {
 
     const result = this._queue.then(async () => {
       const ig = DataFactory.namedNode(igIri);
+      // declarations and property characteristics are decided here, not by classification or materialization
+      const opOf = (q: Quad) => (this._specialAxiomKind(q) ? null : this._opForPredicate(q.predicate.value));
       const gen = await this._sync(store, igIri);
       await this._guardConsistent(gen, opts);
 
       // Determine which operations are needed
-      const needsClassify = axioms.some(a => this._opForPredicate(a.predicate.value) === "classify");
-      const needsMaterialize = axioms.some(a => this._opForPredicate(a.predicate.value) === "materialize");
-      const needsClassifyProps = axioms.some(a => this._opForPredicate(a.predicate.value) === "classifyProperties");
+      const needsClassify = axioms.some(a => opOf(a) === "classify");
+      const needsMaterialize = axioms.some(a => opOf(a) === "materialize");
+      const needsClassifyProps = axioms.some(a => opOf(a) === "classifyProperties");
 
       // Run needed operations in order; each cross-invalidates others
       const dg = DataFactory.defaultGraph();
@@ -1006,12 +1155,57 @@ export class RdfReasoner {
         store.has(DataFactory.quad(a.subject, a.predicate, a.object, ig)) ||
         store.has(DataFactory.quad(a.subject, a.predicate, a.object, dg));
 
+      // The classifiers write the direct hierarchy (and equivalents as equivalentClass / mutual subPropertyOf), not its
+      // transitive closure: entailment of A ⊑ B, A ≡ B, p ⊑ q, p ≡ q and a sameAs b is reachability over those edges
+      // (base and inferred graph), plus the reflexive and top/bottom cases.
+      const OWLNS = "http://www.w3.org/2002/07/owl#", RDFSNS = "http://www.w3.org/2000/01/rdf-schema#";
+      const edgeMap = (preds: string[], symmetric: boolean) => {
+        const m = new Map<string, Set<string>>();
+        const link = (x: string, y: string) => { (m.get(x) ?? m.set(x, new Set()).get(x)!).add(y); };
+        for (const pred of preds) for (const g of [ig, dg]) for (const q of store.getQuads(null, pred, null, g)) {
+          if (q.subject.termType !== "NamedNode" || q.object.termType !== "NamedNode") continue;
+          link(q.subject.value, q.object.value);
+          if (symmetric) link(q.object.value, q.subject.value);
+        }
+        return m;
+      };
+      const reaches = (adj: Array<Map<string, Set<string>>>, from: string, to: string) => {
+        const seen = new Set<string>([from]); const stack = [from];
+        while (stack.length) {
+          const x = stack.pop()!;
+          if (x === to) return true;
+          for (const m of adj) for (const y of m.get(x) ?? []) if (!seen.has(y)) { seen.add(y); stack.push(y); }
+        }
+        return false;
+      };
+      let classAdj: Array<Map<string, Set<string>>> | undefined, propAdj: Array<Map<string, Set<string>>> | undefined, sameAdj: Array<Map<string, Set<string>>> | undefined;
+      const classEntailed = (a: Quad): boolean => {
+        if (a.subject.termType !== "NamedNode" || a.object.termType !== "NamedNode") return false;
+        classAdj ??= [edgeMap([RDFSNS + "subClassOf"], false), edgeMap([OWLNS + "equivalentClass"], true)];
+        const sub = (x: string, y: string) => x === y || y === OWLNS + "Thing" || reaches(classAdj!, x, y) || reaches(classAdj!, x, OWLNS + "Nothing");
+        const s = a.subject.value, o = a.object.value;
+        return a.predicate.value === OWLNS + "equivalentClass" ? sub(s, o) && sub(o, s) : sub(s, o);
+      };
+      const propEntailed = (a: Quad): boolean => {
+        if (a.subject.termType !== "NamedNode" || a.object.termType !== "NamedNode") return false;
+        propAdj ??= [edgeMap([RDFSNS + "subPropertyOf"], false), edgeMap([OWLNS + "equivalentProperty"], true)];
+        const top = (y: string) => y === OWLNS + "topObjectProperty" || y === OWLNS + "topDataProperty";
+        const sub = (x: string, y: string) => x === y || top(y) || reaches(propAdj!, x, y);
+        const s = a.subject.value, o = a.object.value;
+        return a.predicate.value === OWLNS + "equivalentProperty" ? sub(s, o) && sub(o, s) : sub(s, o);
+      };
+      const sameAsEntailed = (a: Quad): boolean => {
+        if (a.subject.termType !== "NamedNode" || a.object.termType !== "NamedNode") return false;
+        sameAdj ??= [edgeMap([OWLNS + "sameAs"], true)];
+        return a.subject.value === a.object.value || reaches(sameAdj, a.subject.value, a.object.value);
+      };
+
       const classifyResults = new Map<Quad, boolean>();
       if (needsClassify) {
         await this._classifyInline(store, gen, igIri);
         for (const a of axioms) {
-          if (this._opForPredicate(a.predicate.value) === "classify") {
-            classifyResults.set(a, inferred(a));
+          if (opOf(a) === "classify") {
+            classifyResults.set(a, inferred(a) || classEntailed(a));
           }
         }
       }
@@ -1020,8 +1214,8 @@ export class RdfReasoner {
       if (needsMaterialize) {
         await this._materializeInline(store, gen, igIri);
         for (const a of axioms) {
-          if (this._opForPredicate(a.predicate.value) === "materialize") {
-            materializeResults.set(a, inferred(a));
+          if (opOf(a) === "materialize") {
+            materializeResults.set(a, inferred(a) || (a.predicate.value === OWL_SAME_AS && sameAsEntailed(a)));
           }
         }
       }
@@ -1030,8 +1224,29 @@ export class RdfReasoner {
       if (needsClassifyProps) {
         await this._classifyPropertiesInline(store, gen, igIri);
         for (const a of axioms) {
-          if (this._opForPredicate(a.predicate.value) === "classifyProperties") {
-            classifyPropsResults.set(a, inferred(a));
+          if (opOf(a) === "classifyProperties") {
+            classifyPropsResults.set(a, inferred(a) || propEntailed(a));
+          }
+        }
+      }
+
+      // The classifier's property hierarchy is incomplete (it misses subsumptions that follow from domains, functionality and
+      // hasValue axioms): a `false` for p ⊑ q / p ≡ q between declared object properties is re-checked with a refutation probe.
+      if (needsClassifyProps) {
+        const todo = axioms.filter(a => opOf(a) === "classifyProperties" && classifyPropsResults.get(a) === false
+          && a.subject.termType === "NamedNode" && a.object.termType === "NamedNode"
+          && this._assertionPropertyType(store, a.subject.value, false) === "object" && this._assertionPropertyType(store, a.object.value, false) === "object");
+        if (todo.length > 0) {
+          const skipG = new Set<string>([igIri, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, ...this._excludeGraphs]);
+          const base = dropAnnotationTriples(store.getQuads(null, null, null, null).filter(q => !skipG.has(q.graph.value)));
+          if ((await this._boundedInconsistencyCheck(base, Infinity)) === false) {
+            const sub = async (p: string, q: string) => (await this._boundedInconsistencyCheck([...base, ...buildPropertySubsumptionProbe(p, q, `ps_${++this._entailmentProbeCounter}`)], Infinity)) === true;
+            for (const a of todo) {
+              const s = a.subject.value, o = a.object.value;
+              const holds = a.predicate.value === OWLNS + "equivalentProperty" ? (await sub(s, o)) && (await sub(o, s)) : await sub(s, o);
+              if (holds) classifyPropsResults.set(a, true);
+            }
+            this._invalidateResultCaches();
           }
         }
       }
@@ -1045,11 +1260,50 @@ export class RdfReasoner {
         this._invalidateResultCaches();
       }
 
+      // Object/data property assertions of declared properties: one nominal probe per axiom (see entailmentProbe.ts)
+      const propAxioms = axioms.filter(a => opOf(a) === null && !this._isDisjointAxiom(a) && !this._rangeDomainAxiom(store, a) && this._propertyAssertionType(store, a));
+      const propResults = new Map<Quad, boolean | null>();
+      if (propAxioms.length > 0) {
+        const res = await this._propertyAssertionEntailmentsDirect(store, igIri, propAxioms);
+        propAxioms.forEach((a, i) => propResults.set(a, res[i]));
+        this._invalidateResultCaches();
+      }
+
+      // Declarations (always entailed) and property characteristics (probe with fresh individuals)
+      const specialResults = new Map<Quad, boolean | null>();
+      for (const a of axioms) {
+        const k = this._specialAxiomKind(a);
+        if (!k) continue;
+        if (k === "declaration") { specialResults.set(a, true); continue; }
+        const base = dropAnnotationTriples(store.getQuads(null, null, null, null).filter(q => !new Set<string>([igIri, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, ...this._excludeGraphs]).has(q.graph.value)));
+        const r = await this._boundedInconsistencyCheck([...base, ...buildCharacteristicProbe(k, a.subject.value, `char_${++this._entailmentProbeCounter}`)], Infinity);
+        specialResults.set(a, r === "aborted" ? null : r);
+        this._invalidateResultCaches();
+      }
+
+      // rdfs:range / rdfs:domain of declared properties (datatype and class hierarchy conclusions): probe with a fresh individual.
+      // On an inconsistent ontology every probe is vacuously inconsistent, so those answer null instead of true.
+      const rdAxioms = axioms.filter(a => !specialResults.has(a) && this._rangeDomainAxiom(store, a));
+      if (rdAxioms.length > 0) {
+        const skipG = new Set<string>([igIri, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, ...this._excludeGraphs]);
+        const base = dropAnnotationTriples(store.getQuads(null, null, null, null).filter(q => !skipG.has(q.graph.value)));
+        const consistent = (await this._boundedInconsistencyCheck(base, Infinity)) === false;
+        for (const a of rdAxioms) {
+          if (!consistent) { specialResults.set(a, null); continue; }
+          const rd = this._rangeDomainAxiom(store, a)!;
+          const r = await this._boundedInconsistencyCheck([...base, ...buildRangeDomainProbe(rd.axiom, rd.propertyType, a.subject.value, a.object.value, `rd_${++this._entailmentProbeCounter}`)], Infinity);
+          specialResults.set(a, r === "aborted" ? null : r);
+        }
+        this._invalidateResultCaches();
+      }
+
       // Assemble results
       if (!isBatch) {
         const axiom = axioms[0];
+        if (specialResults.has(axiom)) return specialResults.get(axiom) ?? null;
         if (this._isDisjointAxiom(axiom)) return disjointResults.get(axiom) ?? null;
-        const op = this._opForPredicate(axiom.predicate.value);
+        if (propResults.has(axiom)) return propResults.get(axiom) ?? null;
+        const op = opOf(axiom);
         if (op === "classify") return classifyResults.get(axiom) ?? false;
         if (op === "materialize") return materializeResults.get(axiom) ?? false;
         if (op === "classifyProperties") return classifyPropsResults.get(axiom) ?? false;
@@ -1057,8 +1311,10 @@ export class RdfReasoner {
       }
 
       return axioms.map(a => {
+        if (specialResults.has(a)) return specialResults.get(a) ?? null;
         if (this._isDisjointAxiom(a)) return disjointResults.get(a) ?? null;
-        const op = this._opForPredicate(a.predicate.value);
+        if (propResults.has(a)) return propResults.get(a) ?? null;
+        const op = opOf(a);
         if (op === null) {
           console.warn(`isEntailed: unsupported predicate <${a.predicate.value}>`);
           return null;
@@ -1070,6 +1326,81 @@ export class RdfReasoner {
     });
     this._queue = result.then(() => {}, () => {});
     return result as Promise<boolean | null> | Promise<(boolean | null)[]>;
+  }
+
+  // -------------------------------------------------------------------------
+  // isEntailedGraph()
+  // -------------------------------------------------------------------------
+
+  /**
+   * Is a small RDF graph entailed? The conclusion may hold blank nodes (existentials) and annotation triples, the shape of the
+   * W3C OWL 2 entailment tests. It is a conjunction: every part must be entailed.
+   *  - triples of named terms go through `isEntailed`;
+   *  - `s p _:x` where the blank node starts a tree is `s : exists p . D(x)`, decided by a refutation probe
+   *    (ontology plus `s : not (exists p . D)` inconsistent);
+   *  - annotation triples are not DL entailments: `true` when the triple (or its counterpart for an entity that is the same,
+   *    an equivalent class or an equivalent property) is in the store, otherwise `null` (absence says nothing).
+   * Returns `true`, `false` (a part is not entailed), or `null` (unsupported shape, an annotation not found, or an inconsistent ontology).
+   */
+  async isEntailedGraph(store: Store, conclusion: Quad[] | Store, opts?: InconsistencyGuardOptions): Promise<boolean | null> {
+    const quads = Array.isArray(conclusion) ? conclusion : conclusion.getQuads(null, null, null, null);
+    const plan = planConclusion(quads, (iri) => store.getQuads(iri, RDF_TYPE, "http://www.w3.org/2002/07/owl#AnnotationProperty", null).length > 0);
+    if (!plan.ok) return null;
+    const igIri = this._igRead(opts?.inferredGraph);
+    const skip = new Set<string>([igIri, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, ...this._excludeGraphs]);
+    const results: Array<boolean | null> = [];
+
+    // exists statements: one queued batch of probes
+    const existsStatements = plan.statements.filter((st): st is Extract<Statement, { kind: "exists" }> => st.kind === "exists");
+    const existsResults = new Map<Statement, boolean | null>();
+    if (existsStatements.length > 0) {
+      const run = this._queue.then(async () => {
+        const gen = await this._sync(store, igIri);
+        await this._guardConsistent(gen, opts);
+        const base = dropAnnotationTriples(store.getQuads(null, null, null, null).filter(q => !skip.has(q.graph.value)));
+        const consistent = (await this._boundedInconsistencyCheck(base, Infinity)) === false;
+        for (const st of existsStatements) {
+          if (!consistent) { existsResults.set(st, null); continue; }
+          const r = await this._boundedInconsistencyCheck([...base, ...existsProbeQuads(st, `eg_${++this._entailmentProbeCounter}`)], Infinity);
+          existsResults.set(st, r === "aborted" ? null : r);
+        }
+        this._invalidateResultCaches();
+      });
+      this._queue = run.then(() => {}, () => {});
+      await run;
+    }
+
+    for (const st of plan.statements) {
+      if (st.kind === "exists") results.push(existsResults.get(st) ?? null);
+      else if (st.kind === "quad") results.push((await this.isEntailed(store, st.quad, opts)) as boolean | null);
+      else results.push(this._annotationInStore(store, st.quad, igIri) ? true : null);
+    }
+    if (results.some((r) => r === false)) return false;
+    return results.every((r) => r === true) ? true : null;
+  }
+
+  /** `s ap o` is in the store, or the same triple for an entity that is the same / an equivalent class / an equivalent property. */
+  private _annotationInStore(store: Store, q: Quad, igIri: string): boolean {
+    const OWLNS = "http://www.w3.org/2002/07/owl#";
+    const ig = DataFactory.namedNode(igIri), dg = DataFactory.defaultGraph();
+    const same = new Set<string>([q.subject.value]);
+    const stack = [q.subject.value];
+    while (stack.length) {
+      const x = stack.pop()!;
+      for (const pred of [OWLNS + "sameAs", OWLNS + "equivalentClass", OWLNS + "equivalentProperty"]) {
+        for (const g of [ig, dg]) {
+          for (const t of store.getQuads(x, pred, null, g)) if (t.object.termType === "NamedNode" && !same.has(t.object.value)) { same.add(t.object.value); stack.push(t.object.value); }
+          for (const t of store.getQuads(null, pred, x, g)) if (t.subject.termType === "NamedNode" && !same.has(t.subject.value)) { same.add(t.subject.value); stack.push(t.subject.value); }
+        }
+      }
+    }
+    for (const s of same) {
+      for (const g of [ig, dg]) {
+        const found = store.getQuads(s, q.predicate, q.object.termType === "BlankNode" ? null : q.object, g);
+        if (found.length > 0) return true;
+      }
+    }
+    return false;
   }
 
   // -------------------------------------------------------------------------
@@ -1714,7 +2045,7 @@ export class RdfReasoner {
         subClassPairs: quads => this._subClassPairsDirect(quads, deadline),
       };
       try {
-        return await computeWeakenings({ base, culprit, oracle, deadline });
+        return await computeWeakenings({ base, culprit, oracle, deadline, alsoRemove: opts?.alsoRemove });
       } finally {
         // sub-calls replaced the WASM state: every generation-keyed cache is stale
         this._classifyCache = null;
@@ -1890,8 +2221,68 @@ export class RdfReasoner {
   }
 
   /** `X owl:disjointWith Y` between two named classes. */
+  /** `X rdf:type <declaration class>` (always entailed) or `P rdf:type <property characteristic>` (decided by a probe). */
+  private _specialAxiomKind(a: Quad): "declaration" | import("./entailmentProbe.js").CharacteristicKind | null {
+    if (a.predicate.value !== RDF_TYPE || a.object.termType !== "NamedNode" || a.subject.termType !== "NamedNode") return null;
+    if (DECLARATION_CLASSES.has(a.object.value)) return "declaration";
+    return CHARACTERISTIC_CLASSES[a.object.value] ?? null;
+  }
+
+  /** `P rdfs:range D` / `P rdfs:domain C` with P a declared object or data property and D, C named: decided by a probe. */
+  private _rangeDomainAxiom(store: Store, q: Quad): { axiom: "range" | "domain"; propertyType: AssertionPropertyType } | undefined {
+    const axiom = q.predicate.value === "http://www.w3.org/2000/01/rdf-schema#range" ? "range"
+      : q.predicate.value === "http://www.w3.org/2000/01/rdf-schema#domain" ? "domain" : undefined;
+    if (!axiom || q.subject.termType !== "NamedNode" || q.object.termType !== "NamedNode") return undefined;
+    const propertyType = this._assertionPropertyType(store, q.subject.value, true) ?? this._assertionPropertyType(store, q.subject.value, false);
+    return propertyType ? { axiom, propertyType } : undefined;
+  }
+
   private _isDisjointAxiom(q: Quad): boolean {
     return q.predicate.value === "http://www.w3.org/2002/07/owl#disjointWith" && q.subject.termType === "NamedNode" && q.object.termType === "NamedNode";
+  }
+
+  /**
+   * `a P o` is a property assertion with an exact probe when P is declared in the store: an object property (IRI object)
+   * or a data property (literal object). Reserved rdf/rdfs/owl predicates never are.
+   * ponytail: declaration lookup only; an undeclared predicate stays on the asserted-only path (it is not OWL 2 DL).
+   */
+  private _assertionPropertyType(store: Store, predicateIri: string, objectIsLiteral: boolean): AssertionPropertyType | undefined {
+    if (/^http:\/\/www\.w3\.org\/(1999\/02\/22-rdf-syntax-ns|2000\/01\/rdf-schema|2002\/07\/owl)#/.test(predicateIri)) return undefined;
+    const declared = (t: string) => store.getQuads(predicateIri, RDF_TYPE, t, null).length > 0;
+    if (objectIsLiteral) return declared(OWL_DATATYPE_PROPERTY) ? "data" : undefined;
+    const OWL = "http://www.w3.org/2002/07/owl#";
+    const objectTypes = [OWL_OBJECT_PROPERTY, ...["TransitiveProperty", "SymmetricProperty", "AsymmetricProperty", "ReflexiveProperty", "IrreflexiveProperty", "InverseFunctionalProperty"].map(x => OWL + x)];
+    return objectTypes.some(declared) ? "object" : undefined;
+  }
+
+  private _propertyAssertionType(store: Store, q: Quad): AssertionPropertyType | undefined {
+    if (q.subject.termType !== "NamedNode" || (q.object.termType !== "NamedNode" && q.object.termType !== "Literal")) return undefined;
+    return this._assertionPropertyType(store, q.predicate.value, q.object.termType === "Literal");
+  }
+
+  /**
+   * Slot-held: is each property assertion `a P o` entailed? `null` for all when the ontology is inconsistent (or a check
+   * is aborted). An asserted triple is entailed without a check; otherwise base plus `a : not (P value o)` must be
+   * inconsistent. The probe loads replace the WASM state: the caller invalidates caches.
+   */
+  private async _propertyAssertionEntailmentsDirect(store: Store, inferredGraph: string, axioms: Quad[]): Promise<Array<boolean | null>> {
+    const ignore = new Set<string>([inferredGraph, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, ...this._excludeGraphs]);
+    const base = dropAnnotationTriples(store.getQuads(null, null, null, null).filter(q => !ignore.has(q.graph.value)));
+    if ((await this._boundedInconsistencyCheck(base, Infinity)) !== false) return axioms.map(() => null);
+    const asserted = new Set(base.map(q => probeTripleKey(q.subject.value, q.predicate.value, `${q.object.termType}:${q.object.value}`)));
+    const out: Array<boolean | null> = [];
+    for (const a of axioms) {
+      if (asserted.has(probeTripleKey(a.subject.value, a.predicate.value, `${a.object.termType}:${a.object.value}`))) { out.push(true); continue; }
+      const lit = a.object.termType === "Literal" ? (a.object as import("@rdfjs/types").Literal) : null;
+      const probe = buildEntailmentProbe(a.subject.value, a.predicate.value, a.object.value, lit === null, `probe_${++this._entailmentProbeCounter}`, {
+        propertyType: this._propertyAssertionType(store, a),
+        objectDatatype: lit?.datatype.value,
+        objectLanguage: lit?.language || undefined,
+      });
+      const r = await this._boundedInconsistencyCheck([...base, ...probe.probeQuads], Infinity);
+      out.push(r === "aborted" ? null : r);
+    }
+    return out;
   }
 
   /**
@@ -2285,8 +2676,10 @@ export class RdfReasoner {
    *  - `justifications` — minimal justifications (each is a Quad[] subset)
    *  - `ontologyInconsistent` / `vacuous` — special-case flags
    *
-   *  Supports rdfs:subClassOf and rdf:type shapes. Returns unsupported for
-   *  other predicates (isEntailed reflects only asserted facts).
+   *  Supports rdfs:subClassOf and rdf:type shapes, and property assertions `a P o` of a declared object property
+   *  (IRI object) or data property (literal object; set `objectIsClassLike: false`), tested as inconsistency of
+   *  O plus `a : not (P value o)` (nominals). Returns unsupported for other predicates (isEntailed reflects only
+   *  asserted facts).
    */
   explainEntailment(
     store: Store,
@@ -2309,7 +2702,30 @@ export class RdfReasoner {
         return g !== ig && g !== HYPOTHETICAL_IRI && !this._excludeGraphs.has(g);
       });
 
-      const probeKind = classifyAxiom(predicateIri, objectIsClassLike);
+      const propertyType = this._assertionPropertyType(store, predicateIri, !objectIsClassLike);
+      const probeKind = classifyAxiom(predicateIri, objectIsClassLike, propertyType);
+      const isPropAssertion = probeKind === "objectPropertyAssertion" || probeKind === "dataPropertyAssertion";
+      // The literal of a data-property assertion: the caller's datatype/language, else the literal stored for the subject
+      // with this lexical form (this predicate first; the asked triple may be inferred under a super-property), else xsd:string.
+      let probeOpts: { propertyType?: AssertionPropertyType; objectDatatype?: string; objectLanguage?: string } = { propertyType };
+      if (probeKind === "dataPropertyAssertion") {
+        const lits = store.getQuads(subjectIri, null, null, null)
+          .filter(q => q.object.termType === "Literal" && q.object.value === objectIri)
+          .sort((x, y) => Number(y.predicate.value === predicateIri) - Number(x.predicate.value === predicateIri));
+        const lit = lits[0]?.object as import("@rdfjs/types").Literal | undefined;
+        probeOpts = {
+          propertyType,
+          objectDatatype: opts?.objectDatatype ?? (opts?.objectLanguage ? undefined : lit?.datatype.value),
+          objectLanguage: opts?.objectLanguage ?? (opts?.objectDatatype ? undefined : lit?.language || undefined),
+        };
+      }
+
+      if (isPropAssertion) {
+        // An asserted assertion is its own (singleton, so minimal) justification, as for the other shapes.
+        const asserted = allBase.find(q => q.subject.value === subjectIri && q.predicate.value === predicateIri
+          && q.object.value === objectIri && (q.object.termType === "Literal") === !objectIsClassLike);
+        if (asserted) return { isEntailed: true, justifications: [[asserted]] };
+      }
 
       if (probeKind === "unsupported") {
         const triple = allBase.find(
@@ -2772,7 +3188,7 @@ export class RdfReasoner {
       // inferred graph for the triple — if present, it's entailed but we
       // couldn't synthesize a justification. If absent, not entailed.
 
-      if (mode === "fast") {
+      if (mode === "fast" && !isPropAssertion) {
         const causalFallback = async () => {
         const inferredGraph = store.getQuads(
           subjectIri, predicateIri, objectIri,
@@ -2857,14 +3273,24 @@ export class RdfReasoner {
 
       const probeId = `probe_${++this._entailmentProbeCounter}`;
       const probe = buildEntailmentProbe(
-        subjectIri, predicateIri, objectIri, objectIsClassLike, probeId,
+        subjectIri, predicateIri, objectIri, objectIsClassLike, probeId, probeOpts,
       );
 
       // O ∪ ¬α — test entailment via the consistency oracle
       const withProbe = [...allBase, ...probe.probeQuads];
       const entailed = await this._checkInconsistencyDirect(withProbe);
+      if (isPropAssertion) this._invalidateResultCaches();
       if (!entailed) {
         return { isEntailed: false, justifications: [] as Quad[][] };
+      }
+
+      // Property assertions in "fast" mode: the verdict above is exact; one justification by a short bounded search
+      // (the same budget and size limit as the fast fallback of the other shapes), else justificationUnavailable.
+      const fastProp = mode === "fast" && isPropAssertion;
+      if (fastProp && (maxJustifications === 0 || allBase.length > FAST_FALLBACK_MAX_QUADS)) {
+        return maxJustifications === 0
+          ? { isEntailed: true, justifications: [] as Quad[][] }
+          : { isEntailed: true, justifications: [] as Quad[][], justificationUnavailable: true, reason: NO_CAUSAL_JUSTIFICATION };
       }
 
       // C2: vacuous-truth detection for subClassOf
@@ -2900,14 +3326,15 @@ export class RdfReasoner {
       // explainInconsistency (a triple-level search cannot work on real ontologies: it falls back to one reasoner
       // probe per triple). The negated entailment (probe) is part of the input, so every inconsistent unit set
       // contains it; it is stripped from each result. Declarations are fixed background of every check.
-      const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : Infinity;
+      const budgetMs = fastProp ? Math.min(timeoutMs > 0 ? timeoutMs : Infinity, FAST_FALLBACK_SEARCH_MS) : timeoutMs;
+      const deadline = budgetMs > 0 ? Date.now() + budgetMs : Infinity;
       const candidates = opts?.axiomFilter
         ? allBase.filter(q => isDeclaration(q) || opts.axiomFilter!(q))
         : allBase;
       const found = await this._minimalUnitSets(
         [...candidates, ...probe.probeQuads],
         (quads, d) => this._boundedInconsistencyCheck(quads, d),
-        maxJustifications,
+        fastProp ? 1 : maxJustifications,
         deadline,
         false,
       );
@@ -2915,6 +3342,9 @@ export class RdfReasoner {
         .map(j => j.filter(q => !probe.probeKeys.has(probeTripleKey(q.subject.value, q.predicate.value, q.object.value))))
         .filter(j => j.length > 0);
 
+      if (fastProp && justifications.length === 0) {
+        return { isEntailed: true, justifications, justificationUnavailable: true, reason: NO_CAUSAL_JUSTIFICATION };
+      }
       return { isEntailed: true, justifications };
     });
     this._queue = result.then(() => {}, () => {});

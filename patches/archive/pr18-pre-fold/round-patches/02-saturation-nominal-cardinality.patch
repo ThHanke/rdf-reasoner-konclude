@@ -1,0 +1,22 @@
+diff --git a/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp b/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp
+--- a/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp
++++ b/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp
+@@ -3930,8 +3930,16 @@
+ 							if (operantsContainedPositive || !operantsContained) {
+ 
+ 								minCardinality = qMax(minCardinality,succCardinality);
+-								if (operantsContained && operantsContainedPositive && !indiProcSatNode->getNominalIndividual() && succCardinality > allowedCardinality) {
+-									updateDirectAddingIndividualStatusFlags(indiProcSatNode,CIndividualSaturationProcessNodeStatusFlags::INDSATFLAGCLASHED,calcAlgContext);
++								if (operantsContained && operantsContainedPositive && succCardinality > allowedCardinality) {
++									if (!indiProcSatNode->getNominalIndividual()) {
++										updateDirectAddingIndividualStatusFlags(indiProcSatNode,CIndividualSaturationProcessNodeStatusFlags::INDSATFLAGCLASHED,calcAlgContext);
++									} else {
++										// No clash is derived on nominal nodes (a merged assertion node would give spurious ones), but the node must not stay
++										// "sufficient": the representative successor is left out of foundCardinality below, so an individual with
++										// min 2 r and max 1 r passed unnoticed. Insufficient makes the consistency check fall back to the full tableau.
++										updateDirectAddingIndividualStatusFlags(indiProcSatNode,CIndividualSaturationProcessNodeStatusFlags::INDSATFLAGINSUFFICIENT,calcAlgContext);
++										setInsufficientNodeOccured(calcAlgContext);
++									}
+ 								}
+ 
+ 								if (!qualificationRepresentitiveSuccessorIndi) {

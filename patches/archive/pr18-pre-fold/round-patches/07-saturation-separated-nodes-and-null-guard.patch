@@ -1,0 +1,63 @@
+--- a/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp
++++ b/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp
+@@ -3774,6 +3774,7 @@
+ 
+ 					cint64 foundCardinality = 0;
+ 					minCardinality = 0;
++					bool excludedSharedRepresentativeSuccessor = false;
+ 
+ 					bool trivialQualification = true;
+ 					CConceptRoleBranchingTrigger* chooseTriggerLinker = nullptr;
+@@ -3947,6 +3948,16 @@
+ 									CIndividualSaturationSuccessorLinkDataLinker* newMergingSuccDataLinker = createIndividualSaturationSuccessorLinkDataLinker(calcAlgContext);
+ 									newMergingSuccDataLinker->initSuccessorLinkDataLinker(succRoleData);
+ 									mergingSuccDataLinker = newMergingSuccDataLinker->append(mergingSuccDataLinker);
++								} else if (indiProcSatNode->isSeparated() && !succRoleData->mVALUENominalConnection) {
++									// The representative successor is left out of the count because it can be merged into another successor. It is also a
++									// successor for the super roles of its creation role, where it may have to be merged into a different one (e.g. s subrole of
++									// the functional roles f and f1 with f-filler p and f1-filler not-p). Separated nodes skip the functional/merging extensions
++									// that would derive this, so remember it.
++									for (CXNegLinker<CRole*>* creationRoleIt = succRoleData->mCreationRoleLinker; creationRoleIt; creationRoleIt = creationRoleIt->getNext()) {
++										if (!creationRoleIt->isNegated() && creationRoleIt->getData() != role) {
++											excludedSharedRepresentativeSuccessor = true;
++										}
++									}
+ 								}
+ 							}
+ 
+@@ -3954,6 +3965,13 @@
+ 						}
+ 					}
+ 
++					if (excludedSharedRepresentativeSuccessor && allowedCardinality >= 1 && foundCardinality >= allowedCardinality) {
++						// The counted successors already fill the restriction, so the excluded representative must be merged into one of them, and
++						// possibly into a different one for another restriction: let the tableau decide.
++						updateDirectAddingIndividualStatusFlags(indiProcSatNode,CIndividualSaturationProcessNodeStatusFlags::INDSATFLAGINSUFFICIENT,calcAlgContext);
++						setInsufficientNodeOccured(calcAlgContext);
++					}
++
+ 					return foundCardinality;
+ 				}
+ 
+@@ -7192,7 +7210,9 @@
+ 										}
+ 										CCriticalPredecessorRoleCardinalityHash* criticalPredRoleCardHash = existIndiNode->getCriticalPredecessorRoleCardinalityHash(false);
+ 										if (criticalPredRoleCardHash) {
+-											CCriticalPredecessorRoleCardinalityData* criticalPredRoleCardData = criticalPredRoleCardHash->getCriticalPredecessorRoleCardinalityData(role,false);
++											// The critical predecessor cardinalities of the shared successor node are recorded under the role of its max restriction
++											// (the inverse of the connecting role), i.e. under the negated super role of this link, not under the existential's own role.
++											CCriticalPredecessorRoleCardinalityData* criticalPredRoleCardData = criticalPredRoleCardHash->getCriticalPredecessorRoleCardinalityData(superRole,false);
+ 											if (criticalPredRoleCardData) {
+ 												updateDirectAddingIndividualStatusFlags(processIndi,CIndividualSaturationProcessNodeStatusFlags::INDSATFLAGINSUFFICIENT,mCalcAlgContext);
+ 												setInsufficientNodeOccured(mCalcAlgContext);
+--- a/Source/Reasoner/Kernel/Algorithm/CCalculationTableauCompletionTaskHandleAlgorithm.cpp
++++ b/Source/Reasoner/Kernel/Algorithm/CCalculationTableauCompletionTaskHandleAlgorithm.cpp
+@@ -25945,7 +25945,7 @@
+ 
+ 									CIndividualNodeRepresentativeMemoryBackendCacheSynchronisationData* mergedBackendSyncData = (CIndividualNodeRepresentativeMemoryBackendCacheSynchronisationData*)locBackendSyncDataIndiNode->getIndividualBackendCacheSynchronisationData(false);
+ 									CBackendRepresentativeMemoryCacheIndividualAssociationData* mergedAssocData = mergedBackendSyncData->getAssocitaionData();
+-									if (mergedAssocData->isIndirectlyConnectedNominalIndividual()) {
++									if (mergedAssocData && mergedAssocData->isIndirectlyConnectedNominalIndividual()) {
+ 										indirectlyConnectedNominalIndividual = true;
+ 									}
+ 

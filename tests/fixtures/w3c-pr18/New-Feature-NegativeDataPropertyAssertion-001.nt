@@ -1,0 +1,7 @@
+_:df_11_1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .
+<http://example.org/hasAge> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+_:df_11_2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#NegativePropertyAssertion> .
+_:df_11_2 <http://www.w3.org/2002/07/owl#sourceIndividual> <http://example.org/Meg> .
+_:df_11_2 <http://www.w3.org/2002/07/owl#assertionProperty> <http://example.org/hasAge> .
+_:df_11_2 <http://www.w3.org/2002/07/owl#targetValue> "5"^^<http://www.w3.org/2001/XMLSchema#integer> .
+<http://example.org/Meg> <http://example.org/hasAge> "5"^^<http://www.w3.org/2001/XMLSchema#integer> .

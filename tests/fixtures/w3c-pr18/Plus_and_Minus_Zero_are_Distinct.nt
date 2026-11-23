@@ -1,0 +1,6 @@
+_:df_3_1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .
+<http://example.org/numberOfChildren> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<http://example.org/numberOfChildren> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#FunctionalProperty> .
+<http://example.org/Meg> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#NamedIndividual> .
+<http://example.org/Meg> <http://example.org/numberOfChildren> "-0.0"^^<http://www.w3.org/2001/XMLSchema#float> .
+<http://example.org/Meg> <http://example.org/numberOfChildren> "0.0"^^<http://www.w3.org/2001/XMLSchema#float> .

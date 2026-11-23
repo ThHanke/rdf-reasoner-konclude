@@ -1,0 +1,36 @@
+diff --git a/Source/Reasoner/Kernel/Process/CDatatypeRealValueSpaceMap.cpp b/Source/Reasoner/Kernel/Process/CDatatypeRealValueSpaceMap.cpp
+--- a/Source/Reasoner/Kernel/Process/CDatatypeRealValueSpaceMap.cpp
++++ b/Source/Reasoner/Kernel/Process/CDatatypeRealValueSpaceMap.cpp
+@@ -999,7 +999,7 @@
+ 						}
+ 					}
+ 					if (mAbsoluteMaximumExclusionValue) {
+-						if (mAbsoluteMaximumExclusionValue->getValue()->isGreaterThan(value)) {
++						if (mAbsoluteMaximumExclusionValue->getValue()->isLessThan(value)) {
+ 							return false;
+ 						}
+ 						if (mAbsoluteMaximumExclusionValue->getValue()->isEqualTo(value)) {
+diff --git a/Source/Reasoner/Kernel/Process/CDatatypeCompareValueSpaceMap.cpp b/Source/Reasoner/Kernel/Process/CDatatypeCompareValueSpaceMap.cpp
+--- a/Source/Reasoner/Kernel/Process/CDatatypeCompareValueSpaceMap.cpp
++++ b/Source/Reasoner/Kernel/Process/CDatatypeCompareValueSpaceMap.cpp
+@@ -712,7 +712,7 @@
+ 						}
+ 					}
+ 					if (mAbsoluteMaximumExclusionValue) {
+-						if (mAbsoluteMaximumExclusionValue->getValue()->isGreaterThan(value)) {
++						if (mAbsoluteMaximumExclusionValue->getValue()->isLessThan(value)) {
+ 							return false;
+ 						}
+ 						if (mAbsoluteMaximumExclusionValue->getValue()->isEqualTo(value)) {
+diff --git a/Source/Reasoner/Kernel/Process/CDatatypeStringValueSpaceMap.cpp b/Source/Reasoner/Kernel/Process/CDatatypeStringValueSpaceMap.cpp
+--- a/Source/Reasoner/Kernel/Process/CDatatypeStringValueSpaceMap.cpp
++++ b/Source/Reasoner/Kernel/Process/CDatatypeStringValueSpaceMap.cpp
+@@ -909,7 +909,7 @@
+ 						}
+ 					}
+ 					if (mAbsoluteMaximumExclusionValue) {
+-						if (mAbsoluteMaximumExclusionValue->getValue()->isGreaterThan(value)) {
++						if (mAbsoluteMaximumExclusionValue->getValue()->isLessThan(value)) {
+ 							return false;
+ 						}
+ 						if (mAbsoluteMaximumExclusionValue->getValue()->isEqualTo(value)) {

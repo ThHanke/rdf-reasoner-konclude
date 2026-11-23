@@ -1220,6 +1220,26 @@ describe.skipIf(!wasmExists)("Data properties (R13–R15)", () => {
     expect(result, "data-properties.ttl with a single consistent ABox must be consistent").toBe(true);
   }, 30_000);
 
+  // ── materialize: data subPropertyOf entails the super-property value ──────
+
+  it("materialize — hasAge ⊑ hasNumber: Alice hasNumber 30 is written to the inferred graph", async () => {
+    const store = new Store(quads);
+    await reasoner.materialize(store);
+    const inferred = store.getQuads(null, null, null, DataFactory.namedNode(INFERRED_GRAPH_IRI));
+    const hit = inferred.filter(
+      (q) =>
+        q.subject.value === "http://example.org/Alice" &&
+        q.predicate.value === "http://example.org/hasNumber" &&
+        q.object.termType === "Literal" &&
+        q.object.value === "30",
+    );
+    expect(hit, "entailed data value through rdfs:subPropertyOf must be materialized").toHaveLength(1);
+    expect(
+      inferred.some((q) => q.predicate.value === "http://www.w3.org/2002/07/owl#topDataProperty"),
+      "owl:topDataProperty values must not be written",
+    ).toBe(false);
+  }, 30_000);
+
   // ── checkConsistency: rdfs:range with datatype — happy path ───────────────
 
   it("checkConsistency: rdfs:range xsd:integer with integer literal value → consistent (true)", async () => {

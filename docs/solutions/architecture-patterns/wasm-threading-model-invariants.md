@@ -793,3 +793,7 @@ Current baseline is commit `d712b0a`:
   - `vendor/konclude/Source/Reasoner/Consistiser/CTotallyPrecomputationThread.cpp`
   - `vendor/konclude/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.cpp`
   - `vendor/konclude/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.cpp`
+
+## See also
+
+- A pipeline that looks deadlocked in WebAssembly (every thread in `emscripten_futex_wait`) but passes natively can be a thread **stack overflow** (64 KiB default, silent heap corruption): [wasm-pthread-stack-overflow-realization-stall-2026-11-23.md](../runtime-errors/wasm-pthread-stack-overflow-realization-stall-2026-11-23.md). Test the stack size before suspecting these invariants.

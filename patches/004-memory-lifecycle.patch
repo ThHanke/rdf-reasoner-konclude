@@ -158,37 +158,6 @@ index 363f9c5..c72e273 100644
  				for (auto* item : mSatItemContainer) { delete item; }
  				for (auto it = mSatIDIndividualItemsHash.begin(); it != mSatIDIndividualItemsHash.end(); ++it) {
  					CSaturationIndividualDataItem* chainItem = it.value();
-diff --git a/Source/Reasoner/Generator/CConcreteOntologyRedlandTriplesDataExpressionMapper.cpp b/Source/Reasoner/Generator/CConcreteOntologyRedlandTriplesDataExpressionMapper.cpp
-index 46abf07..eeb20b2 100644
---- a/Source/Reasoner/Generator/CConcreteOntologyRedlandTriplesDataExpressionMapper.cpp
-+++ b/Source/Reasoner/Generator/CConcreteOntologyRedlandTriplesDataExpressionMapper.cpp
-@@ -53,8 +53,13 @@ namespace Konclude {
- 
- 					librdf_stream* stream = librdf_model_find_statements(model, partial_statement);
- 					if (!stream) {
-+						librdf_free_statement(partial_statement);
- 						return false;
- 					} else {
-+						// only an existence probe: a stream left open pins the model's storage, so the whole Redland
-+						// model would survive librdf_free_model (per-ontology leak of the triple hashes)
-+						librdf_free_stream(stream);
-+						librdf_free_statement(partial_statement);
- 						newTriplesMapped = true;
- 
- 						//unsigned char* modelString = librdf_model_to_string(redlandTriplesData->getRedlandIndexedModel(), nullptr, "turtle", nullptr, nullptr);
-@@ -66,9 +71,10 @@ namespace Konclude {
- 						initTripleDataProcessing(redlandTriplesData);
- 
- 						cint64 count = 0;
--						getOWLClassInstanceNodesStream()->forEach([&](librdf_node* node) {
-+						// the wrapper owns an open librdf stream that pins the model storage: release it
-+						releaseRedlandNodeStreamWrapper(getOWLClassInstanceNodesStream()->forEach([&](librdf_node* node) {
- 							count++;
--						});
-+						}));
- 
- 
- 						loadExistingEntities(updateConcreteOntology->getBuildData(), redlandTriplesData);
 diff --git a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.cpp b/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.cpp
 index e228eae..68ef7a0 100644
 --- a/Source/Reasoner/Kernel/Cache/CBackendRepresentativeMemoryCache.cpp
@@ -990,25 +959,6 @@ index 1022721..01597ef 100644
  					virtual bool callbackRealized(CConcreteOntology* ontology, CCallbackData* callback);
  
  					virtual CRealizationMessageObserver* tellRealizationMessage(CConcreteOntology *ontology, CRealizationMessageData* messageData, CMemoryPool* memoryPool);
-diff --git a/Source/Reasoner/Triples/CRedlandStoredTriplesData.cpp b/Source/Reasoner/Triples/CRedlandStoredTriplesData.cpp
-index e26070e..da617ff 100644
---- a/Source/Reasoner/Triples/CRedlandStoredTriplesData.cpp
-+++ b/Source/Reasoner/Triples/CRedlandStoredTriplesData.cpp
-@@ -39,6 +39,14 @@ namespace Konclude {
- 			}
- 
- 			CRedlandStoredTriplesData::~CRedlandStoredTriplesData() {
-+				// statement copies kept for indexing (the indexer frees them and clears the linker once it ran);
-+				// they belong to this data's world, so free them before the world
-+				while (mStatementLinker) {
-+					librdf_free_statement(mStatementLinker->getData());
-+					CXLinker<librdf_statement*>* tmpStatementLinker = mStatementLinker;
-+					mStatementLinker = mStatementLinker->getNext();
-+					delete tmpStatementLinker;
-+				}
- 				if (mIndexedModel && (!mLastSharingTripleData || mLastSharingTripleData->mIndexedModel != mIndexedModel)) {
- 					librdf_free_model(mIndexedModel);
- 				}
 diff --git a/Source/Scheduler/CSingleThreadTaskProcessorUnit.cpp b/Source/Scheduler/CSingleThreadTaskProcessorUnit.cpp
 index efc8883..844a16a 100644
 --- a/Source/Scheduler/CSingleThreadTaskProcessorUnit.cpp
@@ -1262,3 +1212,80 @@ index 8cd89db..db1aa88 100644
  					mStatDiffPoolSize -= tmpMemoryPool->getMemoryBlockSize();
  					mAllocLimitator->addReleasedMemorySize(tmpMemoryPool->getMemoryBlockSize()+sizeof(CMemoryPool));
  					++mStatReleasedPoolCount;
+diff --git a/Source/Reasoner/Triples/CRedlandStoredTriplesData.cpp b/Source/Reasoner/Triples/CRedlandStoredTriplesData.cpp
+--- a/Source/Reasoner/Triples/CRedlandStoredTriplesData.cpp
++++ b/Source/Reasoner/Triples/CRedlandStoredTriplesData.cpp
+@@ -21,6 +21,9 @@
+ 
+ #include "CRedlandStoredTriplesData.h"
+ 
++// WASM port: the Redland world is shared by all loads and never freed (defined in src/KoncludeReasoner.cpp).
++bool KonIsSharedRedlandWorld(librdf_world* world);
++
+ 
+ namespace Konclude {
+ 
+@@ -39,13 +42,21 @@
+ 			}
+ 
+ 			CRedlandStoredTriplesData::~CRedlandStoredTriplesData() {
++				// statement copies kept for indexing (the indexer frees them and clears the linker once it ran);
++				// they belong to this data's world, so free them before the world
++				while (mStatementLinker) {
++					librdf_free_statement(mStatementLinker->getData());
++					CXLinker<librdf_statement*>* tmpStatementLinker = mStatementLinker;
++					mStatementLinker = mStatementLinker->getNext();
++					delete tmpStatementLinker;
++				}
+ 				if (mIndexedModel && (!mLastSharingTripleData || mLastSharingTripleData->mIndexedModel != mIndexedModel)) {
+ 					librdf_free_model(mIndexedModel);
+ 				}
+ 				if (mIndexedStorage && (!mLastSharingTripleData || mLastSharingTripleData->mIndexedStorage != mIndexedStorage)) {
+ 					librdf_free_storage(mIndexedStorage);
+ 				}
+-				if (mWorld && (!mLastSharingTripleData || mLastSharingTripleData->mWorld != mWorld)) {
++				if (mWorld && (!mLastSharingTripleData || mLastSharingTripleData->mWorld != mWorld) && !KonIsSharedRedlandWorld(mWorld)) {
+ 					librdf_free_world(mWorld);
+ 				}
+ 			}
+diff --git a/Source/Reasoner/Generator/CConcreteOntologyRedlandTriplesDataExpressionMapper.cpp b/Source/Reasoner/Generator/CConcreteOntologyRedlandTriplesDataExpressionMapper.cpp
+--- a/Source/Reasoner/Generator/CConcreteOntologyRedlandTriplesDataExpressionMapper.cpp
++++ b/Source/Reasoner/Generator/CConcreteOntologyRedlandTriplesDataExpressionMapper.cpp
+@@ -53,8 +53,13 @@
+ 
+ 					librdf_stream* stream = librdf_model_find_statements(model, partial_statement);
+ 					if (!stream) {
++						librdf_free_statement(partial_statement);
+ 						return false;
+ 					} else {
++						// only an existence probe: a stream left open pins the model's storage, so the whole Redland
++						// model would survive librdf_free_model (per-ontology leak of the triple hashes)
++						librdf_free_stream(stream);
++						librdf_free_statement(partial_statement);
+ 						newTriplesMapped = true;
+ 
+ 						//unsigned char* modelString = librdf_model_to_string(redlandTriplesData->getRedlandIndexedModel(), nullptr, "turtle", nullptr, nullptr);
+@@ -66,9 +71,10 @@
+ 						initTripleDataProcessing(redlandTriplesData);
+ 
+ 						cint64 count = 0;
+-						getOWLClassInstanceNodesStream()->forEach([&](librdf_node* node) {
++						// the wrapper owns an open librdf stream that pins the model storage: release it
++						releaseRedlandNodeStreamWrapper(getOWLClassInstanceNodesStream()->forEach([&](librdf_node* node) {
+ 							count++;
+-						});
++						}));
+ 
+ 
+ 						loadExistingEntities(updateConcreteOntology->getBuildData(), redlandTriplesData);
+@@ -257,8 +263,9 @@
+ 									if (axiomExpression) {
+ 										axiomExpressionList.append(axiomExpression);
+ 									}
+-									delete processingDataList;
+ 								}
++									// WASM port: the list was deleted inside the loop over it (use after free, double free for two or more individuals)
++									delete processingDataList;
+ 							}
+ 
+ 						}

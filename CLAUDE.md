@@ -30,7 +30,7 @@ sudo chown -R $USER dist/
 
 **Patch workflow (patch 001):** `scripts/generate-patches.sh` → `make patches` → verify → commit.
 
-**Patch numbering:** the former per-fix patches 000-041 are aggregated into 000-004 (`patches/README.md` maps old to new numbers; originals in `patches/archive/per-fix/`). New vendor patches start at 006 (005 is `or-branching-stop-flag`).
+**Patch numbering:** the former per-fix patches 000-041 are aggregated into 000-004 (`patches/README.md` maps old to new numbers; originals in `patches/archive/per-fix/`). New vendor patches start at 007 (005 is `or-branching-stop-flag`, 006 `nominal-link-moving`).
 
 **Patch workflow (vendor C++ patches 005+):** Use `scripts/new-vendor-patch.py <NNN> <description> <mod_script.py>` — always multi-file capable. Write a mod script that defines `FILES = [...]` and `modify(path, content) -> str`. The framework fetches exact content via `git show HEAD:path`, calls `modify()`, diffs, and writes `patches/NNN-description.patch`. Indentation is handled automatically — content is the exact file text, so `str.replace()` matches without manual tab counting. After adding a new patch: `make reset-patches` before `make build-wasm`.
 
@@ -180,7 +180,7 @@ No Comlink — custom typed dispatch over raw `postMessage`. `KoncludeReasoner` 
 
 ### Emscripten flags
 
-`ENVIRONMENT=node,worker`, `MODULARIZE=1`, `EXPORT_ES6=1`, `EXPORT_NAME=createKoncludeModule`, `NO_EXIT_RUNTIME=1`, `--bind`, `USE_PTHREADS=1`, `PTHREAD_POOL_SIZE=32`, `PTHREAD_POOL_SIZE_STRICT=2`, `MALLOC=mimalloc`, `INITIAL_MEMORY=1073741824`, native wasm exceptions (`-fwasm-exceptions` for compile and link; wasm-opt runs at link time), `ALLOW_BLOCKING_ON_MAIN_THREAD=1`, `-flto`. `ASSERTIONS=0` and `DEMANGLE_SUPPORT=0` (both are now the explicit default — removed from the flag list). Pthreads are required — the KPSet classifier spins waiting for parallel test results; cooperative single-thread dispatch deadlocks (see `docs/solutions/architecture-patterns/wasm-pthread-concurrency-architecture-2026-05-08.md`). Profiling builds with C++ function names: `KONCLUDE_PROFILING_FUNCS=ON make build-wasm` (adds `--profiling-funcs`, skips wasm-opt). `PROXY_TO_PTHREAD` is not used — the current build works correctly without it.
+`ENVIRONMENT=node,worker`, `MODULARIZE=1`, `EXPORT_ES6=1`, `EXPORT_NAME=createKoncludeModule`, `NO_EXIT_RUNTIME=1`, `--bind`, `USE_PTHREADS=1`, `PTHREAD_POOL_SIZE=32`, `PTHREAD_POOL_SIZE_STRICT=2`, `STACK_SIZE=2097152`, `DEFAULT_PTHREAD_STACK_SIZE=2097152` (the 64 KiB default overflowed on the nominal backend-cache recursion and corrupted the heap silently, see `docs/solutions/runtime-errors/wasm-pthread-stack-overflow-realization-stall-2026-11-23.md`), `MALLOC=mimalloc`, `INITIAL_MEMORY=1073741824`, native wasm exceptions (`-fwasm-exceptions` for compile and link; wasm-opt runs at link time), `ALLOW_BLOCKING_ON_MAIN_THREAD=1`, `-flto`. `ASSERTIONS=0` and `DEMANGLE_SUPPORT=0` (both are now the explicit default — removed from the flag list). Pthreads are required — the KPSet classifier spins waiting for parallel test results; cooperative single-thread dispatch deadlocks (see `docs/solutions/architecture-patterns/wasm-pthread-concurrency-architecture-2026-05-08.md`). Profiling builds with C++ function names: `KONCLUDE_PROFILING_FUNCS=ON make build-wasm` (adds `--profiling-funcs`, skips wasm-opt). `PROXY_TO_PTHREAD` is not used — the current build works correctly without it.
 
 ## Key Constraints
 

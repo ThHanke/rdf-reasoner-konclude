@@ -1,0 +1,29 @@
+--- a/Source/Reasoner/Preprocess/CDatatypeNormalizerPreProcess.cpp
++++ b/Source/Reasoner/Preprocess/CDatatypeNormalizerPreProcess.cpp
+@@ -435,7 +435,7 @@
+ 					CConcept* integerRestrictionConcept = getIntegerRestrictionConcept();
+ 					addConceptOperand(datatypeConcept,integerRestrictionConcept,false);
+ 
+-					CConcept* minInclusiveIntRestrictionConcept = getNumberRestrictionConcept(CDFC_MIN_INCLUSIVE,"-2147483647");
++					CConcept* minInclusiveIntRestrictionConcept = getNumberRestrictionConcept(CDFC_MIN_INCLUSIVE,"-2147483648");
+ 					addConceptOperand(datatypeConcept,minInclusiveIntRestrictionConcept,false);
+ 					CConcept* maxInclusiveIntRestrictionConcept = getNumberRestrictionConcept(CDFC_MAX_INCLUSIVE,"2147483647");
+ 					addConceptOperand(datatypeConcept,maxInclusiveIntRestrictionConcept,false);
+@@ -453,7 +453,7 @@
+ 					CConcept* integerRestrictionConcept = getIntegerRestrictionConcept();
+ 					addConceptOperand(datatypeConcept,integerRestrictionConcept,false);
+ 
+-					CConcept* minInclusiveShortRestrictionConcept = getNumberRestrictionConcept(CDFC_MIN_INCLUSIVE,"-32767");
++					CConcept* minInclusiveShortRestrictionConcept = getNumberRestrictionConcept(CDFC_MIN_INCLUSIVE,"-32768");
+ 					addConceptOperand(datatypeConcept,minInclusiveShortRestrictionConcept,false);
+ 					CConcept* maxInclusiveShortRestrictionConcept = getNumberRestrictionConcept(CDFC_MAX_INCLUSIVE,"32767");
+ 					addConceptOperand(datatypeConcept,maxInclusiveShortRestrictionConcept,false);
+@@ -471,7 +471,7 @@
+ 					CConcept* integerRestrictionConcept = getIntegerRestrictionConcept();
+ 					addConceptOperand(datatypeConcept,integerRestrictionConcept,false);
+ 
+-					CConcept* minInclusiveByteRestrictionConcept = getNumberRestrictionConcept(CDFC_MIN_INCLUSIVE,"-127");
++					CConcept* minInclusiveByteRestrictionConcept = getNumberRestrictionConcept(CDFC_MIN_INCLUSIVE,"-128");
+ 					addConceptOperand(datatypeConcept,minInclusiveByteRestrictionConcept,false);
+ 					CConcept* maxInclusiveByteRestrictionConcept = getNumberRestrictionConcept(CDFC_MAX_INCLUSIVE,"127");
+ 					addConceptOperand(datatypeConcept,maxInclusiveByteRestrictionConcept,false);

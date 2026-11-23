@@ -181,6 +181,34 @@ describe("computeWeakenings", () => {
     expect(r).toMatchObject({ weakenings: [], reason: "removal-does-not-restore-consistency" });
   });
 
+  it("alsoRemove: weakens relative to the base with the other repair members removed", async () => {
+    // two justifications: the culprit's B/E clash on a, and BE below B and E with instance b; repair {culprit, b:BE}
+    const { culprit, base } = intersectionBase();
+    const other: Axiom = { principal: inst("b", "BE"), quads: [inst("b", "BE")] };
+    const full = [...base, sub("BE", "B"), sub("BE", "E"), other.principal];
+    const r = await computeWeakenings({ base: full, culprit, oracle: fakeOracle(), deadline: Infinity, alsoRemove: [other] });
+    expect(r.reason).toBeUndefined();
+    expect(names(r)).toEqual(["generalize:B>C", "generalize:E>F", "dropConjunct:B>-", "dropConjunct:E>-", "delete"]);
+    // the weakenings touch only the culprit; the caller removes alsoRemove itself
+    expect(r.weakenings.every(w => w.remove === culprit.quads && !w.add.some(q => q.subject.value === iri("b")))).toBe(true);
+  });
+
+  it("alsoRemove that does not complete a repair still reports removal-does-not-restore-consistency", async () => {
+    const { culprit, base } = intersectionBase();
+    const unrelated: Axiom = { principal: sub("B", "C"), quads: [sub("B", "C")] };
+    const full = [...base, sub("BE", "B"), sub("BE", "E"), inst("b", "BE")];
+    const r = await computeWeakenings({ base: full, culprit, oracle: fakeOracle(), deadline: Infinity, alsoRemove: [unrelated] });
+    expect(r).toMatchObject({ weakenings: [], reason: "removal-does-not-restore-consistency" });
+  });
+
+  it("an empty alsoRemove behaves exactly as no option", async () => {
+    const { culprit, base } = intersectionBase();
+    const r = await computeWeakenings({ base, culprit, oracle: fakeOracle(), deadline: Infinity, alsoRemove: [] });
+    const plain = await run(base, culprit);
+    expect(names(r)).toEqual(names(plain));
+    expect({ reason: r.reason, incomplete: r.incomplete }).toEqual({ reason: plain.reason, incomplete: plain.incomplete });
+  });
+
   it("an unsupported culprit shape returns an empty list", async () => {
     const eq: Axiom = { principal: quad(c("A"), n(`${OWL}equivalentClass`), c("B")), quads: [quad(c("A"), n(`${OWL}equivalentClass`), c("B"))] };
     const r = await run([eq.principal], eq);

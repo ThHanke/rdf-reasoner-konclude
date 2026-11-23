@@ -1,0 +1,18 @@
+diff --git a/Source/Reasoner/Generator/CConcreteOntologyUpdateBuilder.cpp b/Source/Reasoner/Generator/CConcreteOntologyUpdateBuilder.cpp
+--- a/Source/Reasoner/Generator/CConcreteOntologyUpdateBuilder.cpp	2026-11-21 01:25:12.433355764 +0000
++++ b/Source/Reasoner/Generator/CConcreteOntologyUpdateBuilder.cpp	2026-11-21 01:25:12.436091231 +0000
+@@ -2183,6 +2183,14 @@
+ 					}
+ 					mDataRangeTermConceptHash->insert(dataRangeExp,concept);
+ 					mConceptDataRangeTermHash->insert(concept,dataRangeExp);
++					// WASM port: a datatype used as a data range (restriction filler, range, complement operand) is a datatype concept
++					// from the moment it is created. The later build step only runs for data range expressions that were queued in the
++					// data range list, which datatypes are not; the concept then stayed atomic (CCATOM) and clashes between data ranges
++					// of different value spaces (integer vs string) were not detected.
++					if (dataRangeExp->getType() == CBuildExpression::BETDATATYPE) {
++						concept->setOperatorCode(CCDATATYPE);
++						concept->setDatatype(getDatatypeForDatatypeExpression((CDatatypeExpression*)dataRangeExp));
++					}
+ 				}
+ 				return concept;
+ 			}

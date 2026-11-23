@@ -21,6 +21,11 @@ set(KONCLUDE_EMSCRIPTEN_LINK_FLAGS
     "-sPTHREAD_POOL_SIZE=32"
     "-sPTHREAD_POOL_SIZE_STRICT=2"
     "-sMALLOC=mimalloc"
+    # Thread stacks: the emsdk default is 64 KiB for the main thread AND every pthread. Konclude recurses deeply on nominal
+    # backend-cache expansion (needs >256 KiB natively); with ASSERTIONS=0 an overflow silently corrupts the heap and
+    # the pipeline stalls (normalized W3C SymmetricProperty-002 / TransitiveProperty-002). Native default is 8 MiB.
+    "-sSTACK_SIZE=2097152"
+    "-sDEFAULT_PTHREAD_STACK_SIZE=2097152"
     "-Wl,--error-limit=0"
     "-sALLOW_BLOCKING_ON_MAIN_THREAD=1"
     "-sWASM_BIGINT=1"

@@ -1,0 +1,5 @@
+_:df_7_1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .
+_:df_7_2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Restriction> .
+<http://example.org/i> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> _:df_7_2 .
+_:df_7_2 <http://www.w3.org/2002/07/owl#onProperty> <http://www.w3.org/2002/07/owl#bottomDataProperty> .
+_:df_7_2 <http://www.w3.org/2002/07/owl#someValuesFrom> <http://www.w3.org/2000/01/rdf-schema#Literal> .

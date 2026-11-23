@@ -4,7 +4,7 @@
 //        import { benchAll } from './wasm-runner.mjs'
 
 import { readFileSync, existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 import { summarize } from './stats.mjs';
 import { parseNTriples, encodeQuadsForWasm, decodeWasmTripleBuffer, countByCategory } from './wasm-binary.mjs';
@@ -92,7 +92,7 @@ export async function benchAll(cases = WASM_CASES, opts = { warmup: 1, runs: 3 }
   // Import once; call createKoncludeModule() per run so each starts with a fresh
   // WASM heap — necessary for large ontologies that exhaust the 1 GB WASM memory
   // limit after the first classification, preventing a second run on the same heap.
-  const { default: createKoncludeModule } = await import(MODULE_PATH);
+  const { default: createKoncludeModule } = await import(pathToFileURL(MODULE_PATH).href);
 
   const results = [];
 

@@ -1,0 +1,8 @@
+@prefix : <http://ex.org/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+# expect: inconsistent
+# Negated underived datatype (xsd:string) still closes the value space: a string is outside its complement.
+:p a owl:DatatypeProperty ; rdfs:range [ a rdfs:Datatype ; owl:datatypeComplementOf xsd:string ] .
+:a a owl:NamedIndividual ; :p "text"^^xsd:string .

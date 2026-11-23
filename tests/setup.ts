@@ -1,5 +1,6 @@
 import { Worker as NodeWorker } from 'node:worker_threads';
 import { appendFileSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 const LIVE_LOG = '/tmp/wasm-live.log';
 // Truncate at start so old runs don't confuse tail -f
@@ -17,7 +18,7 @@ if (typeof globalThis.Worker === 'undefined') {
     private _map = new Map<Function, Map<string, Function>>();
 
     constructor(_url: URL | string, _opts?: unknown) {
-      const path = new URL('../dist/worker-node.mjs', import.meta.url).pathname;
+      const path = fileURLToPath(new URL('../dist/worker-node.mjs', import.meta.url));
       this._w = new NodeWorker(path);
       this._w.on('message', (data: any) => {
         if (data && data.type === 'log' && data.msg) {

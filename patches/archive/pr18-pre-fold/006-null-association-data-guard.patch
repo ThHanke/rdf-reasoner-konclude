@@ -1,0 +1,16 @@
+--- a/Source/Reasoner/Kernel/Algorithm/CBackendAssociationCacheHandler.cpp
++++ b/Source/Reasoner/Kernel/Algorithm/CBackendAssociationCacheHandler.cpp
+@@ -120,6 +120,13 @@
+ 					if (!indiLoadedAssoData) {
+ 						indiLoadedAssoData = getIndividualAssociationLoadingData(indiId, calcAlgContext);
+ 					}
++					// WASM port: getIndividualAssociationLoadingData returns nullptr when the backend cache holds no association data for the
++					// individual. The caller (visitNominalIndirectlyConnectedIndividualIds) and the cache reader already treat a null result
++					// as "no indirect connections"; dereferencing it crashed natively (SIGSEGV with this=0 on the ROBOT-normalized W3C
++					// premise SymmetricProperty-002, individual id 7).
++					if (!indiLoadedAssoData) {
++						return nullptr;
++					}
+ 					if (!indiLoadedAssoData->getLoadedNominalIndirectConnectionData()) {
+ 						indiLoadedAssoData->setLoadedNominalIndirectConnectionData(mAssBackCacheReader->getNominalIndirectConnectionData(indiId));
+ 						indiLoadedAssoData->setIndirectlyConnectedIndividualsIntegration(true);

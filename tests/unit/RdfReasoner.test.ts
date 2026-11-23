@@ -154,6 +154,8 @@ function autoRespond(inferredQuads: Quad[] = []): void {
       simulateWorkerMessage({ id: req.id, result: fakeSync(req) });
     } else if (req.method === "classification") {
       simulateWorkerMessage({ id: req.id, result: true });
+    } else if (req.method === "getUnsatisfiableClassBuffer") {
+      simulateWorkerMessage({ id: req.id, result: "" });
     } else if (req.method === "realization") {
       simulateWorkerMessage({ id: req.id, result: true });
     } else if (req.method === "getInferredTripleBuffer") {
@@ -314,7 +316,7 @@ describe("RdfReasoner", () => {
       const methods = mocks.workerPostMessage.mock.calls.map(
         (c) => (c[0] as { method: string }).method,
       );
-      expect(methods).toEqual(["sync", "realization", "getInferredTripleBuffer"]);
+      expect(methods).toEqual(["sync", "realization", "getInferredTripleBuffer", "getUnsatisfiableClassBuffer"]);
       const result = store.getQuads(null, null, null, namedNode(INFERRED_GRAPH_IRI));
       expect(result).toHaveLength(1);
       expect(result[0].subject.value).toBe("http://example.org/A");

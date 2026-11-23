@@ -109,6 +109,8 @@ function mockRealizationSequence(inferredQuads: Quad[]) {
     const req = msg as { id: number; method: string };
     if (req.method === "sync") {
       simulateWorkerMessage({ id: req.id, result: fakeSync(req) });
+    } else if (req.method === "getUnsatisfiableClassBuffer") {
+      simulateWorkerMessage({ id: req.id, result: "" });
     } else if (req.method === "realization") {
       simulateWorkerMessage({ id: req.id, result: true });
     } else if (req.method === "getInferredTripleBuffer") {
@@ -184,7 +186,7 @@ describe("RdfReasoner.materialize()", () => {
       const methods = mocks.workerPostMessage.mock.calls.map(
         (c) => (c[0] as { method: string }).method,
       );
-      expect(methods).toEqual(["sync", "realization", "getInferredTripleBuffer"]);
+      expect(methods).toEqual(["sync", "realization", "getInferredTripleBuffer", "getUnsatisfiableClassBuffer"]);
     });
 
     it("edge case: default options → rdfs:subClassOf filtered out", async () => {
@@ -384,7 +386,7 @@ describe("RdfReasoner.materialize()", () => {
       const methods = mocks.workerPostMessage.mock.calls.map(
         (c) => (c[0] as { method: string }).method,
       );
-      expect(methods).toEqual(["sync", "realization", "getInferredTripleBuffer"]);
+      expect(methods).toEqual(["sync", "realization", "getInferredTripleBuffer", "getUnsatisfiableClassBuffer"]);
       expect(methods).not.toContain("classification");
     });
 
@@ -425,6 +427,8 @@ describe("RdfReasoner.materialize()", () => {
         const req = msg as { id: number; method: string };
         if (req.method === "sync") {
           simulateWorkerMessage({ id: req.id, result: fakeSync(req) });
+        } else if (req.method === "getUnsatisfiableClassBuffer") {
+          simulateWorkerMessage({ id: req.id, result: "" });
         } else if (req.method === "realization") {
           simulateWorkerMessage({ id: req.id, result: true });
         } else if (req.method === "getInferredTripleBuffer") {

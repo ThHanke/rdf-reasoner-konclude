@@ -122,6 +122,20 @@ using namespace Konclude::Reasoner::Consistence;
 using namespace Konclude::Reasoner::Generator;
 using namespace Konclude::Reasoner::Classifier;
 using namespace Konclude::Reasoner::Kernel::Manager;
+
+// One Redland/Raptor world for the whole process, created on first use and never freed. A world per load
+// (created for each ontology and freed with its triples data) made Raptor's re-initialisation fail after some
+// ontologies ("raptor_new_term_from_uri called with invalid Raptor V2 world object", then abort), which showed as a
+// trap in a long sequence of reloads. CRedlandStoredTriplesData's destructor skips freeing this world (patch 008).
+static librdf_world* konSharedRedlandWorld() {
+    static librdf_world* sWorld = []() {
+        librdf_world* w = librdf_new_world();
+        librdf_world_open(w);
+        return w;
+    }();
+    return sWorld;
+}
+bool KonIsSharedRedlandWorld(librdf_world* w) { return w == konSharedRedlandWorld(); }
 using namespace Konclude::Reasoner::Realization;
 using namespace Konclude::Reasoner::Realizer;
 using namespace Konclude::Config;
@@ -1076,8 +1090,7 @@ void KoncludeReasoner::buildOntology(const void* triplePtr, int tripleCount, con
     CRedlandStoredTriplesData* tripleData = new CRedlandStoredTriplesData();
     tripleData->initTriplesData(CTRIPLES_DATA_UPDATE_TYPE::TRIPLES_DATA_ADDITION, nullptr);
 
-    librdf_world* world = librdf_new_world();
-    librdf_world_open(world);
+    librdf_world* world = konSharedRedlandWorld();
     tripleData->setRedlandWorldData(world);
 
     librdf_storage* indexedStorage = librdf_new_storage(world, "hashes", NULL,
@@ -3197,9 +3210,21 @@ int KoncludeReasoner::buildInferredTripleBuffer(bool withExplanations) {
                     litStr += '\0';
                     if (dt) litStr += std::string(dt->getDatatypeIRI());
                     litStr += '\0'; // language = empty for datatype literals
-                    emitTriple(srcId,
-                               intern.intern(std::string(roleQ)),
-                               intern.intern(litStr, 2));
+                    uint32_t litId = intern.intern(litStr, 2);
+                    emitTriple(srcId, intern.intern(std::string(roleQ)), litId);
+                    // Entailed values through data subproperty / equivalence axioms: p(a,v), p ⊑ q ⊢ q(a,v).
+                    // The indirect super-role list is the transitive closure built in preprocessing
+                    // (CSubroleTransformationPreProcess) and contains the role itself; emitTriple dedups.
+                    // ponytail: only role-hierarchy values; values from hasValue restrictions on inferred types stay implicit.
+                    for (CSortedNegLinker<CRole*>* sl = role->getIndirectSuperRoleList(); sl; sl = sl->getNext()) {
+                        CRole* sr = sl->getData();
+                        if (!sr || sr == role || sl->isNegated() || !sr->isDataRole()) continue;
+                        QString srQ = CIRIName::getRecentIRIName(sr->getPropertyNameLinker());
+                        if (srQ.empty()) continue;
+                        std::string srIri(srQ);
+                        if (srIri == "http://www.w3.org/2002/07/owl#topDataProperty") continue;
+                        emitTriple(srcId, intern.intern(srIri), litId);
+                    }
                 }
             }
         }
@@ -3798,8 +3823,7 @@ bool KoncludeReasoner::loadNTriplesStr(const std::string& ntriples, bool forReal
     CRedlandStoredTriplesData* tripleData = new CRedlandStoredTriplesData();
     tripleData->initTriplesData(CTRIPLES_DATA_UPDATE_TYPE::TRIPLES_DATA_ADDITION, prevTripleData);
 
-    librdf_world* world = librdf_new_world();
-    librdf_world_open(world);
+    librdf_world* world = konSharedRedlandWorld();
     tripleData->setRedlandWorldData(world);
 
     librdf_storage* stor = librdf_new_storage(world, "hashes", NULL,

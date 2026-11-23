@@ -1,0 +1,17 @@
+diff --git a/Source/Reasoner/Kernel/Algorithm/CDatatypeIndividualProcessNodeHandler.cpp b/Source/Reasoner/Kernel/Algorithm/CDatatypeIndividualProcessNodeHandler.cpp
+--- a/Source/Reasoner/Kernel/Algorithm/CDatatypeIndividualProcessNodeHandler.cpp	2026-11-21 01:36:15.274819538 +0000
++++ b/Source/Reasoner/Kernel/Algorithm/CDatatypeIndividualProcessNodeHandler.cpp	2026-11-21 01:36:15.277280147 +0000
+@@ -221,7 +221,12 @@
+ 							if (!negated) {
+ 								potentiallyModified |= closeOtherValueSpaces(indiProcNode,valueSpaceType,depTrackPoint,calcAlgContext);
+ 							} else {
+-								potentiallyModified |= closeValueSpace(indiProcNode,valueSpaceType,depTrackPoint,calcAlgContext);
++								// WASM port: closing the whole value space is only the negation of a datatype that has no restrictions of its own (owl:real, xsd:string).
++								// A derived datatype (xsd:integer, xsd:positiveInteger, ...) carries its restrictions as operands; the datatype rule negates
++								// those right after this call, so closing the whole space here would also exclude values the datatype does not contain.
++								if (datatypeConcept->getOperandCount() == 0) {
++									potentiallyModified |= closeValueSpace(indiProcNode,valueSpaceType,depTrackPoint,calcAlgContext);
++								}
+ 							}
+ 						}
+ 					}

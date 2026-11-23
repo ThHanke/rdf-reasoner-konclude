@@ -1,0 +1,7 @@
+_:df_12_1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .
+<http://example.org/hasSon> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+_:df_12_2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#NegativePropertyAssertion> .
+_:df_12_2 <http://www.w3.org/2002/07/owl#sourceIndividual> <http://example.org/Peter> .
+_:df_12_2 <http://www.w3.org/2002/07/owl#assertionProperty> <http://example.org/hasSon> .
+_:df_12_2 <http://www.w3.org/2002/07/owl#targetIndividual> <http://example.org/Meg> .
+<http://example.org/Peter> <http://example.org/hasSon> <http://example.org/Meg> .

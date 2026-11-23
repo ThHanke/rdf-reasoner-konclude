@@ -137,6 +137,13 @@ export interface WeakenOptions {
   timeout?: number;
   /** Named graph IRI that holds inferred triples in the store (excluded from the ontology). Default `INFERRED_GRAPH_IRI`. */
   inferredGraph?: string;
+  /**
+   * The other axioms of a repair (hitting set) that will be removed together with the culprit, for a conflict with
+   * several justifications: every consistency/satisfiability check then runs on base - alsoRemove - culprit (+ the
+   * weaker axiom), so `removal-does-not-restore-consistency` is judged against that ontology. The returned weakenings
+   * remove and add only culprit triples; the caller removes `alsoRemove` itself. Default: none (the culprit alone).
+   */
+  alsoRemove?: Axiom[];
 }
 
 export interface Weakening {
@@ -221,6 +228,16 @@ export interface StoreReasoningOptions extends ReasoningOptions {
   failOnInconsistent?: boolean;
 
   /**
+   * `classify` / `classifyProperties`: also write the transitive closure of the hierarchy into the inferred graph
+   * (default `false`: only the reduced hierarchy, i.e. direct `subClassOf` / `subPropertyOf` edges and `equivalentClass`
+   * for equivalents). With `true` every entailed subsumption is a triple (`A subClassOf C` for `A ⊑ B ⊑ C`, mutual
+   * `subClassOf` and `equivalentClass` between equivalents), so SPARQL or SHACL over the store need no reasoning.
+   * Open-world: only subsumptions the classification entails are written; reflexive pairs are not. Costs about 6-9x
+   * the direct edges in triples (PMDco 1,612 -> 10,572 pairs) and a few milliseconds of computing.
+   */
+  closure?: boolean;
+
+  /**
    * When `true`, justifications are serialized as RDF-star triples into the
    * `urn:konclude:explanations` named graph. Query via `store.getQuads()`.
    */
@@ -239,6 +256,23 @@ export interface MaterializeOptions {
    * Defaults to `false` — only rdf:type entailments are returned.
    */
   includeClassHierarchy?: boolean;
+
+  /**
+   * Apply the DL-safe SWRL rules (`swrl:Imp`) found in the store: the rules are run over the named individuals of the
+   * realized ABox until no rule adds a statement, and the consequences are written to the inferred graph.
+   * Konclude itself ignores SWRL, so this is done on top of the kernel and costs extra kernel rounds when rules fire.
+   *
+   * Defaults to `true`. Pass `false` to skip rule processing; `RdfReasoner.lastSwrl` then still reports the rules that
+   * were found, with `applied: false`.
+   */
+  swrl?: boolean;
+
+  /**
+   * Also write the transitive closure of the class hierarchy into the inferred graph (default `false`: the reduced
+   * hierarchy the classifier reports, direct edges only). Only effective together with `includeClassHierarchy: true`.
+   * See `StoreReasoningOptions.closure`.
+   */
+  closure?: boolean;
 }
 
 /**
@@ -288,6 +322,9 @@ export interface ClassifyPropertiesStoreOptions {
 
   /** Reject with `InconsistentOntologyError` when the ontology is inconsistent (default false: an empty result, no signal). Costs one consistency check per changed content; for `materialize` one extra rebuild (the realization variant differs from the consistency one). */
   failOnInconsistent?: boolean;
+
+  /** Also write the transitive closure of the property hierarchy (`subPropertyOf`, `equivalentProperty`) into the inferred graph. Default `false`; see `StoreReasoningOptions.closure`. */
+  closure?: boolean;
 
   /**
    * When `true`, justifications are serialized as RDF-star triples into the
@@ -386,7 +423,17 @@ export interface ReasoningResult {
 /**
  * Constructor options for RdfReasoner.
  */
+import type { LiteralIssue } from "./literalValidation.js";
+export type { LiteralIssue } from "./literalValidation.js";
+
 export interface RdfReasonerOptions {
+  /**
+   * What to do with numeric or boolean literals outside their datatype's lexical or value space (`"5abc"^^xsd:integer`,
+   * `"1.5"^^xsd:integer`, `"300"^^xsd:byte`, integers beyond 64 bits ...). The kernel silently drops them, so they do not make
+   * the ontology inconsistent. `"report"` (default): list them in `RdfReasoner.lastLiteralIssues`, reasoning continues as before;
+   * `"error"`: reject the call with `InvalidLiteralError`; `"ignore"`: do not scan.
+   */
+  illTypedLiterals?: "report" | "error" | "ignore";
   /** Optional URL to the worker script. When absent, uses import.meta.url resolution. */
   workerUrl?: string | URL;
   /** Pre-constructed Worker instance. When provided, workerUrl is ignored and no
@@ -434,6 +481,17 @@ export class InconsistentOntologyError extends Error {
   constructor(message = "The ontology is inconsistent; results of this call would be empty or meaningless.") {
     super(message);
     this.name = "InconsistentOntologyError";
+  }
+}
+
+/** Thrown with `illTypedLiterals: "error"` when the ontology holds a numeric or boolean literal outside its datatype's lexical or value space. */
+export class InvalidLiteralError extends Error {
+  readonly issues: LiteralIssue[];
+  constructor(issues: LiteralIssue[], total: number) {
+    const first = issues[0]!;
+    super(`${total} ill-typed or out-of-range literal(s), e.g. "${first.lexical}"^^${first.datatype} on <${first.subject}>: ${first.detail}.`);
+    this.name = "InvalidLiteralError";
+    this.issues = issues;
   }
 }
 
@@ -519,6 +577,13 @@ export interface ExplainEntailmentOptions extends ExplainOptions {
    * Defaults to `true`.
    */
   objectIsClassLike?: boolean;
+  /**
+   * Literal of a data-property assertion (`objectIsClassLike: false`, predicate declared `owl:DatatypeProperty`): its
+   * datatype IRI or language tag. When neither is given, the literal stored for the subject with this lexical form is
+   * used, else xsd:string.
+   */
+  objectDatatype?: string;
+  objectLanguage?: string;
   /**
    * @deprecated Use `justificationMode: "fast"` instead. When both are set,
    * `justificationMode` takes precedence.

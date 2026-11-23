@@ -1,0 +1,15 @@
+diff --git a/Source/Reasoner/Kernel/Process/CDatatypeCompareValueSpaceMap.cpp b/Source/Reasoner/Kernel/Process/CDatatypeCompareValueSpaceMap.cpp
+index 1afa7b1..b48a0c0 100644
+--- a/Source/Reasoner/Kernel/Process/CDatatypeCompareValueSpaceMap.cpp
++++ b/Source/Reasoner/Kernel/Process/CDatatypeCompareValueSpaceMap.cpp
+@@ -1177,7 +1177,9 @@ namespace Konclude {
+ 								}
+ 							}
+ 						} else {
+-							if (!isRightDataIntervalExcluded(itValueData)) {
++							// last map point: values above it exist only if the interval to the right is NOT excluded
++							// (the test was inverted, so an exhausted space reported a value beyond the maximum)
++							if (isRightDataIntervalExcluded(itValueData)) {
+ 								return false;
+ 							} else {
+ 								getValueNext(nextValue,lastValue);

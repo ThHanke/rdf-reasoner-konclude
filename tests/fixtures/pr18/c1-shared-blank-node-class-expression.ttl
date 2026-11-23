@@ -1,0 +1,10 @@
+@prefix : <http://ex.org/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+# expect: consistent
+# Two named individuals that share ONE blank-node class expression (as WebOnt-Restriction-002: a and b share the restriction).
+# buildComplexABoxAxioms() used to free the shared list inside the loop (use-after-free); see README, question 4.
+:p a owl:ObjectProperty . :C a owl:Class .
+:a a owl:NamedIndividual , _:r . :b a owl:NamedIndividual , _:r .
+_:r a owl:Restriction ; owl:onProperty :p ; owl:someValuesFrom :C .

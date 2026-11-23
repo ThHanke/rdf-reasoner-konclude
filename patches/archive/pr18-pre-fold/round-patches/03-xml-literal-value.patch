@@ -1,0 +1,23 @@
+--- a/Source/Reasoner/Preprocess/CDataLiteralNormalizerPreProcess.cpp
++++ b/Source/Reasoner/Preprocess/CDataLiteralNormalizerPreProcess.cpp
+@@ -679,14 +679,12 @@
+ 			CDataLiteralValue* CDataLiteralNormalizerPreProcess::parseXMLValue(const QString& valueString, CPreProcessContext* context) {
+ 				CDataLiteralValue* dataLiteralValue = nullptr;
+ 				if (!dataLiteralValue) {
+-					QDomDocument domDocument;
+-					if (domDocument.setContent(valueString,true)) {
+-						QString xmlValueString = domDocument.toString();
+-						if (!xmlValueString.isEmpty()) {
+-							CDataLiteralXMLValue* dataLitXMLValue = CObjectAllocator<CDataLiteralXMLValue>::allocateAndConstruct(mMemMan);
+-							dataLitXMLValue->initValueFromXMLString(valueString.trimmed());
+-							dataLiteralValue = dataLitXMLValue;
+-						}
++					// WASM build: the QDomDocument shim (QtCompat.h) always fails, which dropped every rdf:XMLLiteral value.
++					// Keep the lexical form (no well-formedness check); two XML literals are equal iff their strings are equal.
++					{
++						CDataLiteralXMLValue* dataLitXMLValue = CObjectAllocator<CDataLiteralXMLValue>::allocateAndConstruct(mMemMan);
++						dataLitXMLValue->initValueFromXMLString(valueString.trimmed());
++						dataLiteralValue = dataLitXMLValue;
+ 					}
+ 				}
+ 				return dataLiteralValue;
