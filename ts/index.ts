@@ -160,6 +160,8 @@ export class RdfReasoner {
   // another inferred graph, rewrites it instead of trusting the cache.
   private _classifyCache: ResultCache | null = null;
   private _materializeCache: ResultCache | null = null;
+  /** The `swrl` setting of the call that filled `_materializeCache`: a call with the other setting must not hit it. */
+  private _materializeSwrl = true;
   private _classifyPropertiesCache: ResultCache | null = null;
   private _consistencyCache: { gen: number; result: boolean } | null = null;
   /** Result of the last explainInconsistency() for the store content of generation `key` (the kernel's content generation, so
@@ -688,7 +690,7 @@ export class RdfReasoner {
       await this._guardConsistent(gen, opts);
 
       // Cache hit: same store instance with same content as last materialize call
-      if (this._hit(this._materializeCache, gen, store, opts?.inferredGraph)) {
+      if (this._materializeSwrl === (opts?.swrl !== false) && this._hit(this._materializeCache, gen, store, opts?.inferredGraph)) {
         if (wantExplanations) {
           await this._ensureExplanationGraphFromBuffer(store, "getInferredTripleBuffer");
         }
@@ -733,7 +735,7 @@ export class RdfReasoner {
 
       // DL-safe SWRL rules: realize again over the store plus the rule consequences until no rule adds a statement.
       // ponytail: explanations (wantExplanations) stay those of the first realization.
-      const swrl = await this._swrlFixpoint(store, allQuads);
+      const swrl = await this._swrlFixpoint(store, allQuads, opts?.swrl !== false);
       if (swrl) allQuads = [...swrl.quads, ...swrl.derived];
 
       // Konclude's consistency step can miss a named individual that belongs to an unsatisfiable class (W3C OWL 2
@@ -766,6 +768,7 @@ export class RdfReasoner {
       }
 
       this._materializeCache = this._stamp(gen, store, opts?.inferredGraph);
+      this._materializeSwrl = opts?.swrl !== false;
       this._classifyCache = null;
       this._classifyPropertiesCache = null;
       this._lastPropertyExplBuffer = null;
@@ -797,22 +800,23 @@ export class RdfReasoner {
   }
 
   /** Rules, fixpoint rounds and derived statements of the last `materialize()` (see ts/swrl.ts). */
-  lastSwrl: { rules: number; unsupported: string[]; rounds: number; derived: number } = { rules: 0, unsupported: [], rounds: 0, derived: 0 };
+  lastSwrl: { rules: number; unsupported: string[]; rounds: number; derived: number; applied: boolean } = { rules: 0, unsupported: [], rounds: 0, derived: 0, applied: false };
 
   /**
    * DL-safe SWRL fixpoint over the realized ABox. Returns null when the store holds no applicable rule or no rule fires;
    * otherwise the realization output over store + rule consequences, and the consequences themselves.
    * The worker then holds the augmented content, so the next call on the store re-syncs (no cache hit after rules fired).
    */
-  private async _swrlFixpoint(store: Store, first: Quad[]): Promise<{ quads: Quad[]; derived: Quad[] } | null> {
-    this.lastSwrl = { rules: 0, unsupported: [], rounds: 0, derived: 0 };
+  private async _swrlFixpoint(store: Store, first: Quad[], apply = true): Promise<{ quads: Quad[]; derived: Quad[] } | null> {
+    this.lastSwrl = { rules: 0, unsupported: [], rounds: 0, derived: 0, applied: false };
     const imp = store.getQuads(null, DataFactory.namedNode(RDF_TYPE), DataFactory.namedNode(SWRL_IMP), null);
     if (imp.length === 0) return null;
     const skip = new Set([...this._inferredGraphs, ...this._excludeGraphs, INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI]);
     const base = store.getQuads(null, null, null, null).filter((q) => !skip.has(q.graph.value));
     const { rules, unsupported } = parseRules(base);
-    this.lastSwrl = { rules: rules.length, unsupported, rounds: 0, derived: 0 };
-    if (rules.length === 0) return null;
+    this.lastSwrl = { rules: rules.length, unsupported, rounds: 0, derived: 0, applied: false };
+    if (rules.length === 0 || !apply) return null;
+    this.lastSwrl.applied = true;
     // Rule chains (a head feeding another rule's body) need no kernel: close them in TypeScript over base + kernel output +
     // derived facts, and call the kernel only when the closure produced facts it has not seen. `rounds` counts these
     // passes (closure, then a kernel round if something new was derived); the last pass is the empty confirming one.

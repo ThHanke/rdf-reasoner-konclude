@@ -246,6 +246,16 @@ export interface MaterializeOptions {
    * Defaults to `false` — only rdf:type entailments are returned.
    */
   includeClassHierarchy?: boolean;
+
+  /**
+   * Apply the DL-safe SWRL rules (`swrl:Imp`) found in the store: the rules are run over the named individuals of the
+   * realized ABox until no rule adds a statement, and the consequences are written to the inferred graph.
+   * Konclude itself ignores SWRL, so this is done on top of the kernel and costs extra kernel rounds when rules fire.
+   *
+   * Defaults to `true`. Pass `false` to skip rule processing; `RdfReasoner.lastSwrl` then still reports the rules that
+   * were found, with `applied: false`.
+   */
+  swrl?: boolean;
 }
 
 /**

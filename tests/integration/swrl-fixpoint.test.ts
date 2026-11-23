@@ -136,6 +136,21 @@ describe.skipIf(!wasmExists)("DL-safe SWRL fixpoint in materialize()", () => {
   it("a store without rules adds no SWRL cost and reports zero rules", async () => {
     const store = new Store(parse(treeOntology(10)));
     await reasoner.materialize(store);
-    expect(reasoner.lastSwrl).toEqual({ rules: 0, unsupported: [], rounds: 0, derived: 0 });
+    expect(reasoner.lastSwrl).toEqual({ rules: 0, unsupported: [], rounds: 0, derived: 0, applied: false });
+  }, 60_000);
+
+  it("swrl: false skips the rules, reports them with applied: false, and a later default call still applies them", async () => {
+    const ttl = treeOntology(10) + VARS + R1 + R2;
+    const store = new Store(parse(ttl));
+    await reasoner.materialize(store, { swrl: false });
+    expect(reasoner.lastSwrl).toMatchObject({ rules: 2, rounds: 0, derived: 0, applied: false });
+    const without = store.getQuads(null, "http://ex.org/hasQuality", null, null).length;
+    expect(without).toBe(0); // nothing derives hasQuality without the rules
+
+    // same store, same content, other setting: must not be served from the previous call's cache
+    await reasoner.materialize(store);
+    expect(reasoner.lastSwrl.applied).toBe(true);
+    expect(reasoner.lastSwrl.derived).toBeGreaterThan(0);
+    expect(store.getQuads(null, "http://ex.org/hasQuality", null, null).length).toBeGreaterThan(0);
   }, 60_000);
 });
