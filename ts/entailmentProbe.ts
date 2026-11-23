@@ -227,3 +227,46 @@ export function buildCharacteristicProbe(kind: CharacteristicKind, propertyIri: 
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// rdfs:range and rdfs:domain (datatype and class hierarchy conclusions such as `p range byte` ⊨ `p range short`)
+// ---------------------------------------------------------------------------
+
+const RDFS_DATATYPE = "http://www.w3.org/2000/01/rdf-schema#Datatype";
+const RDFS_LITERAL = "http://www.w3.org/2000/01/rdf-schema#Literal";
+const OWL_THING = "http://www.w3.org/2002/07/owl#Thing";
+const OWL_SOME_VALUES_FROM = "http://www.w3.org/2002/07/owl#someValuesFrom";
+const OWL_DATATYPE_COMPLEMENT_OF = "http://www.w3.org/2002/07/owl#datatypeComplementOf";
+
+/**
+ * `P rdfs:range D` is entailed iff O plus `x : exists P. not D` (x fresh) is inconsistent; for a data property the
+ * complement is a datatype complement of the named datatype D, for an object property a class complement.
+ * `P rdfs:domain C` is entailed iff O plus `x : exists P. Top` and `x : not C` is inconsistent.
+ */
+export function buildRangeDomainProbe(
+  axiom: "range" | "domain", propertyType: AssertionPropertyType, propertyIri: string, classOrDatatypeIri: string, probeId: string,
+): Quad[] {
+  const { namedNode, blankNode, quad, defaultGraph } = DataFactory;
+  const g = defaultGraph();
+  const out: Quad[] = [];
+  const add = (s: any, p: string, o: any) => out.push(quad(s, namedNode(p), o, g) as Quad);
+  const x = namedNode(`urn:vg:probe:x_${probeId}`);
+  const D = namedNode(classOrDatatypeIri);
+  const exists = (n: string, filler: any) => {
+    const r = blankNode(`vg_ex_${n}_${probeId}`);
+    add(r, RDF_TYPE, namedNode(OWL_RESTRICTION)); add(r, OWL_ON_PROPERTY, namedNode(propertyIri)); add(r, OWL_SOME_VALUES_FROM, filler);
+    return r;
+  };
+  if (axiom === "range") {
+    const neg = blankNode(`vg_negr_${probeId}`);
+    if (propertyType === "data") { add(neg, RDF_TYPE, namedNode(RDFS_DATATYPE)); add(neg, OWL_DATATYPE_COMPLEMENT_OF, D); }
+    else { add(neg, RDF_TYPE, namedNode(OWL_CLASS)); add(neg, OWL_COMPLEMENT_OF, D); }
+    add(x, RDF_TYPE, exists("r", neg));
+  } else {
+    const neg = blankNode(`vg_negd_${probeId}`);
+    add(neg, RDF_TYPE, namedNode(OWL_CLASS)); add(neg, OWL_COMPLEMENT_OF, D);
+    add(x, RDF_TYPE, neg);
+    add(x, RDF_TYPE, exists("d", namedNode(propertyType === "data" ? RDFS_LITERAL : OWL_THING)));
+  }
+  return out;
+}

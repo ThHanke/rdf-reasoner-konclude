@@ -118,10 +118,10 @@ describe.skipIf(!wasmExists)("isEntailed() integration (R1 + R2)", () => {
     360000,
   );
 
-  // ── Unsupported predicate → null ──────────────────────────────────────────
+  // ── owl:sameAs is decided (symmetric, transitive, reflexive over the asserted and inferred sameAs) ──
 
   it(
-    "unsupported predicate owl:sameAs → isEntailed returns null",
+    "owl:sameAs: an individual is the same as itself",
     async () => {
       const axiom = DataFactory.quad(
         DataFactory.namedNode(HUMPHREY),
@@ -129,16 +129,15 @@ describe.skipIf(!wasmExists)("isEntailed() integration (R1 + R2)", () => {
         DataFactory.namedNode(HUMPHREY),
       );
       const result = await reasoner.isEntailed(store, axiom);
-      expect(result).toBeNull();
+      expect(result).toBe(true);
     },
     360000,
   );
 
   it(
-    "batch isEntailed with unsupported predicate owl:sameAs returns null entry",
+    "batch isEntailed with owl:sameAs: not entailed for an unrelated individual, mixed with another axiom",
     async () => {
       // Exercises the batch code path (ts/index.ts queue body, not the fast-path).
-      // The unsupported owl:sameAs predicate must yield null even inside a batch call.
       const sameAs = DataFactory.namedNode(OWL_SAME_AS);
       const unsupportedAxiom = DataFactory.quad(
         DataFactory.namedNode(HUMPHREY),
@@ -152,7 +151,7 @@ describe.skipIf(!wasmExists)("isEntailed() integration (R1 + R2)", () => {
       );
       const results = await reasoner.isEntailed(store, [unsupportedAxiom, entailedAxiom]);
       expect(results).toHaveLength(2);
-      expect(results[0]).toBeNull();
+      expect(results[0]).toBe(false); // open world: not entailed (this does not say the individuals are different)
       expect(results[1]).toBe(true);
     },
     360000,

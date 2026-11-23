@@ -53,10 +53,10 @@ ex:C rdfs:subClassOf ex:A . ex:D rdfs:subClassOf ex:B .
         disjoint("C", "D"),
         quad(n(`${EX}C`), n("http://www.w3.org/2000/01/rdf-schema#subClassOf"), n(`${EX}A`)), // another predicate in the same batch
         disjoint("E", "A"),
-        quad(n(`${EX}C`), n(`${OWL}sameAs`), n(`${EX}D`)), // unsupported
+        quad(n(`${EX}C`), n(`${OWL}sameAs`), n(`${EX}D`)), // sameAs is decided: not entailed (false)
         quad(blankNode("x"), n(`${OWL}disjointWith`), n(`${EX}A`)), // not a named class
       ]);
-      expect(batch).toEqual([true, true, false, null, null]);
+      expect(batch).toEqual([true, true, false, false, null]);
     },
     360000,
   );

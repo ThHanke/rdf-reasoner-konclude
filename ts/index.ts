@@ -37,7 +37,7 @@ import { dropAnnotationTriples } from "./annotations.js";
 import { computeRepairs, REPAIR_DEFAULT_TIMEOUT_MS, type RepairOracle } from "./repair.js";
 import { computeAssessment, probeQuads, PROBE_NS, type AssessOracle } from "./assessEdit.js";
 import { computeWeakenings } from "./weaken.js";
-import { buildEntailmentProbe, classifyAxiom, tripleKey as probeTripleKey, type AssertionPropertyType, CHARACTERISTIC_CLASSES, DECLARATION_CLASSES, buildCharacteristicProbe } from "./entailmentProbe.js";
+import { buildEntailmentProbe, classifyAxiom, tripleKey as probeTripleKey, type AssertionPropertyType, CHARACTERISTIC_CLASSES, DECLARATION_CLASSES, buildCharacteristicProbe, buildRangeDomainProbe } from "./entailmentProbe.js";
 import { parseRules, applyRules, Facts } from "./swrl.js";
 
 const SWRL_IMP = "http://www.w3.org/2003/11/swrl#Imp";
@@ -927,7 +927,10 @@ export class RdfReasoner {
       case "http://www.w3.org/1999/02/22-rdf-syntax-ns#type":
         return "materialize";
       case "http://www.w3.org/2000/01/rdf-schema#subPropertyOf":
+      case "http://www.w3.org/2002/07/owl#equivalentProperty":
         return "classifyProperties";
+      case "http://www.w3.org/2002/07/owl#sameAs":
+        return "materialize";
       default:
         return null;
     }
@@ -1066,7 +1069,7 @@ export class RdfReasoner {
     // Fast-path unsupported check for single axiom (no queue entry needed)
     if (!isBatch) {
       const op = this._opForPredicate((axiomOrAxioms as Quad).predicate.value);
-      if (op === null && !this._specialAxiomKind(axiomOrAxioms as Quad) && !this._isDisjointAxiom(axiomOrAxioms as Quad) && !this._propertyAssertionType(store, axiomOrAxioms as Quad)) {
+      if (op === null && !this._specialAxiomKind(axiomOrAxioms as Quad) && !this._isDisjointAxiom(axiomOrAxioms as Quad) && !this._propertyAssertionType(store, axiomOrAxioms as Quad) && !this._rangeDomainAxiom(store, axiomOrAxioms as Quad)) {
         console.warn(`isEntailed: unsupported predicate <${(axiomOrAxioms as Quad).predicate.value}>`);
         return Promise.resolve(null);
       }
@@ -1090,12 +1093,57 @@ export class RdfReasoner {
         store.has(DataFactory.quad(a.subject, a.predicate, a.object, ig)) ||
         store.has(DataFactory.quad(a.subject, a.predicate, a.object, dg));
 
+      // The classifiers write the direct hierarchy (and equivalents as equivalentClass / mutual subPropertyOf), not its
+      // transitive closure: entailment of A ⊑ B, A ≡ B, p ⊑ q, p ≡ q and a sameAs b is reachability over those edges
+      // (base and inferred graph), plus the reflexive and top/bottom cases.
+      const OWLNS = "http://www.w3.org/2002/07/owl#", RDFSNS = "http://www.w3.org/2000/01/rdf-schema#";
+      const edgeMap = (preds: string[], symmetric: boolean) => {
+        const m = new Map<string, Set<string>>();
+        const link = (x: string, y: string) => { (m.get(x) ?? m.set(x, new Set()).get(x)!).add(y); };
+        for (const pred of preds) for (const g of [ig, dg]) for (const q of store.getQuads(null, pred, null, g)) {
+          if (q.subject.termType !== "NamedNode" || q.object.termType !== "NamedNode") continue;
+          link(q.subject.value, q.object.value);
+          if (symmetric) link(q.object.value, q.subject.value);
+        }
+        return m;
+      };
+      const reaches = (adj: Array<Map<string, Set<string>>>, from: string, to: string) => {
+        const seen = new Set<string>([from]); const stack = [from];
+        while (stack.length) {
+          const x = stack.pop()!;
+          if (x === to) return true;
+          for (const m of adj) for (const y of m.get(x) ?? []) if (!seen.has(y)) { seen.add(y); stack.push(y); }
+        }
+        return false;
+      };
+      let classAdj: Array<Map<string, Set<string>>> | undefined, propAdj: Array<Map<string, Set<string>>> | undefined, sameAdj: Array<Map<string, Set<string>>> | undefined;
+      const classEntailed = (a: Quad): boolean => {
+        if (a.subject.termType !== "NamedNode" || a.object.termType !== "NamedNode") return false;
+        classAdj ??= [edgeMap([RDFSNS + "subClassOf"], false), edgeMap([OWLNS + "equivalentClass"], true)];
+        const sub = (x: string, y: string) => x === y || y === OWLNS + "Thing" || reaches(classAdj!, x, y) || reaches(classAdj!, x, OWLNS + "Nothing");
+        const s = a.subject.value, o = a.object.value;
+        return a.predicate.value === OWLNS + "equivalentClass" ? sub(s, o) && sub(o, s) : sub(s, o);
+      };
+      const propEntailed = (a: Quad): boolean => {
+        if (a.subject.termType !== "NamedNode" || a.object.termType !== "NamedNode") return false;
+        propAdj ??= [edgeMap([RDFSNS + "subPropertyOf"], false), edgeMap([OWLNS + "equivalentProperty"], true)];
+        const top = (y: string) => y === OWLNS + "topObjectProperty" || y === OWLNS + "topDataProperty";
+        const sub = (x: string, y: string) => x === y || top(y) || reaches(propAdj!, x, y);
+        const s = a.subject.value, o = a.object.value;
+        return a.predicate.value === OWLNS + "equivalentProperty" ? sub(s, o) && sub(o, s) : sub(s, o);
+      };
+      const sameAsEntailed = (a: Quad): boolean => {
+        if (a.subject.termType !== "NamedNode" || a.object.termType !== "NamedNode") return false;
+        sameAdj ??= [edgeMap([OWLNS + "sameAs"], true)];
+        return a.subject.value === a.object.value || reaches(sameAdj, a.subject.value, a.object.value);
+      };
+
       const classifyResults = new Map<Quad, boolean>();
       if (needsClassify) {
         await this._classifyInline(store, gen, igIri);
         for (const a of axioms) {
           if (opOf(a) === "classify") {
-            classifyResults.set(a, inferred(a));
+            classifyResults.set(a, inferred(a) || classEntailed(a));
           }
         }
       }
@@ -1105,7 +1153,7 @@ export class RdfReasoner {
         await this._materializeInline(store, gen, igIri);
         for (const a of axioms) {
           if (opOf(a) === "materialize") {
-            materializeResults.set(a, inferred(a));
+            materializeResults.set(a, inferred(a) || (a.predicate.value === OWL_SAME_AS && sameAsEntailed(a)));
           }
         }
       }
@@ -1115,7 +1163,7 @@ export class RdfReasoner {
         await this._classifyPropertiesInline(store, gen, igIri);
         for (const a of axioms) {
           if (opOf(a) === "classifyProperties") {
-            classifyPropsResults.set(a, inferred(a));
+            classifyPropsResults.set(a, inferred(a) || propEntailed(a));
           }
         }
       }
@@ -1130,7 +1178,7 @@ export class RdfReasoner {
       }
 
       // Object/data property assertions of declared properties: one nominal probe per axiom (see entailmentProbe.ts)
-      const propAxioms = axioms.filter(a => opOf(a) === null && !this._isDisjointAxiom(a) && this._propertyAssertionType(store, a));
+      const propAxioms = axioms.filter(a => opOf(a) === null && !this._isDisjointAxiom(a) && !this._rangeDomainAxiom(store, a) && this._propertyAssertionType(store, a));
       const propResults = new Map<Quad, boolean | null>();
       if (propAxioms.length > 0) {
         const res = await this._propertyAssertionEntailmentsDirect(store, igIri, propAxioms);
@@ -1147,6 +1195,22 @@ export class RdfReasoner {
         const base = dropAnnotationTriples(store.getQuads(null, null, null, null).filter(q => !new Set<string>([igIri, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, ...this._excludeGraphs]).has(q.graph.value)));
         const r = await this._boundedInconsistencyCheck([...base, ...buildCharacteristicProbe(k, a.subject.value, `char_${++this._entailmentProbeCounter}`)], Infinity);
         specialResults.set(a, r === "aborted" ? null : r);
+        this._invalidateResultCaches();
+      }
+
+      // rdfs:range / rdfs:domain of declared properties (datatype and class hierarchy conclusions): probe with a fresh individual.
+      // On an inconsistent ontology every probe is vacuously inconsistent, so those answer null instead of true.
+      const rdAxioms = axioms.filter(a => !specialResults.has(a) && this._rangeDomainAxiom(store, a));
+      if (rdAxioms.length > 0) {
+        const skipG = new Set<string>([igIri, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, ...this._excludeGraphs]);
+        const base = dropAnnotationTriples(store.getQuads(null, null, null, null).filter(q => !skipG.has(q.graph.value)));
+        const consistent = (await this._boundedInconsistencyCheck(base, Infinity)) === false;
+        for (const a of rdAxioms) {
+          if (!consistent) { specialResults.set(a, null); continue; }
+          const rd = this._rangeDomainAxiom(store, a)!;
+          const r = await this._boundedInconsistencyCheck([...base, ...buildRangeDomainProbe(rd.axiom, rd.propertyType, a.subject.value, a.object.value, `rd_${++this._entailmentProbeCounter}`)], Infinity);
+          specialResults.set(a, r === "aborted" ? null : r);
+        }
         this._invalidateResultCaches();
       }
 
@@ -2004,6 +2068,15 @@ export class RdfReasoner {
     if (a.predicate.value !== RDF_TYPE || a.object.termType !== "NamedNode" || a.subject.termType !== "NamedNode") return null;
     if (DECLARATION_CLASSES.has(a.object.value)) return "declaration";
     return CHARACTERISTIC_CLASSES[a.object.value] ?? null;
+  }
+
+  /** `P rdfs:range D` / `P rdfs:domain C` with P a declared object or data property and D, C named: decided by a probe. */
+  private _rangeDomainAxiom(store: Store, q: Quad): { axiom: "range" | "domain"; propertyType: AssertionPropertyType } | undefined {
+    const axiom = q.predicate.value === "http://www.w3.org/2000/01/rdf-schema#range" ? "range"
+      : q.predicate.value === "http://www.w3.org/2000/01/rdf-schema#domain" ? "domain" : undefined;
+    if (!axiom || q.subject.termType !== "NamedNode" || q.object.termType !== "NamedNode") return undefined;
+    const propertyType = this._assertionPropertyType(store, q.subject.value, true) ?? this._assertionPropertyType(store, q.subject.value, false);
+    return propertyType ? { axiom, propertyType } : undefined;
   }
 
   private _isDisjointAxiom(q: Quad): boolean {
