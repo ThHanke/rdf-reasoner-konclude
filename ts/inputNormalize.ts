@@ -92,7 +92,8 @@ export function normalizeQuads(input: readonly Quad[]): Quad[] {
     if (drop.has(key(q.subject))) continue;
     // 3. OWL 1 style constructor on a named class
     if (namedClass(q.subject) && CONSTRUCTOR_SET.has(q.predicate.value)) {
-      const e = blankNode(`owl1_${q.predicate.value.slice(OWL.length)}_${q.subject.value.replace(/[^A-Za-z0-9]/g, "_")}`);
+      // one class per constructor triple (a class with several owl:oneOf lists is the intersection of them: W3C description-logic-502); the label comes from the triple, not from a counter, so it is the same on every call
+      const e = blankNode(`owl1_${q.predicate.value.slice(OWL.length)}_${q.subject.value.replace(/[^A-Za-z0-9]/g, "_")}_${q.object.value.replace(/[^A-Za-z0-9]/g, "_")}`);
       out.push(q4(q.subject, nn(OWL + "equivalentClass"), e, q.graph), q4(e, nn(TYPE), nn(OWL + "Class"), q.graph), q4(e, q.predicate, q.object, q.graph));
       continue;
     }

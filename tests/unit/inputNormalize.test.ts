@@ -107,4 +107,14 @@ describe("inputNormalize", () => {
     const qs = parse(`ex:Peter ex:likes ex:Peter .`);
     expect(normalizeQuads(qs)).toHaveLength(qs.length);
   });
+
+  it("a class with several owl:oneOf lists gets one rewritten class per list (W3C description-logic-502), with stable labels", () => {
+    const quads = parse(`ex:T a owl:Class ; owl:oneOf ( ex:a ex:b ) ; owl:oneOf ( ex:c ex:d ) .`);
+    const out = normalizeQuads(quads);
+    const eq = out.filter((q) => q.predicate.value === "http://www.w3.org/2002/07/owl#equivalentClass" && q.subject.value === "http://ex.org/T");
+    expect(eq).toHaveLength(2);
+    expect(new Set(eq.map((q) => q.object.value)).size).toBe(2); // two different rewritten classes, not one merged class
+    const again = normalizeQuads(parse(`ex:T a owl:Class ; owl:oneOf ( ex:a ex:b ) ; owl:oneOf ( ex:c ex:d ) .`));
+    expect(again.filter((q) => q.predicate.value.endsWith("equivalentClass")).map((q) => q.object.value).length).toBe(2);
+  });
 });

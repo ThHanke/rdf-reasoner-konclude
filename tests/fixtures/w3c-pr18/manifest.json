@@ -155,10 +155,10 @@
  },
  {
   "id": "WebOnt-description-logic-502",
-  "group": "known-gap",
+  "group": "owl1-boolean",
   "expected": "inconsistent",
-  "portVerdict": "consistent",
-  "status": "known-gap"
+  "portVerdict": "inconsistent",
+  "status": "pass"
  },
  {
   "id": "WebOnt-miscellaneous-203",

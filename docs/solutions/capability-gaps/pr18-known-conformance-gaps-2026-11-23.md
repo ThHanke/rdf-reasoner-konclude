@@ -17,10 +17,10 @@ Source: the PR #18 reviewer kit verdict table (raw run, 266 W3C OWL 2 DL tests, 
 | `Minus_Infinity_is_not_in_owl_real` | inconsistent | consistent | To diagnose: lexical conversion (`INF`/`-INF`) vs. value-space semantics. |
 | `Plus_and_Minus_Zero_are_Distinct` | inconsistent | consistent | To diagnose: +0/-0 comparison in the double value space. |
 | `one_two` | inconsistent | consistent | To diagnose (float/double family). |
-| `New-Feature-Rational-003` | consistent | **inconsistent** | False inconsistency. `owl:rational` handling; highest priority (soundness). |
+| `New-Feature-Rational-003` | consistent | **inconsistent** | False inconsistency. Not rational parsing: any `owl:oneOf` of two distinct non-integer values with `minCardinality 2` (`{0.5, 0.25}`, `{1/3, 2/3}`, `{1.5, 2.5}`) is reported inconsistent, while integer and string enumerations work; and `{a}` / `{1, 1}` with `minCardinality 2` are wrongly consistent. This is the data cardinality over finite value spaces gap (kernel value counting, `CDatatypeIndividualProcessNodeHandler`), excluded by PR #18. Pinned in `tests/integration/data-cardinality-gaps.test.ts`. |
 | `WebOnt-description-logic-035` | inconsistent | consistent | Kernel judges the class satisfiable although its definition is contradictory; native Konclude 0.7.0 agrees. Kernel limitation. |
 | `WebOnt-description-logic-105` | inconsistent | consistent | Same as -035. |
-| `WebOnt-description-logic-502` | inconsistent | consistent | Raw input wrong, ROBOT-normalized input right: input-format difference to find. |
+| `WebOnt-description-logic-502` | inconsistent | inconsistent | **Fixed** (2026-11-23): a class with several `owl:oneOf` lists got all of them merged into one rewritten class, so the kernel read one list. Each constructor triple now becomes its own equivalent class (intersection semantics). |
 | `WebOnt-miscellaneous-203` | inconsistent | consistent | XML literals; absent from the normalized set. |
 | `WebOnt-miscellaneous-204` | inconsistent | consistent | To diagnose. |
 
