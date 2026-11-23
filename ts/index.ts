@@ -124,7 +124,7 @@ const workerRegistry = new FinalizationRegistry<Worker>((worker) => {
   }
 });
 
-type ResultCache = { gen: number; store: Store; graph: string; sig: string };
+type ResultCache = { gen: number; store: Store; graph: string; sig: string; closure: boolean };
 
 /** Budget of the exact search that "fast" mode runs when no cheap candidate verifies. */
 const FAST_FALLBACK_SEARCH_MS = 5_000;
@@ -445,13 +445,16 @@ export class RdfReasoner {
     });
   }
 
-  private _stamp(gen: number, store: Store, inferredGraph?: string): ResultCache {
+  private _stamp(gen: number, store: Store, inferredGraph?: string, closure = false): ResultCache {
     const graph = this._igRead(inferredGraph);
-    return { gen, store, graph, sig: graphSignature(getRawStore(store), graph) };
+    return { gen, store, graph, sig: graphSignature(getRawStore(store), graph), closure };
   }
 
-  private _hit(cache: ResultCache | null, gen: number, store: Store, inferredGraph?: string): boolean {
+  /** `closure`: the call wants the hierarchy closure in the inferred graph; a result written without it (or with it, for a call
+   *  without) is not served. Internal callers (isEntailed, getUnsatisfiableClasses) pass nothing and accept either. */
+  private _hit(cache: ResultCache | null, gen: number, store: Store, inferredGraph?: string, closure?: boolean): boolean {
     if (cache === null || cache.gen !== gen || cache.store !== store) return false;
+    if (closure !== undefined && cache.closure !== closure) return false;
     const graph = this._igRead(inferredGraph);
     return cache.graph === graph && cache.sig === graphSignature(getRawStore(store), graph);
   }
@@ -548,7 +551,7 @@ export class RdfReasoner {
       const gen = await this._syncForOp(store, opts?.inferredGraph);
       await this._guardConsistent(gen, opts);
       // Cache hit: same store instance with same content as last classify call
-      if (this._hit(this._classifyCache, gen, store, opts?.inferredGraph)) {
+      if (this._hit(this._classifyCache, gen, store, opts?.inferredGraph, opts?.closure === true)) {
         if (wantExplanations) {
           await this._ensureExplanationGraphFromBuffer(store, "getInferredTripleBuffer");
         }
@@ -582,7 +585,8 @@ export class RdfReasoner {
         this._lastExplBuffer = null;
       }
 
-      this._classifyCache = this._stamp(gen, store, opts?.inferredGraph);
+      if (opts?.closure === true) this._addHierarchyClosure(store, rawStore, inferredGraphNode, "class");
+      this._classifyCache = this._stamp(gen, store, opts?.inferredGraph, opts?.closure === true);
       this._materializeCache = null;
       this._classifyPropertiesCache = null;
       this._lastPropertyExplBuffer = null;
@@ -690,7 +694,7 @@ export class RdfReasoner {
       await this._guardConsistent(gen, opts);
 
       // Cache hit: same store instance with same content as last materialize call
-      if (this._materializeSwrl === (opts?.swrl !== false) && this._hit(this._materializeCache, gen, store, opts?.inferredGraph)) {
+      if (this._materializeSwrl === (opts?.swrl !== false) && this._hit(this._materializeCache, gen, store, opts?.inferredGraph, opts?.closure === true && opts?.includeClassHierarchy === true)) {
         if (wantExplanations) {
           await this._ensureExplanationGraphFromBuffer(store, "getInferredTripleBuffer");
         }
@@ -767,7 +771,9 @@ export class RdfReasoner {
         );
       }
 
-      this._materializeCache = this._stamp(gen, store, opts?.inferredGraph);
+      const closureWanted = opts?.closure === true && opts?.includeClassHierarchy === true;
+      if (closureWanted) this._addHierarchyClosure(store, rawStore, inferredGraphNode, "class");
+      this._materializeCache = this._stamp(gen, store, opts?.inferredGraph, closureWanted);
       this._materializeSwrl = opts?.swrl !== false;
       this._classifyCache = null;
       this._classifyPropertiesCache = null;
@@ -869,7 +875,7 @@ export class RdfReasoner {
       const gen = await this._syncForOp(store, opts?.inferredGraph);
       await this._guardConsistent(gen, opts);
       // Cache hit: same store instance with same content as last classifyProperties call
-      if (this._hit(this._classifyPropertiesCache, gen, store, opts?.inferredGraph)) {
+      if (this._hit(this._classifyPropertiesCache, gen, store, opts?.inferredGraph, opts?.closure === true)) {
         if (wantExplanations) {
           await this._ensureExplanationGraphFromBuffer(store, "getPropertyTripleBuffer");
         }
@@ -903,7 +909,8 @@ export class RdfReasoner {
         this._lastPropertyExplBuffer = null;
       }
 
-      this._classifyPropertiesCache = this._stamp(gen, store, opts?.inferredGraph);
+      if (opts?.closure === true) this._addHierarchyClosure(store, rawStore, inferredGraphNode, "property");
+      this._classifyPropertiesCache = this._stamp(gen, store, opts?.inferredGraph, opts?.closure === true);
       this._classifyCache = null;
       this._materializeCache = null;
       this._lastExplBuffer = null;
@@ -933,6 +940,48 @@ export class RdfReasoner {
         return "materialize";
       default:
         return null;
+    }
+  }
+
+  /**
+   * Opt-in (`closure: true`): write the transitive closure of the hierarchy the classifier reports (the reduced taxonomy) into
+   * the inferred graph, so consumers of the graph (SPARQL, SHACL, apps) need no reasoning to see every entailed subsumption.
+   * kind "class": subClassOf over subClassOf and equivalentClass (equivalents subsume each other), plus equivalentClass between all
+   * members of an equivalence group; kind "property": the same for subPropertyOf / equivalentProperty. Triples already in a source graph
+   * or in the inferred graph are not added again. This is the OWL 2 direct-semantics deductive closure of the subsumption relation
+   * (reflexive pairs are not written); it is open-world and adds nothing the classification did not entail.
+   */
+  private _addHierarchyClosure(store: Store, rawStore: Store, inferredGraphNode: ReturnType<typeof DataFactory.namedNode>, kind: "class" | "property"): void {
+    const OWLNS = "http://www.w3.org/2002/07/owl#", RDFSNS = "http://www.w3.org/2000/01/rdf-schema#";
+    const subP = RDFSNS + (kind === "class" ? "subClassOf" : "subPropertyOf");
+    const eqP = OWLNS + (kind === "class" ? "equivalentClass" : "equivalentProperty");
+    const sub = new Map<string, Set<string>>();
+    const link = (x: string, y: string) => { (sub.get(x) ?? sub.set(x, new Set()).get(x)!).add(y); };
+    for (const g of [DataFactory.defaultGraph(), inferredGraphNode]) {
+      for (const q of store.getQuads(null, DataFactory.namedNode(subP), null, g)) {
+        if (q.subject.termType === "NamedNode" && q.object.termType === "NamedNode") link(q.subject.value, q.object.value);
+      }
+      for (const q of store.getQuads(null, DataFactory.namedNode(eqP), null, g)) {
+        if (q.subject.termType === "NamedNode" && q.object.termType === "NamedNode") { link(q.subject.value, q.object.value); link(q.object.value, q.subject.value); }
+      }
+    }
+    const reach = new Map<string, Set<string>>();
+    for (const a of sub.keys()) {
+      const seen = new Set<string>(); const stack = [a];
+      while (stack.length) for (const y of sub.get(stack.pop()!) ?? []) if (!seen.has(y)) { seen.add(y); stack.push(y); }
+      seen.delete(a);
+      reach.set(a, seen);
+    }
+    const add = (s: string, p: string, o: string) => {
+      const sn = DataFactory.namedNode(s), pn = DataFactory.namedNode(p), on = DataFactory.namedNode(o);
+      if (existsInSourceGraphs(store, sn, pn, on, this._excludeGraphs)) return;
+      rawStore.addQuad(DataFactory.quad(sn, pn, on, inferredGraphNode));
+    };
+    for (const [a, targets] of reach) {
+      for (const b of targets) {
+        add(a, subP, b);
+        if (reach.get(b)?.has(a)) add(a, eqP, b); // mutual subsumption: equivalent
+      }
     }
   }
 

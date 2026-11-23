@@ -228,6 +228,16 @@ export interface StoreReasoningOptions extends ReasoningOptions {
   failOnInconsistent?: boolean;
 
   /**
+   * `classify` / `classifyProperties`: also write the transitive closure of the hierarchy into the inferred graph
+   * (default `false`: only the reduced hierarchy, i.e. direct `subClassOf` / `subPropertyOf` edges and `equivalentClass`
+   * for equivalents). With `true` every entailed subsumption is a triple (`A subClassOf C` for `A ⊑ B ⊑ C`, mutual
+   * `subClassOf` and `equivalentClass` between equivalents), so SPARQL or SHACL over the store need no reasoning.
+   * Open-world: only subsumptions the classification entails are written; reflexive pairs are not. Costs about 6-9x
+   * the direct edges in triples (PMDco 1,612 -> 10,572 pairs) and a few milliseconds of computing.
+   */
+  closure?: boolean;
+
+  /**
    * When `true`, justifications are serialized as RDF-star triples into the
    * `urn:konclude:explanations` named graph. Query via `store.getQuads()`.
    */
@@ -256,6 +266,13 @@ export interface MaterializeOptions {
    * were found, with `applied: false`.
    */
   swrl?: boolean;
+
+  /**
+   * Also write the transitive closure of the class hierarchy into the inferred graph (default `false`: the reduced
+   * hierarchy the classifier reports, direct edges only). Only effective together with `includeClassHierarchy: true`.
+   * See `StoreReasoningOptions.closure`.
+   */
+  closure?: boolean;
 }
 
 /**
@@ -305,6 +322,9 @@ export interface ClassifyPropertiesStoreOptions {
 
   /** Reject with `InconsistentOntologyError` when the ontology is inconsistent (default false: an empty result, no signal). Costs one consistency check per changed content; for `materialize` one extra rebuild (the realization variant differs from the consistency one). */
   failOnInconsistent?: boolean;
+
+  /** Also write the transitive closure of the property hierarchy (`subPropertyOf`, `equivalentProperty`) into the inferred graph. Default `false`; see `StoreReasoningOptions.closure`. */
+  closure?: boolean;
 
   /**
    * When `true`, justifications are serialized as RDF-star triples into the
