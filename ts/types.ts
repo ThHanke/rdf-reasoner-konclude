@@ -423,7 +423,17 @@ export interface ReasoningResult {
 /**
  * Constructor options for RdfReasoner.
  */
+import type { LiteralIssue } from "./literalValidation.js";
+export type { LiteralIssue } from "./literalValidation.js";
+
 export interface RdfReasonerOptions {
+  /**
+   * What to do with numeric or boolean literals outside their datatype's lexical or value space (`"5abc"^^xsd:integer`,
+   * `"1.5"^^xsd:integer`, `"300"^^xsd:byte`, integers beyond 64 bits ...). The kernel silently drops them, so they do not make
+   * the ontology inconsistent. `"report"` (default): list them in `RdfReasoner.lastLiteralIssues`, reasoning continues as before;
+   * `"error"`: reject the call with `InvalidLiteralError`; `"ignore"`: do not scan.
+   */
+  illTypedLiterals?: "report" | "error" | "ignore";
   /** Optional URL to the worker script. When absent, uses import.meta.url resolution. */
   workerUrl?: string | URL;
   /** Pre-constructed Worker instance. When provided, workerUrl is ignored and no
@@ -471,6 +481,17 @@ export class InconsistentOntologyError extends Error {
   constructor(message = "The ontology is inconsistent; results of this call would be empty or meaningless.") {
     super(message);
     this.name = "InconsistentOntologyError";
+  }
+}
+
+/** Thrown with `illTypedLiterals: "error"` when the ontology holds a numeric or boolean literal outside its datatype's lexical or value space. */
+export class InvalidLiteralError extends Error {
+  readonly issues: LiteralIssue[];
+  constructor(issues: LiteralIssue[], total: number) {
+    const first = issues[0]!;
+    super(`${total} ill-typed or out-of-range literal(s), e.g. "${first.lexical}"^^${first.datatype} on <${first.subject}>: ${first.detail}.`);
+    this.name = "InvalidLiteralError";
+    this.issues = issues;
   }
 }
 

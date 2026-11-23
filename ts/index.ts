@@ -29,8 +29,9 @@ export { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, KJ_NS, KJ_
 export { createInlineWorker } from "./inlineWorker.js";
 export { createManagedStore } from "./n3Inject.js";
 import type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions, LaconicPart, LaconicJustification, LaconicExplainOptions, Axiom, AxiomJustification, RepairOptions, Repair, RepairResult, Edit, DisjointPair, AssessEditOptions, EditAssessment, WeakenOptions, Weakening, WeakenResult, InconsistencyGuardOptions } from "./types.js";
-import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, KJ_JUSTIFIES, KJ_AXIOM, ReasonerStalledError, InconsistentOntologyError } from "./types.js";
-export { ReasonerStalledError, InconsistentOntologyError } from "./types.js";
+import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, KJ_JUSTIFIES, KJ_AXIOM, ReasonerStalledError, InconsistentOntologyError, InvalidLiteralError } from "./types.js";
+import { findLiteralIssues, type LiteralIssue } from "./literalValidation.js";
+export { ReasonerStalledError, InconsistentOntologyError, InvalidLiteralError } from "./types.js";
 import { injectExplanationsFromBuffer, encodeStoreToBuffers, existsInSourceGraphs, clearGraph, createManagedStore, getRawStore, graphSignature } from "./n3Inject.js";
 import { groupJustification, isDeclaration, partitionIntoUnits } from "./axiomGrouping.js";
 import { dropAnnotationTriples } from "./annotations.js";
@@ -191,6 +192,7 @@ export class RdfReasoner {
     this._stallTimeoutMs = opts?.stallTimeoutMs ?? 600_000;
     this._recycleHeapBytes = opts?.recycleHeapBytes ?? 2 * 1024 ** 3;
     this._excludeGraphs = new Set(opts?.excludeGraphs ?? []);
+    this.illTypedLiterals = opts?.illTypedLiterals ?? "report";
     this._workerFactory = opts?.workerFactory;
     if (opts?.workerFactory) {
       this.worker = opts.workerFactory();
@@ -468,8 +470,18 @@ export class RdfReasoner {
    * invalidates its cached results when it changed; the returned generation keys the per-store
    * result caches. `ignoreGraph` (a custom inferredGraph) never counts as content.
    */
+  /** See `RdfReasonerOptions.illTypedLiterals`; may be changed between calls. */
+  illTypedLiterals: "report" | "error" | "ignore";
+  /** Numeric / boolean literals of the last synced store that are outside their datatype's lexical or value space (the kernel drops them). */
+  lastLiteralIssues: { issues: LiteralIssue[]; total: number } = { issues: [], total: 0 };
+
   private async _sync(store: Store, ignoreGraph?: string, direct = false): Promise<number> {
     if (ignoreGraph) this._ig(ignoreGraph);
+    if (this.illTypedLiterals !== "ignore") {
+      const skip = new Set<string>([...this._inferredGraphs, ...this._excludeGraphs]);
+      this.lastLiteralIssues = findLiteralIssues(store.getQuads(null, null, null, null).filter((q) => !skip.has(q.graph.value)));
+      if (this.illTypedLiterals === "error" && this.lastLiteralIssues.total > 0) throw new InvalidLiteralError(this.lastLiteralIssues.issues, this.lastLiteralIssues.total);
+    }
     const { tripleBuffer, strTableBuffer } = encodeStoreToBuffers(store, [...this._inferredGraphs, ...this._excludeGraphs]);
     const call = direct ? this._callDirect.bind(this) : this._call.bind(this);
     const info = (await call("sync", [tripleBuffer, strTableBuffer], [tripleBuffer, strTableBuffer])) as { generation?: number } | undefined;
