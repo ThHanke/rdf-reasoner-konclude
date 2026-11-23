@@ -1,0 +1,7 @@
+_:df_0_1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .
+<http://www.w3.org/2002/03owlt/Restriction/inconsistent002#op> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#ObjectProperty> .
+_:r <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Restriction> .
+<http://www.w3.org/2002/03owlt/Restriction/inconsistent002#a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> _:r .
+_:r <http://www.w3.org/2002/07/owl#onProperty> <http://www.w3.org/2002/03owlt/Restriction/inconsistent002#op> .
+_:r <http://www.w3.org/2002/07/owl#someValuesFrom> <http://www.w3.org/2002/07/owl#Nothing> .
+<http://www.w3.org/2002/03owlt/Restriction/inconsistent002#b> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> _:r .
