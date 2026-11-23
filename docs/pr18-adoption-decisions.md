@@ -44,11 +44,16 @@ Branch `adopt/pr18-folded-patches` is built on the head of PR #18 (`dafcc7e`, ev
 - Root-cause lead found with the native test binary under gdb: SIGSEGV in `CBackendAssociationCacheHandler::getLoadedNominalIndividualIndirectConnectionData` (`this=0`, individual id 7), because `getIndividualAssociationLoadingData` returns `nullptr` when the backend cache has no association data for the individual and the result is dereferenced. The reader already treats a null result as "no indirect connections". Patch 006 adds the null guard.
 - Open: whether the guard also removes the WebAssembly stall (address 0 is valid memory there, so the same bug would read garbage instead of crashing: a hypothesis until the wasm is rebuilt and tested).
 
-## 5. Process notes
+## 5. Follow-ups the owner wants addressed
+
+- **Unsatisfiable-individual check in `materialize()`:** kept as the TypeScript check for now; a proper kernel integration is wanted later (find why the tableau does not clash on the individual's own asserted type; do not add a classification to every consistency check).
+- **Ill-typed literals and the pinned gaps** (data cardinality over enumerated ranges, float/double value spaces, XML literals, `description-logic-035/-105`): to be closed; the default of `illTypedLiterals` (`"report"`) is open for a strict default.
+
+## 6. Process notes
 
 - The Docker build image and part of the disk were removed during the work (disk full); a wasm rebuild needs the image rebuilt first.
 
-## 6. Reproducing
+## 7. Reproducing
 
 - Tests: `npx vitest run` (full suite, about 4 minutes). New files: `pr18-kernel`, `w3c-conformance-pr18`, `swrl-fixpoint`, `data-superproperty`, `input-normalize-determinism`, `datatype-bounds`, `entailment-range-domain`, `entailment-equivalence`, `hierarchy-closure`, `literal-validation`, `data-cardinality-gaps` and the unit tests `literalValidation`, `inputNormalize`.
 - SWRL benchmark: `node tests/bench/swrl-bench.mjs --materials 300 --runs 3` (`--nofire` for rules that never match).
