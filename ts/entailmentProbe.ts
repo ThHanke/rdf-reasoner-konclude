@@ -270,3 +270,22 @@ export function buildRangeDomainProbe(
   }
   return out;
 }
+
+/**
+ * `p rdfs:subPropertyOf q` between two declared OBJECT properties is entailed iff O plus `x p y`, `x : not (q value y)` (x, y fresh
+ * named individuals) is inconsistent. Complete up to the tableau, unlike the classifier's property hierarchy (e.g. W3C
+ * WebOnt-equivalentProperty-004: p and q are equivalent through domain, functionality and hasValue axioms only).
+ * Not used for data properties: a fresh literal could clash with a datatype range and make the probe vacuously inconsistent.
+ */
+export function buildPropertySubsumptionProbe(subProperty: string, superProperty: string, probeId: string): Quad[] {
+  const { namedNode, blankNode, quad, defaultGraph } = DataFactory;
+  const g = defaultGraph();
+  const out: Quad[] = [];
+  const add = (s: any, p: string, o: any) => out.push(quad(s, namedNode(p), o, g) as Quad);
+  const x = namedNode(`urn:vg:probe:x_${probeId}`), y = namedNode(`urn:vg:probe:y_${probeId}`);
+  const res = blankNode(`vg_res_${probeId}`), neg = blankNode(`vg_neg_${probeId}`);
+  add(x, subProperty, y);
+  add(res, RDF_TYPE, namedNode(OWL_RESTRICTION)); add(res, OWL_ON_PROPERTY, namedNode(superProperty)); add(res, OWL_HAS_VALUE, y);
+  add(neg, RDF_TYPE, namedNode(OWL_CLASS)); add(neg, OWL_COMPLEMENT_OF, res); add(x, RDF_TYPE, neg);
+  return out;
+}

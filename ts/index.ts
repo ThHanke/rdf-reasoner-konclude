@@ -31,6 +31,7 @@ export { createManagedStore } from "./n3Inject.js";
 import type { ReasoningOptions, ReasoningResult, StoreReasoningOptions, MaterializeOptions, MaterializeStoreOptions, ClassifyPropertiesStoreOptions, InferenceDelta, WhatIfOptions, ExplainOptions, ClassWarning, ValidationResult, ValidateOptions, RdfReasonerOptions, EntailmentResult, ExplainEntailmentOptions, LaconicPart, LaconicJustification, LaconicExplainOptions, Axiom, AxiomJustification, RepairOptions, Repair, RepairResult, Edit, DisjointPair, AssessEditOptions, EditAssessment, WeakenOptions, Weakening, WeakenResult, InconsistencyGuardOptions } from "./types.js";
 import { INFERRED_GRAPH_IRI, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, KJ_JUSTIFIES, KJ_AXIOM, ReasonerStalledError, InconsistentOntologyError, InvalidLiteralError } from "./types.js";
 import { findLiteralIssues, type LiteralIssue } from "./literalValidation.js";
+import { planConclusion, existsProbeQuads, type Statement } from "./entailmentGraph.js";
 export { ReasonerStalledError, InconsistentOntologyError, InvalidLiteralError } from "./types.js";
 import { injectExplanationsFromBuffer, encodeStoreToBuffers, existsInSourceGraphs, clearGraph, createManagedStore, getRawStore, graphSignature } from "./n3Inject.js";
 import { groupJustification, isDeclaration, partitionIntoUnits } from "./axiomGrouping.js";
@@ -38,7 +39,7 @@ import { dropAnnotationTriples } from "./annotations.js";
 import { computeRepairs, REPAIR_DEFAULT_TIMEOUT_MS, type RepairOracle } from "./repair.js";
 import { computeAssessment, probeQuads, PROBE_NS, type AssessOracle } from "./assessEdit.js";
 import { computeWeakenings } from "./weaken.js";
-import { buildEntailmentProbe, classifyAxiom, tripleKey as probeTripleKey, type AssertionPropertyType, CHARACTERISTIC_CLASSES, DECLARATION_CLASSES, buildCharacteristicProbe, buildRangeDomainProbe } from "./entailmentProbe.js";
+import { buildEntailmentProbe, classifyAxiom, tripleKey as probeTripleKey, type AssertionPropertyType, CHARACTERISTIC_CLASSES, DECLARATION_CLASSES, buildCharacteristicProbe, buildRangeDomainProbe, buildPropertySubsumptionProbe } from "./entailmentProbe.js";
 import { parseRules, applyRules, Facts } from "./swrl.js";
 
 const SWRL_IMP = "http://www.w3.org/2003/11/swrl#Imp";
@@ -1229,6 +1230,27 @@ export class RdfReasoner {
         }
       }
 
+      // The classifier's property hierarchy is incomplete (it misses subsumptions that follow from domains, functionality and
+      // hasValue axioms): a `false` for p ⊑ q / p ≡ q between declared object properties is re-checked with a refutation probe.
+      if (needsClassifyProps) {
+        const todo = axioms.filter(a => opOf(a) === "classifyProperties" && classifyPropsResults.get(a) === false
+          && a.subject.termType === "NamedNode" && a.object.termType === "NamedNode"
+          && this._assertionPropertyType(store, a.subject.value, false) === "object" && this._assertionPropertyType(store, a.object.value, false) === "object");
+        if (todo.length > 0) {
+          const skipG = new Set<string>([igIri, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, ...this._excludeGraphs]);
+          const base = dropAnnotationTriples(store.getQuads(null, null, null, null).filter(q => !skipG.has(q.graph.value)));
+          if ((await this._boundedInconsistencyCheck(base, Infinity)) === false) {
+            const sub = async (p: string, q: string) => (await this._boundedInconsistencyCheck([...base, ...buildPropertySubsumptionProbe(p, q, `ps_${++this._entailmentProbeCounter}`)], Infinity)) === true;
+            for (const a of todo) {
+              const s = a.subject.value, o = a.object.value;
+              const holds = a.predicate.value === OWLNS + "equivalentProperty" ? (await sub(s, o)) && (await sub(o, s)) : await sub(s, o);
+              if (holds) classifyPropsResults.set(a, true);
+            }
+            this._invalidateResultCaches();
+          }
+        }
+      }
+
       // owl:disjointWith between named classes: decided in one probe batch (after the other operations; it replaces the WASM state)
       const disjointAxioms = axioms.filter(a => this._isDisjointAxiom(a));
       const disjointResults = new Map<Quad, boolean | null>();
@@ -1304,6 +1326,81 @@ export class RdfReasoner {
     });
     this._queue = result.then(() => {}, () => {});
     return result as Promise<boolean | null> | Promise<(boolean | null)[]>;
+  }
+
+  // -------------------------------------------------------------------------
+  // isEntailedGraph()
+  // -------------------------------------------------------------------------
+
+  /**
+   * Is a small RDF graph entailed? The conclusion may hold blank nodes (existentials) and annotation triples, the shape of the
+   * W3C OWL 2 entailment tests. It is a conjunction: every part must be entailed.
+   *  - triples of named terms go through `isEntailed`;
+   *  - `s p _:x` where the blank node starts a tree is `s : exists p . D(x)`, decided by a refutation probe
+   *    (ontology plus `s : not (exists p . D)` inconsistent);
+   *  - annotation triples are not DL entailments: `true` when the triple (or its counterpart for an entity that is the same,
+   *    an equivalent class or an equivalent property) is in the store, otherwise `null` (absence says nothing).
+   * Returns `true`, `false` (a part is not entailed), or `null` (unsupported shape, an annotation not found, or an inconsistent ontology).
+   */
+  async isEntailedGraph(store: Store, conclusion: Quad[] | Store, opts?: InconsistencyGuardOptions): Promise<boolean | null> {
+    const quads = Array.isArray(conclusion) ? conclusion : conclusion.getQuads(null, null, null, null);
+    const plan = planConclusion(quads, (iri) => store.getQuads(iri, RDF_TYPE, "http://www.w3.org/2002/07/owl#AnnotationProperty", null).length > 0);
+    if (!plan.ok) return null;
+    const igIri = this._igRead(opts?.inferredGraph);
+    const skip = new Set<string>([igIri, HYPOTHETICAL_IRI, EXPLANATION_GRAPH_IRI, ...this._excludeGraphs]);
+    const results: Array<boolean | null> = [];
+
+    // exists statements: one queued batch of probes
+    const existsStatements = plan.statements.filter((st): st is Extract<Statement, { kind: "exists" }> => st.kind === "exists");
+    const existsResults = new Map<Statement, boolean | null>();
+    if (existsStatements.length > 0) {
+      const run = this._queue.then(async () => {
+        const gen = await this._sync(store, igIri);
+        await this._guardConsistent(gen, opts);
+        const base = dropAnnotationTriples(store.getQuads(null, null, null, null).filter(q => !skip.has(q.graph.value)));
+        const consistent = (await this._boundedInconsistencyCheck(base, Infinity)) === false;
+        for (const st of existsStatements) {
+          if (!consistent) { existsResults.set(st, null); continue; }
+          const r = await this._boundedInconsistencyCheck([...base, ...existsProbeQuads(st, `eg_${++this._entailmentProbeCounter}`)], Infinity);
+          existsResults.set(st, r === "aborted" ? null : r);
+        }
+        this._invalidateResultCaches();
+      });
+      this._queue = run.then(() => {}, () => {});
+      await run;
+    }
+
+    for (const st of plan.statements) {
+      if (st.kind === "exists") results.push(existsResults.get(st) ?? null);
+      else if (st.kind === "quad") results.push((await this.isEntailed(store, st.quad, opts)) as boolean | null);
+      else results.push(this._annotationInStore(store, st.quad, igIri) ? true : null);
+    }
+    if (results.some((r) => r === false)) return false;
+    return results.every((r) => r === true) ? true : null;
+  }
+
+  /** `s ap o` is in the store, or the same triple for an entity that is the same / an equivalent class / an equivalent property. */
+  private _annotationInStore(store: Store, q: Quad, igIri: string): boolean {
+    const OWLNS = "http://www.w3.org/2002/07/owl#";
+    const ig = DataFactory.namedNode(igIri), dg = DataFactory.defaultGraph();
+    const same = new Set<string>([q.subject.value]);
+    const stack = [q.subject.value];
+    while (stack.length) {
+      const x = stack.pop()!;
+      for (const pred of [OWLNS + "sameAs", OWLNS + "equivalentClass", OWLNS + "equivalentProperty"]) {
+        for (const g of [ig, dg]) {
+          for (const t of store.getQuads(x, pred, null, g)) if (t.object.termType === "NamedNode" && !same.has(t.object.value)) { same.add(t.object.value); stack.push(t.object.value); }
+          for (const t of store.getQuads(null, pred, x, g)) if (t.subject.termType === "NamedNode" && !same.has(t.subject.value)) { same.add(t.subject.value); stack.push(t.subject.value); }
+        }
+      }
+    }
+    for (const s of same) {
+      for (const g of [ig, dg]) {
+        const found = store.getQuads(s, q.predicate, q.object.termType === "BlankNode" ? null : q.object, g);
+        if (found.length > 0) return true;
+      }
+    }
+    return false;
   }
 
   // -------------------------------------------------------------------------

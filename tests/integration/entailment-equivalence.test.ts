@@ -123,4 +123,18 @@ describe.skipIf(!wasmExists)("entailments through sameAs and equivalence", () =>
       expect(await reasoner.isEntailed(store(`:a a owl:NamedIndividual .`), t("a", OWL + "sameAs", "a"))).toBe(true);
     }, 60_000);
   });
+
+  describe("property subsumption beyond the classifier's hierarchy (W3C WebOnt-equivalentProperty-004)", () => {
+    const base = `:p a owl:ObjectProperty, owl:FunctionalProperty ; rdfs:domain :d . :q a owl:ObjectProperty, owl:FunctionalProperty ; rdfs:domain :d .
+      :v a owl:NamedIndividual .`;
+    const d = `:d a owl:Class ; owl:equivalentClass [ a owl:Restriction ; owl:onProperty :p ; owl:hasValue :v ], [ a owl:Restriction ; owl:onProperty :q ; owl:hasValue :v ] .`;
+    it("p and q are equivalent through domain, functionality and hasValue axioms: entailed in both directions", async () => {
+      expect(await reasoner.isEntailed(store(base + d), t("p", OWL + "equivalentProperty", "q"))).toBe(true);
+      expect(await reasoner.isEntailed(store(base + d), t("p", RDFS + "subPropertyOf", "q"))).toBe(true);
+      expect(await reasoner.isEntailed(store(base + d), t("q", RDFS + "subPropertyOf", "p"))).toBe(true);
+    }, 90_000);
+    it("without the hasValue definition of d the properties are not equivalent", async () => {
+      expect(await reasoner.isEntailed(store(base + `:d a owl:Class .`), t("p", OWL + "equivalentProperty", "q"))).toBe(false);
+    }, 60_000);
+  });
 });

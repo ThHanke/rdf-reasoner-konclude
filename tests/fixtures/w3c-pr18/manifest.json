@@ -136,8 +136,8 @@
   "id": "one_two",
   "group": "known-gap",
   "expected": "inconsistent",
-  "portVerdict": "consistent",
-  "status": "known-gap"
+  "portVerdict": "inconsistent",
+  "status": "pass"
  },
  {
   "id": "WebOnt-description-logic-035",
@@ -205,5 +205,19 @@
   "portVerdict": "inconsistent",
   "status": "pass",
   "source": "ROBOT conversion (functional syntax only in the W3C set)"
+ },
+ {
+  "id": "WebOnt-description-logic-008",
+  "group": "consistency-saturation",
+  "expected": "inconsistent",
+  "portVerdict": "inconsistent",
+  "status": "pass"
+ },
+ {
+  "id": "WebOnt-description-logic-012",
+  "group": "consistency-saturation",
+  "expected": "inconsistent",
+  "portVerdict": "inconsistent",
+  "status": "pass"
  }
 ]

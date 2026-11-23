@@ -65,11 +65,14 @@ describe.skipIf(!wasmExists)("PR #18 kernel fixes", () => {
   });
 
   describe("individual in an unsatisfiable class", () => {
+    // The consistency step used to miss these (the saturation approximation judged the individual sufficient); two kernel fixes
+    // in patch 002 (critical cardinality looked up under the super role; a representative successor at the limit) make
+    // checkConsistency itself answer correctly. materialize() keeps its unsatisfiable-class check as a stopgap.
     for (const id of ["WebOnt-description-logic-008", "WebOnt-description-logic-012"]) {
-      it(`${id}: consistency passes, materialize() throws InconsistentOntologyError`, async () => {
+      it(`${id}: checkConsistency reports the inconsistency, materialize with failOnInconsistent rejects`, async () => {
         const store = load(`${id}.nt`);
-        expect(await reasoner.checkConsistency(store)).toBe(true);
-        await expect(reasoner.materialize(store)).rejects.toBeInstanceOf(InconsistentOntologyError);
+        expect(await reasoner.checkConsistency(store)).toBe(false);
+        await expect(reasoner.materialize(store, { failOnInconsistent: true })).rejects.toBeInstanceOf(InconsistentOntologyError);
       }, 90_000);
     }
   });

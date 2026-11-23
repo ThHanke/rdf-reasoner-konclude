@@ -1,4 +1,4 @@
-import { BOTTOM_DP, NPA as OWL_NPA, CLASS_CONSTRUCTORS, HAS_KEY, HAS_SELF, PROP_DISJOINT, ALL_DISJOINT_PROPS } from "./inputNormalize.js";
+import { BOTTOM_DP, NPA as OWL_NPA, CLASS_CONSTRUCTORS, HAS_KEY, HAS_SELF, PROP_DISJOINT, ALL_DISJOINT_PROPS, XML_LITERAL } from "./inputNormalize.js";
 import { encodeToBuffers } from "./intern.js";
 import { DataFactory as DF } from "n3";
 const NN = (iri: string) => DF.namedNode(iri);
@@ -297,7 +297,17 @@ export function encodeStoreToBuffers(store: Store, extraExcludedGraphs: readonly
     live(store.getQuads(NN(BOTTOM_DP), null, null, null)) || live(store.getQuads(null, NN(BOTTOM_DP), null, null)) ||
     live(store.getQuads(null, null, NN(BOTTOM_DP), null)) ||
     CLASS_CONSTRUCTORS.some((c) => live(store.getQuads(null, NN(c), null, null), true));
-  if (rewrite) return encodeToBuffers(store.getQuads(null, null, null, null).filter((q) => !skip(q.graph.value)));
+  // rdf:XMLLiteral values are sent in canonical form (ts/xmlLiteral.ts): a store holding one takes the quad path too.
+  // Literal entities of the N3 index read `"lexical"^^datatype-iri`; a scan of the index is cheap next to the encoding.
+  let hasXmlLiteral = false;
+  if (!rewrite) {
+    const ents = s._entityIndex._entities;
+    for (const k in ents) {
+      const e = ents[k] as string;
+      if (e.charCodeAt(0) === 34 && e.endsWith("^^" + XML_LITERAL)) { hasXmlLiteral = true; break; }
+    }
+  }
+  if (rewrite || hasXmlLiteral) return encodeToBuffers(store.getQuads(null, null, null, null).filter((q) => !skip(q.graph.value)));
 
   const entities = s._entityIndex._entities;
   const graphs = s._graphs;

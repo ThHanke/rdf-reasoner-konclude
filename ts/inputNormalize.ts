@@ -20,6 +20,7 @@
  *    subclass; owl:Thing = all) and share a value for every key property are made owl:sameAs (the DL-safe reading of
  *    HasKey: it only applies to named individuals and asserted values).
  */
+import { canonicalizeXmlLiteral } from "./xmlLiteral.js";
 import type { Quad, Term } from "@rdfjs/types";
 import { DataFactory } from "n3";
 import { isSkolemIri } from "./intern.js";
@@ -51,9 +52,18 @@ const DATATYPE_PROP = OWL + "DatatypeProperty";
 /** Largest number of (literal, disjoint pair) axioms the DisjointDataProperties rewrite adds. */
 export const DISJOINT_DP_LIMIT = 50000;
 
+export const XML_LITERAL = RDF + "XMLLiteral";
+const isXmlLiteral = (t: Term) => t.termType === "Literal" && (t as { datatype?: { value: string } }).datatype?.value === XML_LITERAL;
+/** 4. rdf:XMLLiteral values in canonical form (the kernel compares the strings; see ts/xmlLiteral.ts); the term itself when it is already canonical or not well-formed. */
+function canonicalXmlTerm(t: Term): Term {
+  const canon = canonicalizeXmlLiteral(t.value);
+  return canon === null || canon === t.value ? t : literal(canon, namedNode(XML_LITERAL));
+}
+
 /** True when the input contains a construct that one of the rewrites changes. */
 export function needsRewrite(quads: Iterable<Quad>): boolean {
   for (const q of quads) {
+    if (isXmlLiteral(q.object) && canonicalXmlTerm(q.object) !== q.object) return true;
     if (q.predicate.value === HAS_KEY || q.predicate.value === PROP_DISJOINT || q.predicate.value === HAS_SELF) return true;
     if (q.predicate.value === TYPE && (q.object.value === NPA || q.object.value === ALL_DISJOINT_PROPS)) return true;
     if (q.subject.value === BOTTOM_DP || q.predicate.value === BOTTOM_DP || q.object.value === BOTTOM_DP) return true;
@@ -87,7 +97,7 @@ export function normalizeQuads(input: readonly Quad[]): Quad[] {
       q4(c, nn(TYPE), nn(OWL + "Class")), q4(c, nn(OWL + "complementOf"), r), q4(src, nn(TYPE), c));
   }
   let usesBottom = false;
-  const swap = (t: Term): Term => (t.termType === "NamedNode" && t.value === BOTTOM_DP ? ((usesBottom = true), namedNode(BOTTOM_DP_PROXY)) : t);
+  const swap = (t: Term): Term => (t.termType === "NamedNode" && t.value === BOTTOM_DP ? ((usesBottom = true), namedNode(BOTTOM_DP_PROXY)) : isXmlLiteral(t) ? canonicalXmlTerm(t) : t);
   for (const q of input) {
     if (drop.has(key(q.subject))) continue;
     // 3. OWL 1 style constructor on a named class
