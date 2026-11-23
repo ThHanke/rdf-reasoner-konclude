@@ -1,0 +1,21 @@
+diff --git a/Source/Reasoner/Kernel/Algorithm/CCalculationTableauCompletionTaskHandleAlgorithm.cpp b/Source/Reasoner/Kernel/Algorithm/CCalculationTableauCompletionTaskHandleAlgorithm.cpp
+--- a/Source/Reasoner/Kernel/Algorithm/CCalculationTableauCompletionTaskHandleAlgorithm.cpp
++++ b/Source/Reasoner/Kernel/Algorithm/CCalculationTableauCompletionTaskHandleAlgorithm.cpp
+@@ -21211,7 +21211,7 @@
+ 
+ 							} else {
+ 								CIndividualProcessNode* locConnIndi = getLocalizedIndividual(connID,calcAlgContext);
+-								if (individual->isNominalIndividualNode() || locConnIndi->isNominalIndividualNode() || individual->isIndividualAncestor(locConnIndi) || mergeIntoIndividualNode->hasSuccessorIndividualNode(locConnIndi)) {
++								if (individual->isNominalIndividualNode() || locConnIndi->isNominalIndividualNode() || individual->isIndividualAncestor(locConnIndi) || mergeIntoIndividualNode->hasSuccessorIndividualNode(locConnIndi) || !locConnIndi->isIndividualAncestor(individual)) {
+ 
+ 									if (!individual->isNominalIndividualNode() || !locConnIndi->isIndividualAncestor(individual)) {
+ 
+@@ -25945,7 +25945,7 @@
+ 
+ 									CIndividualNodeRepresentativeMemoryBackendCacheSynchronisationData* mergedBackendSyncData = (CIndividualNodeRepresentativeMemoryBackendCacheSynchronisationData*)locBackendSyncDataIndiNode->getIndividualBackendCacheSynchronisationData(false);
+ 									CBackendRepresentativeMemoryCacheIndividualAssociationData* mergedAssocData = mergedBackendSyncData->getAssocitaionData();
+-									if (mergedAssocData->isIndirectlyConnectedNominalIndividual()) {
++									if (mergedAssocData && mergedAssocData->isIndirectlyConnectedNominalIndividual()) {
+ 										indirectlyConnectedNominalIndividual = true;
+ 									}
+ 

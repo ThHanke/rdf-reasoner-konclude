@@ -420,9 +420,27 @@ diff --git a/Source/Reasoner/Kernel/Algorithm/CDatatypeIndividualProcessNodeHand
  						indiLoadedAssoData->setLoadedNominalIndirectConnectionData(mAssBackCacheReader->getNominalIndirectConnectionData(indiId));
  						indiLoadedAssoData->setIndirectlyConnectedIndividualsIntegration(true);
 diff --git a/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp b/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp
+diff --git a/Source/Reasoner/Kernel/Algorithm/CDatatypeIndividualProcessNodeHandler.cpp b/Source/Reasoner/Kernel/Algorithm/CDatatypeIndividualProcessNodeHandler.cpp
+diff --git a/Source/Reasoner/Kernel/Process/CDatatypeCompareValueSpaceMap.cpp b/Source/Reasoner/Kernel/Process/CDatatypeCompareValueSpaceMap.cpp
+diff --git a/Source/Reasoner/Kernel/Process/CDatatypeDoubleValueSpaceMap.cpp b/Source/Reasoner/Kernel/Process/CDatatypeDoubleValueSpaceMap.cpp
+diff --git a/Source/Reasoner/Kernel/Process/CDatatypeFloatValueSpaceMap.cpp b/Source/Reasoner/Kernel/Process/CDatatypeFloatValueSpaceMap.cpp
+diff --git a/Source/Reasoner/Kernel/Process/CDatatypeRealValueSpaceMap.cpp b/Source/Reasoner/Kernel/Process/CDatatypeRealValueSpaceMap.cpp
+diff --git a/Source/Reasoner/Kernel/Process/CDatatypeStringValueSpaceMap.cpp b/Source/Reasoner/Kernel/Process/CDatatypeStringValueSpaceMap.cpp
+diff --git a/Source/Reasoner/Ontology/CDataLiteralDoubleValue.cpp b/Source/Reasoner/Ontology/CDataLiteralDoubleValue.cpp
+diff --git a/Source/Reasoner/Ontology/CDataLiteralFloatValue.cpp b/Source/Reasoner/Ontology/CDataLiteralFloatValue.cpp
+diff --git a/Source/Reasoner/Preprocess/CDataLiteralNormalizerPreProcess.cpp b/Source/Reasoner/Preprocess/CDataLiteralNormalizerPreProcess.cpp
+diff --git a/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp b/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp
 --- a/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp
 +++ b/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp
-@@ -3930,8 +3930,16 @@
+@@ -3774,6 +3774,7 @@
+ 
+ 					cint64 foundCardinality = 0;
+ 					minCardinality = 0;
++					bool excludedSharedRepresentativeSuccessor = false;
+ 
+ 					bool trivialQualification = true;
+ 					CConceptRoleBranchingTrigger* chooseTriggerLinker = nullptr;
+@@ -3930,8 +3931,16 @@
  							if (operantsContainedPositive || !operantsContained) {
  
  								minCardinality = qMax(minCardinality,succCardinality);
@@ -441,7 +459,38 @@ diff --git a/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSa
  								}
  
  								if (!qualificationRepresentitiveSuccessorIndi) {
-@@ -7117,6 +7125,12 @@
+@@ -3939,6 +3948,16 @@
+ 									CIndividualSaturationSuccessorLinkDataLinker* newMergingSuccDataLinker = createIndividualSaturationSuccessorLinkDataLinker(calcAlgContext);
+ 									newMergingSuccDataLinker->initSuccessorLinkDataLinker(succRoleData);
+ 									mergingSuccDataLinker = newMergingSuccDataLinker->append(mergingSuccDataLinker);
++								} else if (indiProcSatNode->isSeparated() && !succRoleData->mVALUENominalConnection) {
++									// The representative successor is left out of the count because it can be merged into another successor. It is also a
++									// successor for the super roles of its creation role, where it may have to be merged into a different one (e.g. s subrole of
++									// the functional roles f and f1 with f-filler p and f1-filler not-p). Separated nodes skip the functional/merging extensions
++									// that would derive this, so remember it.
++									for (CXNegLinker<CRole*>* creationRoleIt = succRoleData->mCreationRoleLinker; creationRoleIt; creationRoleIt = creationRoleIt->getNext()) {
++										if (!creationRoleIt->isNegated() && creationRoleIt->getData() != role) {
++											excludedSharedRepresentativeSuccessor = true;
++										}
++									}
+ 								}
+ 							}
+ 
+@@ -3946,6 +3965,13 @@
+ 						}
+ 					}
+ 
++					if (excludedSharedRepresentativeSuccessor && allowedCardinality >= 1 && foundCardinality >= allowedCardinality) {
++						// The counted successors already fill the restriction, so the excluded representative must be merged into one of them, and
++						// possibly into a different one for another restriction: let the tableau decide.
++						updateDirectAddingIndividualStatusFlags(indiProcSatNode,CIndividualSaturationProcessNodeStatusFlags::INDSATFLAGINSUFFICIENT,calcAlgContext);
++						setInsufficientNodeOccured(calcAlgContext);
++					}
++
+ 					return foundCardinality;
+ 				}
+ 
+@@ -7117,6 +7143,12 @@
  
  
  						CMemoryAllocationManager* taskMemMan = mCalcAlgContext->getUsedProcessTaskMemoryAllocationManager();
@@ -454,6 +503,17 @@ diff --git a/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSa
  						if (cardinality > 1) {
  							if (existIndiNode->hasNominalIntegrated()) {
  								updateDirectAddingIndividualStatusFlags(processIndi,CIndividualSaturationProcessNodeStatusFlags::INDSATFLAGCLASHED,calcAlgContext);
+@@ -7178,7 +7210,9 @@
+ 										}
+ 										CCriticalPredecessorRoleCardinalityHash* criticalPredRoleCardHash = existIndiNode->getCriticalPredecessorRoleCardinalityHash(false);
+ 										if (criticalPredRoleCardHash) {
+-											CCriticalPredecessorRoleCardinalityData* criticalPredRoleCardData = criticalPredRoleCardHash->getCriticalPredecessorRoleCardinalityData(role,false);
++											// The critical predecessor cardinalities of the shared successor node are recorded under the role of its max restriction
++											// (the inverse of the connecting role), i.e. under the negated super role of this link, not under the existential's own role.
++											CCriticalPredecessorRoleCardinalityData* criticalPredRoleCardData = criticalPredRoleCardHash->getCriticalPredecessorRoleCardinalityData(superRole,false);
+ 											if (criticalPredRoleCardData) {
+ 												updateDirectAddingIndividualStatusFlags(processIndi,CIndividualSaturationProcessNodeStatusFlags::INDSATFLAGINSUFFICIENT,mCalcAlgContext);
+ 												setInsufficientNodeOccured(mCalcAlgContext);
 diff --git a/Source/Reasoner/Kernel/Algorithm/CDatatypeIndividualProcessNodeHandler.cpp b/Source/Reasoner/Kernel/Algorithm/CDatatypeIndividualProcessNodeHandler.cpp
 --- a/Source/Reasoner/Kernel/Algorithm/CDatatypeIndividualProcessNodeHandler.cpp
 +++ b/Source/Reasoner/Kernel/Algorithm/CDatatypeIndividualProcessNodeHandler.cpp
@@ -816,7 +876,7 @@ diff --git a/Source/Reasoner/Preprocess/CDataLiteralNormalizerPreProcess.cpp b/S
  				if (parsingSuccessfull) {
  					CDataLiteralFloatValue* dataLitFloatValue = CObjectAllocator<CDataLiteralFloatValue>::allocateAndConstruct(mMemMan);
  					dataLitFloatValue->initValueFromFloat(floatDataValue);
-@@ -679,14 +688,12 @@
+@@ -679,14 +688,13 @@
  			CDataLiteralValue* CDataLiteralNormalizerPreProcess::parseXMLValue(const QString& valueString, CPreProcessContext* context) {
  				CDataLiteralValue* dataLiteralValue = nullptr;
  				if (!dataLiteralValue) {
@@ -829,10 +889,11 @@ diff --git a/Source/Reasoner/Preprocess/CDataLiteralNormalizerPreProcess.cpp b/S
 -							dataLiteralValue = dataLitXMLValue;
 -						}
 +					// WASM build: the QDomDocument shim (QtCompat.h) always fails, which dropped every rdf:XMLLiteral value.
-+					// Keep the lexical form (no well-formedness check); two XML literals are equal iff their strings are equal.
++					// Keep the lexical form untrimmed (whitespace text nodes are significant in XML); the TypeScript layer sends the canonical form,
++					// so two XML literals are equal iff their strings are equal.
 +					{
 +						CDataLiteralXMLValue* dataLitXMLValue = CObjectAllocator<CDataLiteralXMLValue>::allocateAndConstruct(mMemMan);
-+						dataLitXMLValue->initValueFromXMLString(valueString.trimmed());
++						dataLitXMLValue->initValueFromXMLString(valueString);
 +						dataLiteralValue = dataLitXMLValue;
  					}
  				}

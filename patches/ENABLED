@@ -6,3 +6,4 @@
 003  # Stall detection hooks
 004  # Per-call memory lifecycle (pool/item/cache release, virtual dtors) + diagnostic counters
 005  # OR branching ends the task by status flag instead of a C++ exception on the direct rule chain (324k throws per PMDco classification, ~78 us each in Chromium)
+006  # Completion graph: links of non-child neighbours are moved to the merge target (nominal counting, W3C one_two) and a null guard on the merged association data

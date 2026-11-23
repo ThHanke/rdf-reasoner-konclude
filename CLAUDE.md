@@ -30,7 +30,7 @@ sudo chown -R $USER dist/
 
 **Patch workflow (patch 001):** `scripts/generate-patches.sh` → `make patches` → verify → commit.
 
-**Patch numbering:** the former per-fix patches 000-041 are aggregated into 000-004 (`patches/README.md` maps old to new numbers; originals in `patches/archive/per-fix/`). New vendor patches start at 006 (005 is `or-branching-stop-flag`).
+**Patch numbering:** the former per-fix patches 000-041 are aggregated into 000-004 (`patches/README.md` maps old to new numbers; originals in `patches/archive/per-fix/`). New vendor patches start at 007 (005 is `or-branching-stop-flag`, 006 `nominal-link-moving`).
 
 **Patch workflow (vendor C++ patches 005+):** Use `scripts/new-vendor-patch.py <NNN> <description> <mod_script.py>` — always multi-file capable. Write a mod script that defines `FILES = [...]` and `modify(path, content) -> str`. The framework fetches exact content via `git show HEAD:path`, calls `modify()`, diffs, and writes `patches/NNN-description.patch`. Indentation is handled automatically — content is the exact file text, so `str.replace()` matches without manual tab counting. After adding a new patch: `make reset-patches` before `make build-wasm`.
 
