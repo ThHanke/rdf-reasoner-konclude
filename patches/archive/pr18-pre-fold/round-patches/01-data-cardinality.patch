@@ -1,0 +1,156 @@
+diff --git a/Source/Reasoner/Kernel/Algorithm/CDatatypeIndividualProcessNodeHandler.cpp b/Source/Reasoner/Kernel/Algorithm/CDatatypeIndividualProcessNodeHandler.cpp
+index 26e142e..19f1364 100644
+--- a/Source/Reasoner/Kernel/Algorithm/CDatatypeIndividualProcessNodeHandler.cpp
++++ b/Source/Reasoner/Kernel/Algorithm/CDatatypeIndividualProcessNodeHandler.cpp
+@@ -524,7 +524,9 @@ namespace Konclude {
+ 										CDistinctIterator distinctIterator = distinctHash->getDistinctIterator();
+ 										while (distinctIterator.hasNext()) {
+ 											cint64 distinctIndiID = distinctIterator.nextDistinctIndividualID();
+-											if (distinctIndiID < indiNodeID && sortedDistinctNodeMap->contains(distinctIndiID)) {
++											// The first node was erased from sortedDistinctNodeMap above but already holds a value: its value must be excluded for the
++											// other nodes too, otherwise two distinct nodes with the same single value are judged satisfiable.
++											if (distinctIndiID < indiNodeID && (distinctIndiID == firstIndiNodeID || sortedDistinctNodeMap->contains(distinctIndiID))) {
+ 												CDataLiteralValue* distinctValue = nodeValueAssociationHash->value(distinctIndiID);
+ 												CDatatypeValueSpaceType* distinctValueSpaceType = nodeValueTypeAssociationHash->value(distinctIndiID);
+ 												valueTestingCollection.addDataLiteralValueUse(distinctValue,distinctValueSpaceType);
+diff --git a/Source/Reasoner/Kernel/Process/CDatatypeRealValueSpaceMap.cpp b/Source/Reasoner/Kernel/Process/CDatatypeRealValueSpaceMap.cpp
+index 075a46c..b31379f 100644
+--- a/Source/Reasoner/Kernel/Process/CDatatypeRealValueSpaceMap.cpp
++++ b/Source/Reasoner/Kernel/Process/CDatatypeRealValueSpaceMap.cpp
+@@ -1520,95 +1520,38 @@ namespace Konclude {
+ 
+ 
+ 				bool CDatatypeRealValueSpaceMap::getNextPossibleDataValue(CDataLiteralRealValue* nextValue, CDataLiteralRealValue* lastValue) {
+-
+-					if (!lastValue) {
+-						if (!mAbsoluteMinimumExclusionValue) {
+-							return false;
+-						}
+-						lastValue = mAbsoluteMinimumExclusionValue->getValue();
+-						if (!isDataValueExcluded(mAbsoluteMinimumExclusionValue,nullptr)) {
+-							if (lastValue->hasFlag(CDataLiteralRealValue::DLRV_INTEGER_FLAG)) {
+-								if (lastValue->isInfinite()) {
+-									return false;
+-								} else {
+-									nextValue->initValue(lastValue);
+-									return true;
+-								}
+-							}
+-						}
++					// Ascending enumeration of a finite value space: the explicit map points (integer or not) that are not excluded, and the
++					// integers of integer-only intervals between two points. The previous implementation only ever produced integers, so a
++					// space such as {0.5} or {1/3} had no assignable value and distinct-value checks reported a clash.
++					if (!mAbsoluteMinimumExclusionValue) {
++						return false;
+ 					}
+-
+-
+-					CDatatypeRealValueSpaceMapArranger mapValueArranger(lastValue);
+-					CDatatypeRealValueSpaceMap::iterator itBegin = CDatatypeRealValueSpaceMap::begin(), itLB = CDatatypeRealValueSpaceMap::lowerBound(mapValueArranger), itEnd = CDatatypeRealValueSpaceMap::end();
+-					CDatatypeRealValueSpaceMap::iterator it = itLB;
+-					while (it != itEnd) {
+-
+-						if (it == itLB) {
+-							CDatatypeRealValueData* itValueData = it.value().mUseValue;
+-							while (lastValue->isLessThan(itValueData->getValue())) {
+-								CDatatypeRealValueSpaceMap::iterator itLast = it;
+-								--itLast;
+-								if (itLast != itEnd) {
+-									--it;
+-								} else {
+-									if (!isLeftDataIntervalExcluded(itValueData,nullptr)) {
+-										if (!itValueData->getLeftExclusionData()->areOnlyIntegerValuesAllowed()) {
+-											return false;
+-										}
+-										nextValue->initRationalValueFromNextIntegerValue(lastValue);
+-										if (nextValue->isLessThan(itValueData->getValue())) {
+-											return true;
+-										} else if (nextValue->isEqualTo(itValueData->getValue())) {
+-											if (!isDataValueExcluded(itValueData,nullptr)) {
+-												return true;
+-											}
+-										}
+-									}
+-									break;
+-								}
+-							}
+-						}
+-						CDatatypeRealValueSpaceMapData& mapData = it.value();
+-						CDatatypeRealValueData* itValueData = mapData.mUseValue;
+-
+-						if (itValueData->getValue()->isGreaterThan(lastValue)) {
+-							lastValue = itValueData->getValue();
+-						}
+-
+-						++it;
+-						if (it != itEnd) {
+-							CDatatypeRealValueSpaceMapData& nextMapData = it.value();
+-							CDatatypeRealValueData* nextValueData = nextMapData.mUseValue;
+-
+-							if (!isDataIntervalExcluded(itValueData,nextValueData,nullptr)) {
+-								if (!itValueData->getRightExclusionData()->areOnlyIntegerValuesAllowed()) {
++					CDatatypeRealValueSpaceMap::iterator it = CDatatypeRealValueSpaceMap::begin(), itEnd = CDatatypeRealValueSpaceMap::end();
++					CDatatypeRealValueData* prevData = nullptr;
++					for (; it != itEnd; ++it) {
++						CDatatypeRealValueData* curData = it.value().mUseValue;
++						CDataLiteralRealValue* curValue = curData->getValue();
++						if (prevData) {
++							if (!isDataIntervalExcluded(prevData,curData,nullptr)) {
++								if (!prevData->getRightExclusionData()->areOnlyIntegerValuesAllowed() || prevData->getValue()->isInfinite()) {
++									// not finitely enumerable
+ 									return false;
+ 								}
+-								CDataLiteralRealValue* value = itValueData->getValue();
+-								nextValue->initRationalValueFromNextIntegerValue(lastValue);
+-								if (nextValue->isLessThan(nextValueData->getValue())) {
+-									return true;
+-								} else if (nextValue->isEqualTo(nextValueData->getValue())) {
+-									if (!isDataValueExcluded(nextValueData,nullptr)) {
+-										return true;
+-									}
++								CDataLiteralRealValue* fromValue = prevData->getValue();
++								if (lastValue && lastValue->isGreaterThan(fromValue)) {
++									fromValue = lastValue;
+ 								}
+-							} else if (!isDataValueExcluded(nextValueData,nullptr)) {
+-								nextValue->initRationalValueFromNextIntegerValue(lastValue);
+-								if (nextValue->isEqualTo(nextValueData->getValue())) {
++								nextValue->initRationalValueFromNextIntegerValue(fromValue);
++								if (nextValue->isLessThan(curValue)) {
+ 									return true;
+ 								}
+ 							}
+-						} else {
+-							if (!isRightDataIntervalExcluded(itValueData,nullptr) || !itValueData->getRightExclusionData()->areOnlyIntegerValuesAllowed()) {
+-								return false;
+-							} else {
+-								nextValue->initRationalValueFromNextIntegerValue(lastValue);
+-								return true;
+-							}
+ 						}
+-
++						if (!curValue->isInfinite() && (!lastValue || curValue->isGreaterThan(lastValue)) && !isDataValueExcluded(curData,nullptr)) {
++							nextValue->initValue(curValue);
++							return true;
++						}
++						prevData = curData;
+ 					}
+ 					return false;
+ 				}
+diff --git a/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp b/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp
+index 3c9b839..1581041 100644
+--- a/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp
++++ b/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp
+@@ -7117,6 +7117,12 @@ namespace Konclude {
+ 
+ 
+ 						CMemoryAllocationManager* taskMemMan = mCalcAlgContext->getUsedProcessTaskMemoryAllocationManager();
++						if (cardinality > 1 && role->isDataRole()) {
++							// Saturation shares one successor node for all >=n fillers and does not count the values of its value space
++							// (a finite enumeration such as {a} cannot provide two distinct successors): let the tableau decide.
++							updateDirectAddingIndividualStatusFlags(processIndi,CIndividualSaturationProcessNodeStatusFlags::INDSATFLAGINSUFFICIENT,mCalcAlgContext);
++							setInsufficientNodeOccured(mCalcAlgContext);
++						}
+ 						if (cardinality > 1) {
+ 							if (existIndiNode->hasNominalIntegrated()) {
+ 								updateDirectAddingIndividualStatusFlags(processIndi,CIndividualSaturationProcessNodeStatusFlags::INDSATFLAGCLASHED,calcAlgContext);

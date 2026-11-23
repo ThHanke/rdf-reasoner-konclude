@@ -374,22 +374,6 @@ diff --git a/Source/Reasoner/Generator/CConcreteOntologyUpdateBuilder.cpp b/Sour
  				return concept;
  			}
 diff --git a/Source/Reasoner/Kernel/Algorithm/CDatatypeIndividualProcessNodeHandler.cpp b/Source/Reasoner/Kernel/Algorithm/CDatatypeIndividualProcessNodeHandler.cpp
---- a/Source/Reasoner/Kernel/Algorithm/CDatatypeIndividualProcessNodeHandler.cpp	2026-11-21 01:36:15.274819538 +0000
-+++ b/Source/Reasoner/Kernel/Algorithm/CDatatypeIndividualProcessNodeHandler.cpp	2026-11-21 01:36:15.277280147 +0000
-@@ -221,7 +221,12 @@
- 							if (!negated) {
- 								potentiallyModified |= closeOtherValueSpaces(indiProcNode,valueSpaceType,depTrackPoint,calcAlgContext);
- 							} else {
--								potentiallyModified |= closeValueSpace(indiProcNode,valueSpaceType,depTrackPoint,calcAlgContext);
-+								// WASM port: closing the whole value space is only the negation of a datatype that has no restrictions of its own (owl:real, xsd:string).
-+								// A derived datatype (xsd:integer, xsd:positiveInteger, ...) carries its restrictions as operands; the datatype rule negates
-+								// those right after this call, so closing the whole space here would also exclude values the datatype does not contain.
-+								if (datatypeConcept->getOperandCount() == 0) {
-+									potentiallyModified |= closeValueSpace(indiProcNode,valueSpaceType,depTrackPoint,calcAlgContext);
-+								}
- 							}
- 						}
- 					}
 --- a/Source/Reasoner/Preprocess/CDatatypeNormalizerPreProcess.cpp
 +++ b/Source/Reasoner/Preprocess/CDatatypeNormalizerPreProcess.cpp
 @@ -435,7 +435,7 @@
@@ -435,3 +419,421 @@ diff --git a/Source/Reasoner/Kernel/Algorithm/CDatatypeIndividualProcessNodeHand
  					if (!indiLoadedAssoData->getLoadedNominalIndirectConnectionData()) {
  						indiLoadedAssoData->setLoadedNominalIndirectConnectionData(mAssBackCacheReader->getNominalIndirectConnectionData(indiId));
  						indiLoadedAssoData->setIndirectlyConnectedIndividualsIntegration(true);
+diff --git a/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp b/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp
+--- a/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp
++++ b/Source/Reasoner/Kernel/Algorithm/CCalculationTableauApproximationSaturationTaskHandleAlgorithm.cpp
+@@ -3930,8 +3930,16 @@
+ 							if (operantsContainedPositive || !operantsContained) {
+ 
+ 								minCardinality = qMax(minCardinality,succCardinality);
+-								if (operantsContained && operantsContainedPositive && !indiProcSatNode->getNominalIndividual() && succCardinality > allowedCardinality) {
+-									updateDirectAddingIndividualStatusFlags(indiProcSatNode,CIndividualSaturationProcessNodeStatusFlags::INDSATFLAGCLASHED,calcAlgContext);
++								if (operantsContained && operantsContainedPositive && succCardinality > allowedCardinality) {
++									if (!indiProcSatNode->getNominalIndividual()) {
++										updateDirectAddingIndividualStatusFlags(indiProcSatNode,CIndividualSaturationProcessNodeStatusFlags::INDSATFLAGCLASHED,calcAlgContext);
++									} else {
++										// No clash is derived on nominal nodes (a merged assertion node would give spurious ones), but the node must not stay
++										// "sufficient": the representative successor is left out of foundCardinality below, so an individual with
++										// min 2 r and max 1 r passed unnoticed. Insufficient makes the consistency check fall back to the full tableau.
++										updateDirectAddingIndividualStatusFlags(indiProcSatNode,CIndividualSaturationProcessNodeStatusFlags::INDSATFLAGINSUFFICIENT,calcAlgContext);
++										setInsufficientNodeOccured(calcAlgContext);
++									}
+ 								}
+ 
+ 								if (!qualificationRepresentitiveSuccessorIndi) {
+@@ -7117,6 +7125,12 @@
+ 
+ 
+ 						CMemoryAllocationManager* taskMemMan = mCalcAlgContext->getUsedProcessTaskMemoryAllocationManager();
++						if (cardinality > 1 && role->isDataRole()) {
++							// Saturation shares one successor node for all >=n fillers and does not count the values of its value space
++							// (a finite enumeration such as {a} cannot provide two distinct successors): let the tableau decide.
++							updateDirectAddingIndividualStatusFlags(processIndi,CIndividualSaturationProcessNodeStatusFlags::INDSATFLAGINSUFFICIENT,mCalcAlgContext);
++							setInsufficientNodeOccured(mCalcAlgContext);
++						}
+ 						if (cardinality > 1) {
+ 							if (existIndiNode->hasNominalIntegrated()) {
+ 								updateDirectAddingIndividualStatusFlags(processIndi,CIndividualSaturationProcessNodeStatusFlags::INDSATFLAGCLASHED,calcAlgContext);
+diff --git a/Source/Reasoner/Kernel/Algorithm/CDatatypeIndividualProcessNodeHandler.cpp b/Source/Reasoner/Kernel/Algorithm/CDatatypeIndividualProcessNodeHandler.cpp
+--- a/Source/Reasoner/Kernel/Algorithm/CDatatypeIndividualProcessNodeHandler.cpp
++++ b/Source/Reasoner/Kernel/Algorithm/CDatatypeIndividualProcessNodeHandler.cpp
+@@ -221,7 +221,12 @@
+ 							if (!negated) {
+ 								potentiallyModified |= closeOtherValueSpaces(indiProcNode,valueSpaceType,depTrackPoint,calcAlgContext);
+ 							} else {
+-								potentiallyModified |= closeValueSpace(indiProcNode,valueSpaceType,depTrackPoint,calcAlgContext);
++								// WASM port: closing the whole value space is only the negation of a datatype that has no restrictions of its own (owl:real, xsd:string).
++								// A derived datatype (xsd:integer, xsd:positiveInteger, ...) carries its restrictions as operands; the datatype rule negates
++								// those right after this call, so closing the whole space here would also exclude values the datatype does not contain.
++								if (datatypeConcept->getOperandCount() == 0) {
++									potentiallyModified |= closeValueSpace(indiProcNode,valueSpaceType,depTrackPoint,calcAlgContext);
++								}
+ 							}
+ 						}
+ 					}
+@@ -446,7 +451,10 @@
+ 
+ 					indiProcNode->getDatatypesValueSpaceData(true)->setValueSpaceSatisfiabilityCheckingQueued(false);
+ 
+-					if (distinctIndividualNodeSet->size() > 1) {
++					// A single node needs the value search too: for the compare value spaces (float, double, ...) the interval map only detects
++					// intervals that are excluded as a whole, an empty discrete interval (e.g. float (1.0,nextafter(1.0)) ) shows up as count 0 only.
++					// requiresSatisfiabilityChecking() already restricts the set to nodes whose value count is below the distinct count + 1.
++					if (distinctIndividualNodeSet->size() >= 1) {
+ 
+ 						CTaskProcessorContext* taskProcessorContext = calcAlgContext->getUsedTaskProcessorContext();
+ 						CIndividualProcessNodeVector* indiNodeVector = calcAlgContext->getProcessingDataBox()->getIndividualProcessNodeVector();
+@@ -519,7 +527,9 @@
+ 										CDistinctIterator distinctIterator = distinctHash->getDistinctIterator();
+ 										while (distinctIterator.hasNext()) {
+ 											cint64 distinctIndiID = distinctIterator.nextDistinctIndividualID();
+-											if (distinctIndiID < indiNodeID && sortedDistinctNodeMap->contains(distinctIndiID)) {
++											// The first node was erased from sortedDistinctNodeMap above but already holds a value: its value must be excluded for the
++											// other nodes too, otherwise two distinct nodes with the same single value are judged satisfiable.
++											if (distinctIndiID < indiNodeID && (distinctIndiID == firstIndiNodeID || sortedDistinctNodeMap->contains(distinctIndiID))) {
+ 												CDataLiteralValue* distinctValue = nodeValueAssociationHash->value(distinctIndiID);
+ 												CDatatypeValueSpaceType* distinctValueSpaceType = nodeValueTypeAssociationHash->value(distinctIndiID);
+ 												valueTestingCollection.addDataLiteralValueUse(distinctValue,distinctValueSpaceType);
+diff --git a/Source/Reasoner/Kernel/Process/CDatatypeCompareValueSpaceMap.cpp b/Source/Reasoner/Kernel/Process/CDatatypeCompareValueSpaceMap.cpp
+--- a/Source/Reasoner/Kernel/Process/CDatatypeCompareValueSpaceMap.cpp
++++ b/Source/Reasoner/Kernel/Process/CDatatypeCompareValueSpaceMap.cpp
+@@ -712,7 +712,7 @@
+ 						}
+ 					}
+ 					if (mAbsoluteMaximumExclusionValue) {
+-						if (mAbsoluteMaximumExclusionValue->getValue()->isGreaterThan(value)) {
++						if (mAbsoluteMaximumExclusionValue->getValue()->isLessThan(value)) {
+ 							return false;
+ 						}
+ 						if (mAbsoluteMaximumExclusionValue->getValue()->isEqualTo(value)) {
+@@ -1177,7 +1177,9 @@
+ 								}
+ 							}
+ 						} else {
+-							if (!isRightDataIntervalExcluded(itValueData)) {
++							// last map point: values above it exist only if the interval to the right is NOT excluded
++							// (the test was inverted, so an exhausted space reported a value beyond the maximum)
++							if (isRightDataIntervalExcluded(itValueData)) {
+ 								return false;
+ 							} else {
+ 								getValueNext(nextValue,lastValue);
+diff --git a/Source/Reasoner/Kernel/Process/CDatatypeDoubleValueSpaceMap.cpp b/Source/Reasoner/Kernel/Process/CDatatypeDoubleValueSpaceMap.cpp
+--- a/Source/Reasoner/Kernel/Process/CDatatypeDoubleValueSpaceMap.cpp
++++ b/Source/Reasoner/Kernel/Process/CDatatypeDoubleValueSpaceMap.cpp
+@@ -73,9 +73,9 @@
+ 							newPositive = true;
+ 							newMagnitude = magnitude+1;
+ 						} else if (!positive && magnitude == 0) {
+-							// The successor of -0 is +0
++							// The successor of -0 is +0 (distinct values, -0 < +0)
+ 							newPositive = true;
+-							newMagnitude = 1; // skip +0 for now
++							newMagnitude = 0;
+ 						} else { // if (!positive && magnitude != 0)
+ 							newPositive = false;
+ 							newMagnitude = magnitude-1;
+@@ -125,7 +125,7 @@
+ 
+ 						// the number of values from +0 to 'upperBoundExclusive'
+ 						cint64 plusZeroToEnd = magnitudeUpperBoundExclusive;
+-						valueCount = startToMinusZero+plusZeroToEnd  -1; // extra -1 to count +0/-0 only once for now
++						valueCount = startToMinusZero+plusZeroToEnd; // +0 and -0 are both counted
+ 					}
+ 
+ 					return valueCount;
+diff --git a/Source/Reasoner/Kernel/Process/CDatatypeFloatValueSpaceMap.cpp b/Source/Reasoner/Kernel/Process/CDatatypeFloatValueSpaceMap.cpp
+--- a/Source/Reasoner/Kernel/Process/CDatatypeFloatValueSpaceMap.cpp
++++ b/Source/Reasoner/Kernel/Process/CDatatypeFloatValueSpaceMap.cpp
+@@ -73,9 +73,9 @@
+ 							newPositive = true;
+ 							newMagnitude = magnitude+1;
+ 						} else if (!positive && magnitude == 0) {
+-							// The successor of -0 is +0
++							// The successor of -0 is +0 (distinct values, -0 < +0)
+ 							newPositive = true;
+-							newMagnitude = 1; // skip +0 for now
++							newMagnitude = 0;
+ 						} else { // if (!positive && magnitude != 0)
+ 							newPositive = false;
+ 							newMagnitude = magnitude-1;
+@@ -125,7 +125,7 @@
+ 
+ 						// the number of values from +0 to 'upperBoundExclusive'
+ 						int plusZeroToEnd = magnitudeUpperBoundExclusive;
+-						valueCount = startToMinusZero+plusZeroToEnd  -1; // extra -1 to count +0/-0 only once for now
++						valueCount = startToMinusZero+plusZeroToEnd; // +0 and -0 are both counted
+ 					}
+ 
+ 					return valueCount;
+diff --git a/Source/Reasoner/Kernel/Process/CDatatypeRealValueSpaceMap.cpp b/Source/Reasoner/Kernel/Process/CDatatypeRealValueSpaceMap.cpp
+--- a/Source/Reasoner/Kernel/Process/CDatatypeRealValueSpaceMap.cpp
++++ b/Source/Reasoner/Kernel/Process/CDatatypeRealValueSpaceMap.cpp
+@@ -999,7 +999,7 @@
+ 						}
+ 					}
+ 					if (mAbsoluteMaximumExclusionValue) {
+-						if (mAbsoluteMaximumExclusionValue->getValue()->isGreaterThan(value)) {
++						if (mAbsoluteMaximumExclusionValue->getValue()->isLessThan(value)) {
+ 							return false;
+ 						}
+ 						if (mAbsoluteMaximumExclusionValue->getValue()->isEqualTo(value)) {
+@@ -1520,95 +1520,38 @@
+ 
+ 
+ 				bool CDatatypeRealValueSpaceMap::getNextPossibleDataValue(CDataLiteralRealValue* nextValue, CDataLiteralRealValue* lastValue) {
+-
+-					if (!lastValue) {
+-						if (!mAbsoluteMinimumExclusionValue) {
+-							return false;
+-						}
+-						lastValue = mAbsoluteMinimumExclusionValue->getValue();
+-						if (!isDataValueExcluded(mAbsoluteMinimumExclusionValue,nullptr)) {
+-							if (lastValue->hasFlag(CDataLiteralRealValue::DLRV_INTEGER_FLAG)) {
+-								if (lastValue->isInfinite()) {
+-									return false;
+-								} else {
+-									nextValue->initValue(lastValue);
+-									return true;
+-								}
+-							}
+-						}
++					// Ascending enumeration of a finite value space: the explicit map points (integer or not) that are not excluded, and the
++					// integers of integer-only intervals between two points. The previous implementation only ever produced integers, so a
++					// space such as {0.5} or {1/3} had no assignable value and distinct-value checks reported a clash.
++					if (!mAbsoluteMinimumExclusionValue) {
++						return false;
+ 					}
+-
+-
+-					CDatatypeRealValueSpaceMapArranger mapValueArranger(lastValue);
+-					CDatatypeRealValueSpaceMap::iterator itBegin = CDatatypeRealValueSpaceMap::begin(), itLB = CDatatypeRealValueSpaceMap::lowerBound(mapValueArranger), itEnd = CDatatypeRealValueSpaceMap::end();
+-					CDatatypeRealValueSpaceMap::iterator it = itLB;
+-					while (it != itEnd) {
+-
+-						if (it == itLB) {
+-							CDatatypeRealValueData* itValueData = it.value().mUseValue;
+-							while (lastValue->isLessThan(itValueData->getValue())) {
+-								CDatatypeRealValueSpaceMap::iterator itLast = it;
+-								--itLast;
+-								if (itLast != itEnd) {
+-									--it;
+-								} else {
+-									if (!isLeftDataIntervalExcluded(itValueData,nullptr)) {
+-										if (!itValueData->getLeftExclusionData()->areOnlyIntegerValuesAllowed()) {
+-											return false;
+-										}
+-										nextValue->initRationalValueFromNextIntegerValue(lastValue);
+-										if (nextValue->isLessThan(itValueData->getValue())) {
+-											return true;
+-										} else if (nextValue->isEqualTo(itValueData->getValue())) {
+-											if (!isDataValueExcluded(itValueData,nullptr)) {
+-												return true;
+-											}
+-										}
+-									}
+-									break;
+-								}
+-							}
+-						}
+-						CDatatypeRealValueSpaceMapData& mapData = it.value();
+-						CDatatypeRealValueData* itValueData = mapData.mUseValue;
+-
+-						if (itValueData->getValue()->isGreaterThan(lastValue)) {
+-							lastValue = itValueData->getValue();
+-						}
+-
+-						++it;
+-						if (it != itEnd) {
+-							CDatatypeRealValueSpaceMapData& nextMapData = it.value();
+-							CDatatypeRealValueData* nextValueData = nextMapData.mUseValue;
+-
+-							if (!isDataIntervalExcluded(itValueData,nextValueData,nullptr)) {
+-								if (!itValueData->getRightExclusionData()->areOnlyIntegerValuesAllowed()) {
++					CDatatypeRealValueSpaceMap::iterator it = CDatatypeRealValueSpaceMap::begin(), itEnd = CDatatypeRealValueSpaceMap::end();
++					CDatatypeRealValueData* prevData = nullptr;
++					for (; it != itEnd; ++it) {
++						CDatatypeRealValueData* curData = it.value().mUseValue;
++						CDataLiteralRealValue* curValue = curData->getValue();
++						if (prevData) {
++							if (!isDataIntervalExcluded(prevData,curData,nullptr)) {
++								if (!prevData->getRightExclusionData()->areOnlyIntegerValuesAllowed() || prevData->getValue()->isInfinite()) {
++									// not finitely enumerable
+ 									return false;
+ 								}
+-								CDataLiteralRealValue* value = itValueData->getValue();
+-								nextValue->initRationalValueFromNextIntegerValue(lastValue);
+-								if (nextValue->isLessThan(nextValueData->getValue())) {
+-									return true;
+-								} else if (nextValue->isEqualTo(nextValueData->getValue())) {
+-									if (!isDataValueExcluded(nextValueData,nullptr)) {
+-										return true;
+-									}
++								CDataLiteralRealValue* fromValue = prevData->getValue();
++								if (lastValue && lastValue->isGreaterThan(fromValue)) {
++									fromValue = lastValue;
+ 								}
+-							} else if (!isDataValueExcluded(nextValueData,nullptr)) {
+-								nextValue->initRationalValueFromNextIntegerValue(lastValue);
+-								if (nextValue->isEqualTo(nextValueData->getValue())) {
++								nextValue->initRationalValueFromNextIntegerValue(fromValue);
++								if (nextValue->isLessThan(curValue)) {
+ 									return true;
+ 								}
+ 							}
+-						} else {
+-							if (!isRightDataIntervalExcluded(itValueData,nullptr) || !itValueData->getRightExclusionData()->areOnlyIntegerValuesAllowed()) {
+-								return false;
+-							} else {
+-								nextValue->initRationalValueFromNextIntegerValue(lastValue);
+-								return true;
+-							}
+ 						}
+-
++						if (!curValue->isInfinite() && (!lastValue || curValue->isGreaterThan(lastValue)) && !isDataValueExcluded(curData,nullptr)) {
++							nextValue->initValue(curValue);
++							return true;
++						}
++						prevData = curData;
+ 					}
+ 					return false;
+ 				}
+diff --git a/Source/Reasoner/Kernel/Process/CDatatypeStringValueSpaceMap.cpp b/Source/Reasoner/Kernel/Process/CDatatypeStringValueSpaceMap.cpp
+--- a/Source/Reasoner/Kernel/Process/CDatatypeStringValueSpaceMap.cpp
++++ b/Source/Reasoner/Kernel/Process/CDatatypeStringValueSpaceMap.cpp
+@@ -909,7 +909,7 @@
+ 						}
+ 					}
+ 					if (mAbsoluteMaximumExclusionValue) {
+-						if (mAbsoluteMaximumExclusionValue->getValue()->isGreaterThan(value)) {
++						if (mAbsoluteMaximumExclusionValue->getValue()->isLessThan(value)) {
+ 							return false;
+ 						}
+ 						if (mAbsoluteMaximumExclusionValue->getValue()->isEqualTo(value)) {
+diff --git a/Source/Reasoner/Ontology/CDataLiteralDoubleValue.cpp b/Source/Reasoner/Ontology/CDataLiteralDoubleValue.cpp
+--- a/Source/Reasoner/Ontology/CDataLiteralDoubleValue.cpp
++++ b/Source/Reasoner/Ontology/CDataLiteralDoubleValue.cpp
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include "CDataLiteralDoubleValue.h"
++#include <cmath>
+ 
+ 
+ namespace Konclude {
+@@ -136,7 +137,8 @@
+ 			}
+ 
+ 			bool CDataLiteralDoubleValue::isEqualTo(CDataLiteralDoubleValue* doubleValue) {
+-				return mDouble == doubleValue->mDouble;
++				// +0 and -0 are distinct values of the double value space (-0 < +0)
++				return mDouble == doubleValue->mDouble && std::signbit(mDouble) == std::signbit(doubleValue->mDouble);
+ 			}
+ 
+ 			bool CDataLiteralDoubleValue::isGreaterEqualThan(CDataLiteralDoubleValue* doubleValue) {
+@@ -172,9 +174,9 @@
+ 			bool CDataLiteralDoubleValue::isLessThan(CDataLiteralDoubleValue* doubleValue) {
+ 				if (mDouble < doubleValue->mDouble) {
+ 					return true;
+-				} else {
+-					return false;
+ 				}
++				// -0 < +0
++				return mDouble == 0 && doubleValue->mDouble == 0 && std::signbit(mDouble) && !std::signbit(doubleValue->mDouble);
+ 			}
+ 
+ 
+diff --git a/Source/Reasoner/Ontology/CDataLiteralFloatValue.cpp b/Source/Reasoner/Ontology/CDataLiteralFloatValue.cpp
+--- a/Source/Reasoner/Ontology/CDataLiteralFloatValue.cpp
++++ b/Source/Reasoner/Ontology/CDataLiteralFloatValue.cpp
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include "CDataLiteralFloatValue.h"
++#include <cmath>
+ 
+ 
+ namespace Konclude {
+@@ -138,7 +139,8 @@
+ 			}
+ 
+ 			bool CDataLiteralFloatValue::isEqualTo(CDataLiteralFloatValue* floatValue) {
+-				return mFloat == floatValue->mFloat;
++				// +0 and -0 are distinct values of the float value space (-0 < +0)
++				return mFloat == floatValue->mFloat && std::signbit(mFloat) == std::signbit(floatValue->mFloat);
+ 			}
+ 
+ 			bool CDataLiteralFloatValue::isGreaterEqualThan(CDataLiteralFloatValue* floatValue) {
+@@ -174,9 +176,9 @@
+ 			bool CDataLiteralFloatValue::isLessThan(CDataLiteralFloatValue* floatValue) {
+ 				if (mFloat < floatValue->mFloat) {
+ 					return true;
+-				} else {
+-					return false;
+ 				}
++				// -0 < +0
++				return mFloat == 0 && floatValue->mFloat == 0 && std::signbit(mFloat) && !std::signbit(floatValue->mFloat);
+ 			}
+ 
+ 
+diff --git a/Source/Reasoner/Preprocess/CDataLiteralNormalizerPreProcess.cpp b/Source/Reasoner/Preprocess/CDataLiteralNormalizerPreProcess.cpp
+--- a/Source/Reasoner/Preprocess/CDataLiteralNormalizerPreProcess.cpp
++++ b/Source/Reasoner/Preprocess/CDataLiteralNormalizerPreProcess.cpp
+@@ -19,6 +19,8 @@
+  */
+ 
+ #include "CDataLiteralNormalizerPreProcess.h"
++#include <cstdlib>
++#include <cerrno>
+ 
+ 
+ namespace Konclude {
+@@ -435,8 +437,12 @@
+ 
+ 			CDataLiteralValue* CDataLiteralNormalizerPreProcess::parseDoubleValue(const QString& valueString, CPreProcessContext* context) {
+ 				CDataLiteralValue* dataLiteralValue = nullptr;
+-				bool parsingSuccessfull = false;
+-				double doubleDataValue = valueString.toDouble(&parsingSuccessfull);
++				// std::stod (QString::toDouble in this port) throws for subnormal results and overflow (ERANGE), which dropped the literal
++				// silently. XSD maps overflow to +-INF and keeps subnormals, so parse with strtod and accept ERANGE.
++				const char* lexStr = valueString.c_str();
++				char* lexEnd = nullptr;
++				double doubleDataValue = strtod(lexStr,&lexEnd);
++				bool parsingSuccessfull = (lexEnd != lexStr);
+ 				if (parsingSuccessfull) {
+ 					CDataLiteralDoubleValue* dataLitDoubleValue = CObjectAllocator<CDataLiteralDoubleValue>::allocateAndConstruct(mMemMan);
+ 					dataLitDoubleValue->initValueFromDouble(doubleDataValue);
+@@ -449,8 +455,11 @@
+ 
+ 			CDataLiteralValue* CDataLiteralNormalizerPreProcess::parseFloatValue(const QString& valueString, CPreProcessContext* context) {
+ 				CDataLiteralValue* dataLiteralValue = nullptr;
+-				bool parsingSuccessfull = false;
+-				float floatDataValue = valueString.toFloat(&parsingSuccessfull);
++				// see parseDoubleValue: strtof also accepts subnormal floats such as 1.401298464324817e-45 (std::stof throws out_of_range)
++				const char* lexStr = valueString.c_str();
++				char* lexEnd = nullptr;
++				float floatDataValue = strtof(lexStr,&lexEnd);
++				bool parsingSuccessfull = (lexEnd != lexStr);
+ 				if (parsingSuccessfull) {
+ 					CDataLiteralFloatValue* dataLitFloatValue = CObjectAllocator<CDataLiteralFloatValue>::allocateAndConstruct(mMemMan);
+ 					dataLitFloatValue->initValueFromFloat(floatDataValue);
+@@ -679,14 +688,12 @@
+ 			CDataLiteralValue* CDataLiteralNormalizerPreProcess::parseXMLValue(const QString& valueString, CPreProcessContext* context) {
+ 				CDataLiteralValue* dataLiteralValue = nullptr;
+ 				if (!dataLiteralValue) {
+-					QDomDocument domDocument;
+-					if (domDocument.setContent(valueString,true)) {
+-						QString xmlValueString = domDocument.toString();
+-						if (!xmlValueString.isEmpty()) {
+-							CDataLiteralXMLValue* dataLitXMLValue = CObjectAllocator<CDataLiteralXMLValue>::allocateAndConstruct(mMemMan);
+-							dataLitXMLValue->initValueFromXMLString(valueString.trimmed());
+-							dataLiteralValue = dataLitXMLValue;
+-						}
++					// WASM build: the QDomDocument shim (QtCompat.h) always fails, which dropped every rdf:XMLLiteral value.
++					// Keep the lexical form (no well-formedness check); two XML literals are equal iff their strings are equal.
++					{
++						CDataLiteralXMLValue* dataLitXMLValue = CObjectAllocator<CDataLiteralXMLValue>::allocateAndConstruct(mMemMan);
++						dataLitXMLValue->initValueFromXMLString(valueString.trimmed());
++						dataLiteralValue = dataLitXMLValue;
+ 					}
+ 				}
+ 				return dataLiteralValue;

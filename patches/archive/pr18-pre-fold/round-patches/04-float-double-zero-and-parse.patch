@@ -1,0 +1,170 @@
+diff --git a/Source/Reasoner/Kernel/Algorithm/CDatatypeIndividualProcessNodeHandler.cpp b/Source/Reasoner/Kernel/Algorithm/CDatatypeIndividualProcessNodeHandler.cpp
+--- a/Source/Reasoner/Kernel/Algorithm/CDatatypeIndividualProcessNodeHandler.cpp
++++ b/Source/Reasoner/Kernel/Algorithm/CDatatypeIndividualProcessNodeHandler.cpp
+@@ -451,7 +451,10 @@
+ 
+ 					indiProcNode->getDatatypesValueSpaceData(true)->setValueSpaceSatisfiabilityCheckingQueued(false);
+ 
+-					if (distinctIndividualNodeSet->size() > 1) {
++					// A single node needs the value search too: for the compare value spaces (float, double, ...) the interval map only detects
++					// intervals that are excluded as a whole, an empty discrete interval (e.g. float (1.0,nextafter(1.0)) ) shows up as count 0 only.
++					// requiresSatisfiabilityChecking() already restricts the set to nodes whose value count is below the distinct count + 1.
++					if (distinctIndividualNodeSet->size() >= 1) {
+ 
+ 						CTaskProcessorContext* taskProcessorContext = calcAlgContext->getUsedTaskProcessorContext();
+ 						CIndividualProcessNodeVector* indiNodeVector = calcAlgContext->getProcessingDataBox()->getIndividualProcessNodeVector();
+diff --git a/Source/Reasoner/Kernel/Process/CDatatypeDoubleValueSpaceMap.cpp b/Source/Reasoner/Kernel/Process/CDatatypeDoubleValueSpaceMap.cpp
+--- a/Source/Reasoner/Kernel/Process/CDatatypeDoubleValueSpaceMap.cpp
++++ b/Source/Reasoner/Kernel/Process/CDatatypeDoubleValueSpaceMap.cpp
+@@ -73,9 +73,9 @@
+ 							newPositive = true;
+ 							newMagnitude = magnitude+1;
+ 						} else if (!positive && magnitude == 0) {
+-							// The successor of -0 is +0
++							// The successor of -0 is +0 (distinct values, -0 < +0)
+ 							newPositive = true;
+-							newMagnitude = 1; // skip +0 for now
++							newMagnitude = 0;
+ 						} else { // if (!positive && magnitude != 0)
+ 							newPositive = false;
+ 							newMagnitude = magnitude-1;
+@@ -125,7 +125,7 @@
+ 
+ 						// the number of values from +0 to 'upperBoundExclusive'
+ 						cint64 plusZeroToEnd = magnitudeUpperBoundExclusive;
+-						valueCount = startToMinusZero+plusZeroToEnd  -1; // extra -1 to count +0/-0 only once for now
++						valueCount = startToMinusZero+plusZeroToEnd; // +0 and -0 are both counted
+ 					}
+ 
+ 					return valueCount;
+diff --git a/Source/Reasoner/Kernel/Process/CDatatypeFloatValueSpaceMap.cpp b/Source/Reasoner/Kernel/Process/CDatatypeFloatValueSpaceMap.cpp
+--- a/Source/Reasoner/Kernel/Process/CDatatypeFloatValueSpaceMap.cpp
++++ b/Source/Reasoner/Kernel/Process/CDatatypeFloatValueSpaceMap.cpp
+@@ -73,9 +73,9 @@
+ 							newPositive = true;
+ 							newMagnitude = magnitude+1;
+ 						} else if (!positive && magnitude == 0) {
+-							// The successor of -0 is +0
++							// The successor of -0 is +0 (distinct values, -0 < +0)
+ 							newPositive = true;
+-							newMagnitude = 1; // skip +0 for now
++							newMagnitude = 0;
+ 						} else { // if (!positive && magnitude != 0)
+ 							newPositive = false;
+ 							newMagnitude = magnitude-1;
+@@ -125,7 +125,7 @@
+ 
+ 						// the number of values from +0 to 'upperBoundExclusive'
+ 						int plusZeroToEnd = magnitudeUpperBoundExclusive;
+-						valueCount = startToMinusZero+plusZeroToEnd  -1; // extra -1 to count +0/-0 only once for now
++						valueCount = startToMinusZero+plusZeroToEnd; // +0 and -0 are both counted
+ 					}
+ 
+ 					return valueCount;
+diff --git a/Source/Reasoner/Ontology/CDataLiteralDoubleValue.cpp b/Source/Reasoner/Ontology/CDataLiteralDoubleValue.cpp
+--- a/Source/Reasoner/Ontology/CDataLiteralDoubleValue.cpp
++++ b/Source/Reasoner/Ontology/CDataLiteralDoubleValue.cpp
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include "CDataLiteralDoubleValue.h"
++#include <cmath>
+ 
+ 
+ namespace Konclude {
+@@ -136,7 +137,8 @@
+ 			}
+ 
+ 			bool CDataLiteralDoubleValue::isEqualTo(CDataLiteralDoubleValue* doubleValue) {
+-				return mDouble == doubleValue->mDouble;
++				// +0 and -0 are distinct values of the double value space (-0 < +0)
++				return mDouble == doubleValue->mDouble && std::signbit(mDouble) == std::signbit(doubleValue->mDouble);
+ 			}
+ 
+ 			bool CDataLiteralDoubleValue::isGreaterEqualThan(CDataLiteralDoubleValue* doubleValue) {
+@@ -172,9 +174,9 @@
+ 			bool CDataLiteralDoubleValue::isLessThan(CDataLiteralDoubleValue* doubleValue) {
+ 				if (mDouble < doubleValue->mDouble) {
+ 					return true;
+-				} else {
+-					return false;
+ 				}
++				// -0 < +0
++				return mDouble == 0 && doubleValue->mDouble == 0 && std::signbit(mDouble) && !std::signbit(doubleValue->mDouble);
+ 			}
+ 
+ 
+diff --git a/Source/Reasoner/Ontology/CDataLiteralFloatValue.cpp b/Source/Reasoner/Ontology/CDataLiteralFloatValue.cpp
+--- a/Source/Reasoner/Ontology/CDataLiteralFloatValue.cpp
++++ b/Source/Reasoner/Ontology/CDataLiteralFloatValue.cpp
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include "CDataLiteralFloatValue.h"
++#include <cmath>
+ 
+ 
+ namespace Konclude {
+@@ -138,7 +139,8 @@
+ 			}
+ 
+ 			bool CDataLiteralFloatValue::isEqualTo(CDataLiteralFloatValue* floatValue) {
+-				return mFloat == floatValue->mFloat;
++				// +0 and -0 are distinct values of the float value space (-0 < +0)
++				return mFloat == floatValue->mFloat && std::signbit(mFloat) == std::signbit(floatValue->mFloat);
+ 			}
+ 
+ 			bool CDataLiteralFloatValue::isGreaterEqualThan(CDataLiteralFloatValue* floatValue) {
+@@ -174,9 +176,9 @@
+ 			bool CDataLiteralFloatValue::isLessThan(CDataLiteralFloatValue* floatValue) {
+ 				if (mFloat < floatValue->mFloat) {
+ 					return true;
+-				} else {
+-					return false;
+ 				}
++				// -0 < +0
++				return mFloat == 0 && floatValue->mFloat == 0 && std::signbit(mFloat) && !std::signbit(floatValue->mFloat);
+ 			}
+ 
+ 
+diff --git a/Source/Reasoner/Preprocess/CDataLiteralNormalizerPreProcess.cpp b/Source/Reasoner/Preprocess/CDataLiteralNormalizerPreProcess.cpp
+--- a/Source/Reasoner/Preprocess/CDataLiteralNormalizerPreProcess.cpp
++++ b/Source/Reasoner/Preprocess/CDataLiteralNormalizerPreProcess.cpp
+@@ -19,6 +19,8 @@
+  */
+ 
+ #include "CDataLiteralNormalizerPreProcess.h"
++#include <cstdlib>
++#include <cerrno>
+ 
+ 
+ namespace Konclude {
+@@ -435,8 +437,12 @@
+ 
+ 			CDataLiteralValue* CDataLiteralNormalizerPreProcess::parseDoubleValue(const QString& valueString, CPreProcessContext* context) {
+ 				CDataLiteralValue* dataLiteralValue = nullptr;
+-				bool parsingSuccessfull = false;
+-				double doubleDataValue = valueString.toDouble(&parsingSuccessfull);
++				// std::stod (QString::toDouble in this port) throws for subnormal results and overflow (ERANGE), which dropped the literal
++				// silently. XSD maps overflow to +-INF and keeps subnormals, so parse with strtod and accept ERANGE.
++				const char* lexStr = valueString.c_str();
++				char* lexEnd = nullptr;
++				double doubleDataValue = strtod(lexStr,&lexEnd);
++				bool parsingSuccessfull = (lexEnd != lexStr);
+ 				if (parsingSuccessfull) {
+ 					CDataLiteralDoubleValue* dataLitDoubleValue = CObjectAllocator<CDataLiteralDoubleValue>::allocateAndConstruct(mMemMan);
+ 					dataLitDoubleValue->initValueFromDouble(doubleDataValue);
+@@ -449,8 +455,11 @@
+ 
+ 			CDataLiteralValue* CDataLiteralNormalizerPreProcess::parseFloatValue(const QString& valueString, CPreProcessContext* context) {
+ 				CDataLiteralValue* dataLiteralValue = nullptr;
+-				bool parsingSuccessfull = false;
+-				float floatDataValue = valueString.toFloat(&parsingSuccessfull);
++				// see parseDoubleValue: strtof also accepts subnormal floats such as 1.401298464324817e-45 (std::stof throws out_of_range)
++				const char* lexStr = valueString.c_str();
++				char* lexEnd = nullptr;
++				float floatDataValue = strtof(lexStr,&lexEnd);
++				bool parsingSuccessfull = (lexEnd != lexStr);
+ 				if (parsingSuccessfull) {
+ 					CDataLiteralFloatValue* dataLitFloatValue = CObjectAllocator<CDataLiteralFloatValue>::allocateAndConstruct(mMemMan);
+ 					dataLitFloatValue->initValueFromFloat(floatDataValue);

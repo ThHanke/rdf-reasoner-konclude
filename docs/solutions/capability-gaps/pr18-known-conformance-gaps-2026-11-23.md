@@ -13,16 +13,16 @@ Source: the PR #18 reviewer kit verdict table (raw run, 266 W3C OWL 2 DL tests, 
 
 | Case | W3C expects | Port answers | Status / suspected cause |
 |---|---|---|---|
-| `Datatype-Float-Discrete-001` | inconsistent | consistent | Float/double value counting is not done (excluded from PR #18). Kernel work. |
-| `Minus_Infinity_is_not_in_owl_real` | inconsistent | consistent | To diagnose: lexical conversion (`INF`/`-INF`) vs. value-space semantics. |
-| `Plus_and_Minus_Zero_are_Distinct` | inconsistent | consistent | To diagnose: +0/-0 comparison in the double value space. |
+| `Datatype-Float-Discrete-001` | inconsistent | inconsistent | **Fixed** (patch 002): `CDatatypeCompareValueSpaceMap::getNextPossibleDataValue` had an inverted test at the last map point (an empty interval looked satisfiable); parsing accepts subnormals; the single-node value search runs. |
+| `Minus_Infinity_is_not_in_owl_real` | inconsistent | inconsistent | **Fixed** (patch 002): `excludeValue` compared the maximum in the wrong direction (typo `isGreaterThan`), so a negated literal inside an OR branch was dropped (real, compare and string value space maps). |
+| `Plus_and_Minus_Zero_are_Distinct` | inconsistent | inconsistent | **Fixed** (patch 002): -0 orders before +0 in float and double values and value-space maps; float parsing uses strtod/strtof (accepts subnormals). |
 | `one_two` | inconsistent | consistent | To diagnose (float/double family). |
-| `New-Feature-Rational-003` | consistent | **inconsistent** | False inconsistency. Not rational parsing: any `owl:oneOf` of two distinct non-integer values with `minCardinality 2` (`{0.5, 0.25}`, `{1/3, 2/3}`, `{1.5, 2.5}`) is reported inconsistent, while integer and string enumerations work; and `{a}` / `{1, 1}` with `minCardinality 2` are wrongly consistent. This is the data cardinality over finite value spaces gap (kernel value counting, `CDatatypeIndividualProcessNodeHandler`), excluded by PR #18. Pinned in `tests/integration/data-cardinality-gaps.test.ts`. |
+| `New-Feature-Rational-003` | consistent | consistent | **Fixed** (2026-11-23, patch 002): three kernel changes for data cardinality over enumerated ranges (value exclusion across distinct nodes in `checkSatisfiability`, non-integer points in `CDatatypeRealValueSpaceMap::getNextPossibleDataValue`, data cardinality above 1 routed to the tableau). `tests/integration/data-cardinality.test.ts`. |
 | `WebOnt-description-logic-035` | inconsistent | consistent | Kernel judges the class satisfiable although its definition is contradictory; native Konclude 0.7.0 agrees. Kernel limitation. |
-| `WebOnt-description-logic-105` | inconsistent | consistent | Same as -035. |
+| `WebOnt-description-logic-105` | inconsistent | inconsistent | **Fixed** (patch 002): the saturation skipped the cardinality clash for nominal nodes, so the consistency step stopped early; the node is now marked insufficient and the full tableau runs. `-008`/`-012`/`-035` have another cause and stay open. |
 | `WebOnt-description-logic-502` | inconsistent | inconsistent | **Fixed** (2026-11-23): a class with several `owl:oneOf` lists got all of them merged into one rewritten class, so the kernel read one list. Each constructor triple now becomes its own equivalent class (intersection semantics). |
-| `WebOnt-miscellaneous-203` | inconsistent | consistent | XML literals; absent from the normalized set. |
-| `WebOnt-miscellaneous-204` | inconsistent | consistent | To diagnose. |
+| `WebOnt-miscellaneous-203` | inconsistent | inconsistent | **Fixed** (patch 002): the QDomDocument shim always failed, so every `rdf:XMLLiteral` was dropped; the lexical form is kept (equality by trimmed string, no well-formedness check). |
+| `WebOnt-miscellaneous-204` | inconsistent | inconsistent | **Fixed**, same as `-203`. |
 
 Cause-hunting order (from the plan `docs/plans/2026-11-23-001-fix-pr18-remaining-issues-plan.md`, Unit 7): mapper flags and the FP/IFP skip first, then lexical-form conversion in the Qt shim (`src/compat/QtCompat.h`: `toDouble`/`toFloat` wrap `std::stod`/`stof`, which accept a numeric prefix, unlike Qt), then kernel value-space semantics.
 
@@ -46,3 +46,7 @@ Raw run: 84 entailment tests, port 60 correct / 4 wrong / 20 unsupported; native
 | Datatype-hierarchy conclusions | `WebOnt-I5.8-006`, `-007`, `-008`, `-009` | `p range byte` therefore `p range short`: decidable by a range probe, **being implemented** (useful for users). |
 | Property equivalence / characteristics | `WebOnt-equivalentProperty-003`, `-004`, `WebOnt-SymmetricProperty-002`, `WebOnt-TransitiveProperty-002` | The last two depend on the realization stall (Unit 8). |
 | Other | `WebOnt-allValuesFrom-002` | Not yet analysed. |
+
+## Realization stall: fixed (2026-11-23)
+
+The stall on the ROBOT-normalized `SymmetricProperty-002` / `TransitiveProperty-002` premises was a **stack overflow**, not a deadlock. The backend-cache neighbour expansion for nominals with self loops recurses about 3,400 frames (natively it needs more than 256 KiB of stack: SIGSEGV at 64, 128 and 256 KiB, fine from 512 KiB). WebAssembly pthreads had the Emscripten default of 64 KiB and, with `ASSERTIONS=0` and no stack check, the overflow silently corrupted the heap and the pipeline stalled. Fix: `-sSTACK_SIZE=2097152 -sDEFAULT_PTHREAD_STACK_SIZE=2097152` in `emscripten.cmake` (about 40 MiB of the 1 GiB heap for ~20 threads). Both premises now complete in about 0.3 s. Test: `tests/integration/realization-normalized.test.ts`. Patches 005 and 002 only moved the stack requirement across the old limit, which explains the kit's bisect.

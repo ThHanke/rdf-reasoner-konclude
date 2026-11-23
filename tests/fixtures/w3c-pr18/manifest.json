@@ -122,15 +122,15 @@
   "id": "Datatype-Float-Discrete-001",
   "group": "known-gap",
   "expected": "inconsistent",
-  "portVerdict": "consistent",
-  "status": "known-gap"
+  "portVerdict": "inconsistent",
+  "status": "pass"
  },
  {
   "id": "New-Feature-Rational-003",
   "group": "known-gap",
   "expected": "consistent",
-  "portVerdict": "inconsistent",
-  "status": "known-gap"
+  "portVerdict": "consistent",
+  "status": "pass"
  },
  {
   "id": "one_two",
@@ -150,8 +150,8 @@
   "id": "WebOnt-description-logic-105",
   "group": "known-gap",
   "expected": "inconsistent",
-  "portVerdict": "consistent",
-  "status": "known-gap"
+  "portVerdict": "inconsistent",
+  "status": "pass"
  },
  {
   "id": "WebOnt-description-logic-502",
@@ -164,15 +164,15 @@
   "id": "WebOnt-miscellaneous-203",
   "group": "known-gap",
   "expected": "inconsistent",
-  "portVerdict": "consistent",
-  "status": "known-gap"
+  "portVerdict": "inconsistent",
+  "status": "pass"
  },
  {
   "id": "WebOnt-miscellaneous-204",
   "group": "known-gap",
   "expected": "inconsistent",
-  "portVerdict": "consistent",
-  "status": "known-gap"
+  "portVerdict": "inconsistent",
+  "status": "pass"
  },
  {
   "id": "Inconsistent_Disjoint_Dataproperties",
@@ -194,16 +194,16 @@
   "id": "Minus_Infinity_is_not_in_owl_real",
   "group": "known-gap",
   "expected": "inconsistent",
-  "portVerdict": "consistent",
-  "status": "known-gap",
+  "portVerdict": "inconsistent",
+  "status": "pass",
   "source": "ROBOT conversion (functional syntax only in the W3C set)"
  },
  {
   "id": "Plus_and_Minus_Zero_are_Distinct",
   "group": "known-gap",
   "expected": "inconsistent",
-  "portVerdict": "consistent",
-  "status": "known-gap",
+  "portVerdict": "inconsistent",
+  "status": "pass",
   "source": "ROBOT conversion (functional syntax only in the W3C set)"
  }
 ]

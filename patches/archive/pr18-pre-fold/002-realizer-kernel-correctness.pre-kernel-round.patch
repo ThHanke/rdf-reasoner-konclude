@@ -1,0 +1,437 @@
+# Realizer/kernel correctness: merging-limit precedence, role-message trace (native diag), late role candidate requeue, dependency-node init, transitive sub-role inversion, queued-flag init, basement prev-build flag, KPSet registration of items created by the init-message flush (old 017-021, 027, 034; 009 of the 0.9.0 series); 0.9.1 series: role candidate confirmation waits for sub-role initialization and skips pairs known on a sub-role (old 0.9.1 005, 006).
+# Aggregated from the per-fix patches; see patches/README.md for the old-number mapping.
+diff --git a/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.cpp b/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.cpp
+index 084bb7c..014e3dd 100644
+--- a/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.cpp
++++ b/Source/Reasoner/Classifier/COptimizedKPSetClassSubsumptionClassifierThread.cpp
+@@ -966,6 +966,24 @@ namespace Konclude {
+ 								// are fully constructed.
+ 								flushPendingInitMessages(optKPSetClassificationItem);
+ 
++								// The flush created possible-subsumption maps after the collection loop above had run: register the
++								// items of those maps for testing too, otherwise their open candidates are never tested.
++								{
++									QSet<COptimizedKPSetClassTestingItem*> collectedItemSet;
++									foreach (COptimizedKPSetClassTestingItem* collectedItem, resevePossSubsumClassList) {
++										collectedItemSet.insert(collectedItem);
++									}
++									foreach (COptimizedKPSetClassTestingItem* lateItem, classList) {
++										COptimizedKPSetClassPossibleSubsumptionMap* lateSubsumMap = lateItem->getPossibleSubsumptionMap(false);
++										if (lateSubsumMap && lateSubsumMap->hasRemainingPossibleSubsumptions() && !collectedItemSet.contains(lateItem)) {
++											if (mConfPossSubsumCalcOrderTopDown) {
++												nextItemList->append(lateItem);
++												remTestingSet->insert(lateItem);
++											}
++											resevePossSubsumClassList.append(lateItem);
++										}
++									}
++								}
+ 
+ 								foreach (COptimizedKPSetClassTestingItem* item, classList) {
+ 									COptimizedKPSetClassPossibleSubsumptionMap* possSubsumMap = item->getPossibleSubsumptionMap(false);
+diff --git a/Source/Reasoner/Kernel/Process/Dependency/CDependencyNode.cpp b/Source/Reasoner/Kernel/Process/Dependency/CDependencyNode.cpp
+index 46c4602..ead1f1c 100644
+--- a/Source/Reasoner/Kernel/Process/Dependency/CDependencyNode.cpp
++++ b/Source/Reasoner/Kernel/Process/Dependency/CDependencyNode.cpp
+@@ -35,6 +35,9 @@ namespace Konclude {
+ 					CDependencyNode::CDependencyNode(CProcessContext* processContext) : CProcessingTag(processContext->getUsedProcessTagger()->getCurrentProcessingTagAndInc()) {
+ 						mProcessContext = processContext;
+ 						mDepNodeType = DNTUNDEFINED;
++						mDepTrackPoint = nullptr;
++						mConceptDescriptor = nullptr;
++						mIndividualNode = nullptr;
+ 						//mAdditionalAheadDepLinker = nullptr;
+ 						mAdditionalAfterDepLinker = nullptr;
+ 					}
+diff --git a/Source/Reasoner/Ontology/COntologyDataBoxes.cpp b/Source/Reasoner/Ontology/COntologyDataBoxes.cpp
+index 67fe9b4..4bb00f7 100644
+--- a/Source/Reasoner/Ontology/COntologyDataBoxes.cpp
++++ b/Source/Reasoner/Ontology/COntologyDataBoxes.cpp
+@@ -125,6 +125,9 @@ namespace Konclude {
+ 
+ 			COntologyDataBoxes* COntologyDataBoxes::setBasicBuild(bool basicBuild) {
+ 				mBasicBuild = basicBuild;
++				if (basicBuild) {
++					mPrevOntBasicBuild = true;
++				}
+ 				return this;
+ 			}
+ 
+diff --git a/Source/Reasoner/Realizer/COptimizedKPSetRoleInstancesItem.cpp b/Source/Reasoner/Realizer/COptimizedKPSetRoleInstancesItem.cpp
+index 73dee09..79e374d 100644
+--- a/Source/Reasoner/Realizer/COptimizedKPSetRoleInstancesItem.cpp
++++ b/Source/Reasoner/Realizer/COptimizedKPSetRoleInstancesItem.cpp
+@@ -47,6 +47,7 @@ namespace Konclude {
+ 				mAllSuccProcessedFlag = false;
+ 				mToProcessFlag = false;
+ 				mPossibleProcessingQueuedFlag = false;
++				mComplexCandidateProcessingQueuedFlag = false;
+ 				mSelfSuccsCompletedFlag = false;
+ 				mRequiresCandidateInitializationFlag = true;
+ 				mUninitializedSuccItemCount = 0;
+@@ -788,7 +789,7 @@ namespace Konclude {
+ 
+ 			COptimizedKPSetIndividualItemReferencePair COptimizedKPSetRoleInstancesItem::takeNextTestingComplexInstanceCandidate() {
+ 				COptimizedKPSetIndividualItemReferencePair nextItem = COptimizedKPSetIndividualItemReferencePair(CRealizationIndividualInstanceItemReference(), CRealizationIndividualInstanceItemReference());
+-				if (hasPossibleInstances()) {
++				if (hasComplexInstanceCandidates()) {
+ 					QSet<COptimizedKPSetIndividualItemReferencePair>::iterator it = mComplexRoleCandidateInstancesSet.begin();
+ 					nextItem = *it;
+ 					mComplexRoleCandidateInstancesSet.erase(it);
+diff --git a/Source/Reasoner/Realizer/COptimizedKPSetRoleInstancesItem.h b/Source/Reasoner/Realizer/COptimizedKPSetRoleInstancesItem.h
+index a3c4163..514a10d 100644
+--- a/Source/Reasoner/Realizer/COptimizedKPSetRoleInstancesItem.h
++++ b/Source/Reasoner/Realizer/COptimizedKPSetRoleInstancesItem.h
+@@ -158,6 +158,10 @@ namespace Konclude {
+ 					COptimizedKPSetRoleInstancesItem* setTestingInitializationPropagationCount(cint64 testPossIntCount);
+ 					COptimizedKPSetRoleInstancesItem* incTestingInitializationPropagationCount(cint64 incCount = 1);
+ 					COptimizedKPSetRoleInstancesItem* decTestingInitializationPropagationCount(cint64 decCount = 1);
++					// initialization tests created for this role whose result has not been processed yet
++					bool hasPendingInitializationTests() { return mPendingInitializationTestCount > 0; }
++					void incPendingInitializationTests() { ++mPendingInitializationTestCount; }
++					void decPendingInitializationTests() { --mPendingInitializationTestCount; }
+ 
+ 
+ 
+@@ -337,6 +341,7 @@ namespace Konclude {
+ 
+ 
+ 					cint64 mTestingInitializationPropagationCount;
++					cint64 mPendingInitializationTestCount = 0;
+ 					cint64 mTestingPossibleInstancesCount;
+ 
+ 
+diff --git a/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp b/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp
+index 3c0cbad..4fc5185 100644
+--- a/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp
++++ b/Source/Reasoner/Realizer/COptimizedRepresentativeKPSetOntologyRealizingThread.cpp
+@@ -1715,7 +1715,7 @@ namespace Konclude {
+ 
+ 
+ 			bool COptimizedRepresentativeKPSetOntologyRealizingThread::checkTrivialInstanceConceptRepresentativeCacheBasedMerging(COptimizedRepresentativeKPSetOntologyRealizingItem* reqConfPreCompItem, CConcept* concept, bool conceptNegation, CBackendRepresentativeMemoryCacheIndividualAssociationData* assData, bool* mergableFlag, bool* unmergableFlag, cint64* mergingOperationLimit) {
+-				if (mergingOperationLimit && *mergingOperationLimit-- <= 0) {
++				if (mergingOperationLimit && (*mergingOperationLimit)-- <= 0) {
+ 					return false;
+ 				}
+ 
+@@ -1828,7 +1828,7 @@ namespace Konclude {
+ 								++succCount;
+ 
+ 
+-								if (mergingOperationLimit && *mergingOperationLimit-- <= 0) {
++								if (mergingOperationLimit && (*mergingOperationLimit)-- <= 0) {
+ 									cancled = true;
+ 									return false;
+ 								}
+@@ -1877,7 +1877,7 @@ namespace Konclude {
+ 							}
+ 
+ 
+-							if (mergingOperationLimit && *mergingOperationLimit-- <= 0) {
++							if (mergingOperationLimit && (*mergingOperationLimit)-- <= 0) {
+ 								cancled = true;
+ 								return false;
+ 							}
+@@ -1920,7 +1920,7 @@ namespace Konclude {
+ 									}
+ 								}
+ 
+-								if (mergingOperationLimit && *mergingOperationLimit-- <= 0) {
++								if (mergingOperationLimit && (*mergingOperationLimit)-- <= 0) {
+ 									cancled = true;
+ 									return false;
+ 								}
+@@ -1983,7 +1983,7 @@ namespace Konclude {
+ 
+ 
+ 			bool COptimizedRepresentativeKPSetOntologyRealizingThread::checkTrivialInstanceConceptCachedCompletionGraphBasedMerging(COptimizedRepresentativeKPSetOntologyRealizingItem* reqConfPreCompItem, CConcept* concept, bool conceptNegation, CIndividualProcessNode* indiNode, CIndividualProcessNodeVector* indiProcVector, bool* mergableFlag, bool* unmergableFlag, cint64* mergingOperationLimit) {
+-				if (mergingOperationLimit && *mergingOperationLimit-- <= 0) {
++				if (mergingOperationLimit && (*mergingOperationLimit)-- <= 0) {
+ 					return false;
+ 				}
+ 
+@@ -2653,6 +2653,7 @@ namespace Konclude {
+ 						CIndividualRoleCandidateTestingData indiRoleCandTestData(*it);
+ 						COptimizedKPSetRoleInstancesItem* realItem = indiRoleCandTestData.getRoleInstancesItem();
+ 						realItem->incTestingInitializationPropagationCount();
++						realItem->incPendingInitializationTests();
+ 						satCalcJob = satCalcJobGen.getSatisfiableCalculationJob(indiRoleCandTestData.getPropagationConcept(), false, indiRef, satCalcJob);
+ 					}
+ 
+@@ -2787,7 +2788,7 @@ namespace Konclude {
+ 								COptimizedKPSetIndividualComplexRoleData* indiComplexSubRoleData = subRoleInstancesItem->getIndividualIdComplexRoleData(indiId, true);
+ 								COptimizedKPSetIndividualComplexRoleExplicitIndirectLinksData* indiExplicitIndirectLinkComplexRoleRepresentationData = (COptimizedKPSetIndividualComplexRoleExplicitIndirectLinksData*)indiComplexRoleData;
+ 								COptimizedKPSetIndividualComplexRoleExplicitIndirectLinksData* indiExplicitIndirectLinkComplexSubRoleRepresentationData = (COptimizedKPSetIndividualComplexRoleExplicitIndirectLinksData*)indiComplexSubRoleData;
+-								COptimizedKPSetRoleInstancesHash* subRoleComplexInstancesHash = indiExplicitIndirectLinkComplexSubRoleRepresentationData->getRoleNeighbourInstancesHash(inversed, true);
++								COptimizedKPSetRoleInstancesHash* subRoleComplexInstancesHash = indiExplicitIndirectLinkComplexSubRoleRepresentationData->getRoleNeighbourInstancesHash(subRoleItemInversed, true);
+ 								for (QHash<cint64, COptimizedKPSetRoleInstancesHashData>::const_iterator it = subRoleComplexInstancesHash->constBegin(), itEnd = subRoleComplexInstancesHash->constEnd(); it != itEnd; ++it) {
+ 									cint64 succIndiId = it.key();
+ 									CRealizationIndividualInstanceItemReference succIndiItemRef = reqConfPreCompItem->getInstanceItemReference(succIndiId, true);
+@@ -3088,11 +3089,117 @@ namespace Konclude {
+ 
+ 
+ 
++			// A confirmation test for (a,b) on a role is redundant when a sub-role already has the pair as known
++			// instance (sub-role det pair implies the super-role pair). Which role message of an individual test is
++			// handled first decides whether the super-role candidate is queued as possible although the sub-role
++			// pair is known, so without this check the number of tests depends on message order.
++			// Known det pairs live in one of three stores (see addComplexRoleExplicitIndirectNeighbourLink): the complex role data,
++			// the individual's direct known/possible neighbour hash, or the backend neighbour-role-set label cache.
++			static bool isRolePairKnownOnItem(COptimizedRepresentativeKPSetOntologyRealizingItem* reqConfPreCompItem, COptimizedKPSetRoleInstancesItem* roleItem, bool inversion, const CRealizationIndividualInstanceItemReference& srcRef, cint64 tgtId) {
++				cint64 srcId = srcRef.getIndividualID();
++				COptimizedKPSetIndividualComplexRoleData* complexData = roleItem->getIndividualIdComplexRoleData(srcId, false);
++				if (complexData) {
++					COptimizedKPSetRoleInstancesData* instanceData = ((COptimizedKPSetIndividualComplexRoleExplicitIndirectLinksData*)complexData)->getRoleNeighbourInstanceItemData(inversion, tgtId, false);
++					if (instanceData && instanceData->mKnownInstance) {
++						return true;
++					}
++				}
++				COptimizedKPSetIndividualItem* srcItem = (COptimizedKPSetIndividualItem*)srcRef.getRealizationInstanceItem();
++				if (srcItem && srcItem->getKnownPossibleRoleNeighboursInstancesHash()->contains(roleItem)) {
++					COptimizedKPSetRoleNeighbourInstancesHashData& neighbourData = srcItem->getKnownPossibleRoleNeighboursInstancesHash()->operator[](roleItem);
++					COptimizedKPSetRoleInstancesData* instanceData = neighbourData.getRoleNeighbourInstanceItemData(inversion, tgtId, false);
++					if (instanceData && instanceData->mKnownInstance) {
++						return true;
++					}
++				}
++				CBackendRepresentativeMemoryCacheIndividualAssociationData* indiAssData = reqConfPreCompItem->getBackendAssociationCacheReader()->getIndividualAssociationData(srcId);
++				if (indiAssData) {
++					CBackendRepresentativeMemoryLabelCacheItem* combinationLabelItem = indiAssData->getLabelCacheEntry(CBackendRepresentativeMemoryLabelCacheItem::NEIGHBOUR_INSTANTIATED_ROLE_SET_COMBINATION_LABEL);
++					CBackendRepresentativeMemoryCacheIndividualNeighbourRoleSetHash* neighbourRoleSetHash = indiAssData->getNeighbourRoleSetHash();
++					if (combinationLabelItem && neighbourRoleSetHash) {
++						CBackendRepresentativeMemoryLabelCacheItem* cacheLabelItem = neighbourRoleSetHash->getNeighbourRoleSetLabel(tgtId);
++						COptimizedKPSetRoleInstancesCombinedNeighbourRoleSetCacheLabelData* labelData = roleItem->getCombinedNeighbourCacheLabelItemDataHash(inversion)->value(combinationLabelItem);
++						if (cacheLabelItem && labelData && labelData->hasKnownInstancesLabelItem(cacheLabelItem)) {
++							return true;
++						}
++					}
++				}
++				return false;
++			}
++
++			static bool isComplexRolePairKnownBySubRole(COptimizedRepresentativeKPSetOntologyRealizingItem* reqConfPreCompItem, COptimizedKPSetRoleInstancesItem* roleInstancesItem, bool inversion, const CRealizationIndividualInstanceItemReference& item1Ref, const CRealizationIndividualInstanceItemReference& item2Ref, QSet<COptimizedKPSetRoleInstancesItem*>& visited) {
++				for (const TRoleItemInversionPair& subPair : *roleInstancesItem->getSuccessorItemList()) {
++					COptimizedKPSetRoleInstancesItem* subItem = subPair.first;
++					if (!subItem || visited.contains(subItem)) {
++						continue;
++					}
++					visited.insert(subItem);
++					bool subInversion = inversion ^ subPair.second;
++					// parent(a,b) <=> sub(a,b) without inversion, sub(b,a) with inversion; sub(x,y) is stored either as
++					// (x, successor y) or, when derived from the inverse marker, as (y, predecessor x)
++					const CRealizationIndividualInstanceItemReference& subSrcRef = subInversion ? item2Ref : item1Ref;
++					const CRealizationIndividualInstanceItemReference& subTgtRef = subInversion ? item1Ref : item2Ref;
++					if (isRolePairKnownOnItem(reqConfPreCompItem, subItem, false, subSrcRef, subTgtRef.getIndividualID()) || isRolePairKnownOnItem(reqConfPreCompItem, subItem, true, subTgtRef, subSrcRef.getIndividualID())) {
++						return true;
++					}
++					if (isComplexRolePairKnownBySubRole(reqConfPreCompItem, subItem, subInversion, item1Ref, item2Ref, visited)) {
++						return true;
++					}
++				}
++				return false;
++			}
++
++
++
++			// A role is ready for candidate confirmation when no individual-based initialization is pending and the role and every sub-role
++			// (transitively) have settled initialization: not marked for realization, or all initialization tests created and none in flight.
++			static bool isRoleInitializationSettled(COptimizedKPSetRoleInstancesItem* roleItem) {
++				return !roleItem->hasPendingInitializationTests() && (roleItem->isCandidateSuccessorInitializationCompleted() || !roleItem->hasToInitializeCandidatesFlag());
++			}
++
++			static bool areSubRolesInitializationSettled(COptimizedKPSetRoleInstancesItem* roleItem, QSet<COptimizedKPSetRoleInstancesItem*>& visited) {
++				for (const TRoleItemInversionPair& subPair : *roleItem->getSuccessorItemList()) {
++					COptimizedKPSetRoleInstancesItem* subItem = subPair.first;
++					if (!subItem || visited.contains(subItem)) {
++						continue;
++					}
++					visited.insert(subItem);
++					if (!isRoleInitializationSettled(subItem) || !areSubRolesInitializationSettled(subItem, visited)) {
++						return false;
++					}
++				}
++				return true;
++			}
++
++			static bool isRoleReadyForCandidateConfirmation(COptimizedRepresentativeKPSetOntologyRealizingItem* reqConfPreCompItem, COptimizedKPSetRoleInstancesItem* roleItem) {
++				if (reqConfPreCompItem->hasRemainingInitializingRoleInstanceIndividualItemReferences() || reqConfPreCompItem->hasRemainingInitializingRoleSuccessorInstanceIndividualItemReferencePairs() || reqConfPreCompItem->hasRemainingInitializingRolePredeccessorInstanceIndividualItemReferencePairs()) {
++					return false;
++				}
++				QSet<COptimizedKPSetRoleInstancesItem*> visited;
++				visited.insert(roleItem);
++				return isRoleInitializationSettled(roleItem) && areSubRolesInitializationSettled(roleItem, visited);
++			}
++
++
++
+ 			bool COptimizedRepresentativeKPSetOntologyRealizingThread::createNextRoleComplexCandidateConfirmationTest(COptimizedRepresentativeKPSetOntologyRealizingItem* reqConfPreCompItem, COptimizedKPSetRoleInstancesItem* roleInstancesItem, COptimizedKPSetIndividualItemReferencePair candidatePair, COntologyRealizingDynamicRequirmentProcessingData* procData) {
+ 				bool workCreated = false;
+ 				CRealizationIndividualInstanceItemReference item1Ref = candidatePair.first;
+ 				CRealizationIndividualInstanceItemReference item2Ref = candidatePair.second;
+ 
++				{
++					QSet<COptimizedKPSetRoleInstancesItem*> visitedSubRoles;
++					if (isComplexRolePairKnownBySubRole(reqConfPreCompItem, roleInstancesItem, false, item1Ref, item2Ref, visitedSubRoles)) {
++						COptimizedKPSetIndividualComplexRoleData* knownComplexData = roleInstancesItem->getIndividualIdComplexRoleData(item1Ref.getIndividualID(), true);
++						COptimizedKPSetRoleInstancesData* knownInstanceData = ((COptimizedKPSetIndividualComplexRoleExplicitIndirectLinksData*)knownComplexData)->getRoleNeighbourInstanceItemData(false, item2Ref.getIndividualID(), true);
++						if (!knownInstanceData->mTestedInstance && !knownInstanceData->mTestingInstance && !knownInstanceData->mKnownInstance) {
++							knownInstanceData->mKnownInstance = true;
++							knownInstanceData->mTestedInstance = true;
++						}
++						return false;
++					}
++				}
++
+ 				reqConfPreCompItem->incTestingRoleInstanceCandidatesCount();
+ 				roleInstancesItem->incTestingComplexCandidateInstancesCount();
+ 
+@@ -3537,17 +3644,29 @@ namespace Konclude {
+ 
+ 
+ 
+-								if (reqConfPreCompItem->hasRemainingCandidateConfirmationRoleInstanceItems()) {
++								// confirm possible role candidates of a role only when the initialization of the role and of all its sub-roles is settled:
++								// a candidate that is possible on a super role is often known on a sub-role whose initialization is still pending, and a
++								// test started before that information arrives is wasted (the number of such tests depended on message order)
++								if (reqConfPreCompItem->hasRemainingCandidateConfirmationRoleInstanceItems()) {
++									bool allInitializationDone = !reqConfPreCompItem->hasPropagatingRoleInstanceCandidates() && !reqConfPreCompItem->hasRemainingInitializingRoleInstanceItems() &&
++											!reqConfPreCompItem->hasRemainingInitializingRoleInstanceIndividualItemReferences() && !reqConfPreCompItem->hasRemainingInitializingRoleSuccessorInstanceIndividualItemReferencePairs() && !reqConfPreCompItem->hasRemainingInitializingRolePredeccessorInstanceIndividualItemReferencePairs();
+ 									QList<COptimizedKPSetRoleInstancesItem*>* candidateConfirmationRoleInstancesItemList = reqConfPreCompItem->getCandidateConfirmationRoleInstancesItemList();
+-									while (!workTestCreated && !candidateConfirmationRoleInstancesItemList->isEmpty()) {
+-										COptimizedKPSetRoleInstancesItem* nextCandidateConfirmationRoleItem = candidateConfirmationRoleInstancesItemList->first();
++									int candidateConfirmationRoleIndex = 0;
++									while (!workTestCreated && candidateConfirmationRoleIndex < candidateConfirmationRoleInstancesItemList->size()) {
++										COptimizedKPSetRoleInstancesItem* nextCandidateConfirmationRoleItem = candidateConfirmationRoleInstancesItemList->at(candidateConfirmationRoleIndex);
++
++										if (!allInitializationDone && !isRoleReadyForCandidateConfirmation(reqConfPreCompItem, nextCandidateConfirmationRoleItem)) {
++											++candidateConfirmationRoleIndex;
++											continue;
++										}
+ 
+ 										if (nextCandidateConfirmationRoleItem->hasComplexInstanceCandidates()) {
+ 											COptimizedKPSetIndividualItemReferencePair candidatePair = nextCandidateConfirmationRoleItem->takeNextTestingComplexInstanceCandidate();
+ 											workTestCreated = createNextRoleComplexCandidateConfirmationTest(reqConfPreCompItem, nextCandidateConfirmationRoleItem, candidatePair);
+ 										}
+ 										if (!nextCandidateConfirmationRoleItem->hasComplexInstanceCandidates()) {
+-											candidateConfirmationRoleInstancesItemList->removeFirst();
++											nextCandidateConfirmationRoleItem->setComplexCandidateProcessingQueuedFlag(false);
++											candidateConfirmationRoleInstancesItemList->removeAt(candidateConfirmationRoleIndex);
+ 										}
+ 										checkFinishRoleInstancesProcessing(reqConfPreCompItem, nextCandidateConfirmationRoleItem);
+ 									}
+@@ -4278,6 +4397,9 @@ namespace Konclude {
+ 						QList<CIndividualRoleCandidateTestingData>* indiRoleCandTestDataList = indiRoleCandTestItem->geIndividualRoleCandidateTestingDataList();
+ 
+ 						for (CIndividualRoleCandidateTestingData& indiRoleCandTestData : *indiRoleCandTestDataList) {
++							if (indiRoleCandTestData.getRoleInstancesItem()) {
++								indiRoleCandTestData.getRoleInstancesItem()->decPendingInitializationTests();
++							}
+ 							CConcept* markerConcept = indiRoleCandTestData.getMarkerConcept();
+ 							COptimizedKPSetIndividualComplexRoleData* indiComplexData = indiRoleCandTestData.getIndividualComplexData();
+ 							bool inversed = indiRoleCandTestData.getInversed();
+@@ -4638,6 +4760,10 @@ namespace Konclude {
+ 						// add to testing queue
+ 						roleInstItem->addComplexCandidateInstance(COptimizedKPSetIndividualItemReferencePair(indiRealItemRef, CRealizationIndividualInstanceItemReference(neighbourIndi, realItem->getIndividualInstantiatedItem(neighbourIndi.getIndividual(), false))), inversed);
+ 					}
++					if (!instanceData->mKnownInstance && roleInstItem->hasToProcessPossibleInstancesFlag()) {
++						// late candidate: make sure the (already marked) role item is queued for confirmation
++						realItem->addRoleInstanceItemToProcessComplexCandidateInstances(roleInstItem);
++					}
+ 					if (wasAlreadyPossibleMarked && instanceData->mKnownInstance) {
+ 						// remove from testing queue
+ 						roleInstItem->removeComplexCandidateInstance(COptimizedKPSetIndividualItemReferencePair(indiRealItemRef, CRealizationIndividualInstanceItemReference(neighbourIndi, realItem->getIndividualInstantiatedItem(neighbourIndi.getIndividual(), false))), inversed);
+@@ -4689,6 +4815,14 @@ namespace Konclude {
+ 							addComplexRoleExplicitIndirectNeighbourLink(roleInstItem, inversed, indiRealItemRef, indiExplicitIndirectLinkComplexRepresentationData, indiRoleNeighbourHashData, combinedNeighbourCacheLabelItemData, assNeighbourRoleSetHash, candIndi, nullptr, deterministic, realItem);
+ 						};
+ 
++#ifdef NATIVE_DEBUG_BUILD
++						{
++							cint64 dN = 0, nN = 0;
++							for (CXLinker<CIndividualReference>* l = rmcmd->getDeterministicIndividualReferenceLinker(); l; l = l->getNext()) { ++dN; }
++							for (CXLinker<CIndividualReference>* l = rmcmd->getNondeterministicIndividualReferenceLinker(); l; l = l->getNext()) { ++nN; }
++							fprintf(stderr, "RMSG indi=%lld role=%lld inv=%d det=%lld ndet=%lld\n", (long long)individualReference.getIndividualID(), (long long)roleInstItem->getRole()->getRoleTag(), (int)inversed, (long long)dN, (long long)nN);
++						}
++#endif // NATIVE_DEBUG_BUILD
+ 						CXLinker<CIndividualReference>* detIndiLinker = rmcmd->getDeterministicIndividualReferenceLinker();
+ 						for (CXLinker<CIndividualReference>* detIndiLinkerIt = detIndiLinker; detIndiLinkerIt; detIndiLinkerIt = detIndiLinkerIt->getNext()) {
+ 							CIndividualReference candIndi = detIndiLinkerIt->getData();
+diff --git a/Source/Reasoner/Generator/CConcreteOntologyUpdateBuilder.cpp b/Source/Reasoner/Generator/CConcreteOntologyUpdateBuilder.cpp
+--- a/Source/Reasoner/Generator/CConcreteOntologyUpdateBuilder.cpp	2026-11-21 01:25:12.433355764 +0000
++++ b/Source/Reasoner/Generator/CConcreteOntologyUpdateBuilder.cpp	2026-11-21 01:25:12.436091231 +0000
+@@ -2183,6 +2183,14 @@
+ 					}
+ 					mDataRangeTermConceptHash->insert(dataRangeExp,concept);
+ 					mConceptDataRangeTermHash->insert(concept,dataRangeExp);
++					// WASM port: a datatype used as a data range (restriction filler, range, complement operand) is a datatype concept
++					// from the moment it is created. The later build step only runs for data range expressions that were queued in the
++					// data range list, which datatypes are not; the concept then stayed atomic (CCATOM) and clashes between data ranges
++					// of different value spaces (integer vs string) were not detected.
++					if (dataRangeExp->getType() == CBuildExpression::BETDATATYPE) {
++						concept->setOperatorCode(CCDATATYPE);
++						concept->setDatatype(getDatatypeForDatatypeExpression((CDatatypeExpression*)dataRangeExp));
++					}
+ 				}
+ 				return concept;
+ 			}
+diff --git a/Source/Reasoner/Kernel/Algorithm/CDatatypeIndividualProcessNodeHandler.cpp b/Source/Reasoner/Kernel/Algorithm/CDatatypeIndividualProcessNodeHandler.cpp
+--- a/Source/Reasoner/Kernel/Algorithm/CDatatypeIndividualProcessNodeHandler.cpp	2026-11-21 01:36:15.274819538 +0000
++++ b/Source/Reasoner/Kernel/Algorithm/CDatatypeIndividualProcessNodeHandler.cpp	2026-11-21 01:36:15.277280147 +0000
+@@ -221,7 +221,12 @@
+ 							if (!negated) {
+ 								potentiallyModified |= closeOtherValueSpaces(indiProcNode,valueSpaceType,depTrackPoint,calcAlgContext);
+ 							} else {
+-								potentiallyModified |= closeValueSpace(indiProcNode,valueSpaceType,depTrackPoint,calcAlgContext);
++								// WASM port: closing the whole value space is only the negation of a datatype that has no restrictions of its own (owl:real, xsd:string).
++								// A derived datatype (xsd:integer, xsd:positiveInteger, ...) carries its restrictions as operands; the datatype rule negates
++								// those right after this call, so closing the whole space here would also exclude values the datatype does not contain.
++								if (datatypeConcept->getOperandCount() == 0) {
++									potentiallyModified |= closeValueSpace(indiProcNode,valueSpaceType,depTrackPoint,calcAlgContext);
++								}
+ 							}
+ 						}
+ 					}
+--- a/Source/Reasoner/Preprocess/CDatatypeNormalizerPreProcess.cpp
++++ b/Source/Reasoner/Preprocess/CDatatypeNormalizerPreProcess.cpp
+@@ -435,7 +435,7 @@
+ 					CConcept* integerRestrictionConcept = getIntegerRestrictionConcept();
+ 					addConceptOperand(datatypeConcept,integerRestrictionConcept,false);
+ 
+-					CConcept* minInclusiveIntRestrictionConcept = getNumberRestrictionConcept(CDFC_MIN_INCLUSIVE,"-2147483647");
++					CConcept* minInclusiveIntRestrictionConcept = getNumberRestrictionConcept(CDFC_MIN_INCLUSIVE,"-2147483648");
+ 					addConceptOperand(datatypeConcept,minInclusiveIntRestrictionConcept,false);
+ 					CConcept* maxInclusiveIntRestrictionConcept = getNumberRestrictionConcept(CDFC_MAX_INCLUSIVE,"2147483647");
+ 					addConceptOperand(datatypeConcept,maxInclusiveIntRestrictionConcept,false);
+@@ -453,7 +453,7 @@
+ 					CConcept* integerRestrictionConcept = getIntegerRestrictionConcept();
+ 					addConceptOperand(datatypeConcept,integerRestrictionConcept,false);
+ 
+-					CConcept* minInclusiveShortRestrictionConcept = getNumberRestrictionConcept(CDFC_MIN_INCLUSIVE,"-32767");
++					CConcept* minInclusiveShortRestrictionConcept = getNumberRestrictionConcept(CDFC_MIN_INCLUSIVE,"-32768");
+ 					addConceptOperand(datatypeConcept,minInclusiveShortRestrictionConcept,false);
+ 					CConcept* maxInclusiveShortRestrictionConcept = getNumberRestrictionConcept(CDFC_MAX_INCLUSIVE,"32767");
+ 					addConceptOperand(datatypeConcept,maxInclusiveShortRestrictionConcept,false);
+@@ -471,7 +471,7 @@
+ 					CConcept* integerRestrictionConcept = getIntegerRestrictionConcept();
+ 					addConceptOperand(datatypeConcept,integerRestrictionConcept,false);
+ 
+-					CConcept* minInclusiveByteRestrictionConcept = getNumberRestrictionConcept(CDFC_MIN_INCLUSIVE,"-127");
++					CConcept* minInclusiveByteRestrictionConcept = getNumberRestrictionConcept(CDFC_MIN_INCLUSIVE,"-128");
+ 					addConceptOperand(datatypeConcept,minInclusiveByteRestrictionConcept,false);
+ 					CConcept* maxInclusiveByteRestrictionConcept = getNumberRestrictionConcept(CDFC_MAX_INCLUSIVE,"127");
+ 					addConceptOperand(datatypeConcept,maxInclusiveByteRestrictionConcept,false);
+--- a/Source/Reasoner/Kernel/Algorithm/CBackendAssociationCacheHandler.cpp
++++ b/Source/Reasoner/Kernel/Algorithm/CBackendAssociationCacheHandler.cpp
+@@ -120,6 +120,13 @@
+ 					if (!indiLoadedAssoData) {
+ 						indiLoadedAssoData = getIndividualAssociationLoadingData(indiId, calcAlgContext);
+ 					}
++					// WASM port: getIndividualAssociationLoadingData returns nullptr when the backend cache holds no association data for the
++					// individual. The caller (visitNominalIndirectlyConnectedIndividualIds) and the cache reader already treat a null result
++					// as "no indirect connections"; dereferencing it crashed natively (SIGSEGV with this=0 on the ROBOT-normalized W3C
++					// premise SymmetricProperty-002, individual id 7).
++					if (!indiLoadedAssoData) {
++						return nullptr;
++					}
+ 					if (!indiLoadedAssoData->getLoadedNominalIndirectConnectionData()) {
+ 						indiLoadedAssoData->setLoadedNominalIndirectConnectionData(mAssBackCacheReader->getNominalIndirectConnectionData(indiId));
+ 						indiLoadedAssoData->setIndirectlyConnectedIndividualsIntegration(true);

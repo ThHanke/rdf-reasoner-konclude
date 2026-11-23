@@ -17,7 +17,7 @@ Old numbers still appear in commit messages, docs/solutions, memory notes and co
 
 `archive/0.9.0-pre-fold/` keeps the separate 0.9.0-series patches 005-009 and the pre-fold 002/004 (fold verified: vendor tree hash identical to sequential application).
 `archive/0.9.1-pre-fold/` keeps the 0.9.1 series 005/006 (patch files and `mod_*.py` generators) and the pre-fold 002; they were folded into 002 with the same verified-identical-tree method (vendor tree hash identical to sequential application of 000-004 plus 005/006).
-`archive/pr18-pre-fold/` keeps the PR #18 series 006-009 and the pre-fold 002/004; folded with the same verified-identical-tree method (vendor tree hash identical to sequential application of 000-009).
+`archive/pr18-pre-fold/` keeps the PR #18 series 006-009, the pre-fold 002/004 and (`round-patches/`) the six kernel patches of 2026-11-23 as proposed by the investigation agents; folded with the same verified-identical-tree method (vendor tree hash identical to sequential application of 000-009).
 `archive/per-fix/` keeps the original per-fix patches and their `mod_*.py` generators (reference only, not applied).
 `archive/` also holds parked, never-enabled experiments (010, 012-016). Incremental-revision experiments: `docs/experiments/`.
 
