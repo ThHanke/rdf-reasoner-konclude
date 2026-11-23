@@ -1,6 +1,7 @@
 ---
 title: Folding vendor patches with a verified-identical tree, and the 0.9.0 npm release flow
 date: 2026-11-09
+last_updated: 2026-11-23
 category: workflow-issues
 module: patches
 problem_type: workflow_issue
@@ -46,3 +47,13 @@ Byte-identical fold means no retesting of kernel behaviour is needed beyond the 
 ## When to Apply
 
 Any future fold of 005+ patches into scoped patches before a tag; any time a heavy Roberts test times out once.
+
+## Pitfalls found in the PR #18 adoption (2026-11-23)
+
+- **Verify a fold with a tree hash that includes untracked files:** `sha256` of `git -C vendor/konclude diff` plus `sha256sum` of the untracked files (excluding `.patches-applied`), before and after `bash scripts/apply-patches.sh --force`. A mismatch means content was lost or reordered.
+- **Split patch files by file header, not only `diff --git`.** Patch files appended earlier (signed minimums, null guard) start at `--- a/...` without a `diff --git` line; splitting on `diff --git` merged them into the preceding section and replacing that section dropped them (first fold gave a different hash). Split on `(?m)^(?=(?:diff --git [^\n]*\n)?--- a/)`.
+- **Regenerate per file** with `diff -u --label a/<f> --label b/<f> base current`; the base is the state that precedes the patch in the chain (clean file plus the earlier patches that touch it: `git apply --ignore-whitespace -p1 --include=<f>`).
+- **Order matters.** A file already touched by patch 005 (`CCalculationTableauCompletionTaskHandleAlgorithm.cpp`) cannot get a section in 002: it needs a later patch (006). New patches continue at 007.
+- **The store fast path** in `ts/n3Inject.ts` (`encodeStoreToBuffers`) has its own trigger list for the input rewrites of `ts/inputNormalize.ts`. A new rewrite must be added there too; the XML literal canonicalization was not, and W3C `miscellaneous-202` regressed (found by the W3C gate, not by the targeted tests). Literal entities in the N3 index read `"lexical"^^datatype-iri`, so a scan of `_entityIndex._entities` is cheap.
+- **Disk full:** at 100% a write can truncate a file (`ts/index.ts` became 0 bytes). After edits with `df` near full check `wc -l`; restore with `git checkout -- <file>` and redo the edit.
+

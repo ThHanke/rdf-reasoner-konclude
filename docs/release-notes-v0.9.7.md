@@ -1,6 +1,8 @@
-# Release Notes — next version (draft, not yet versioned)
+# Release Notes — v0.9.7
 
-Collects the changes of the PR #18 adoption. Rename this file to `release-notes-vX.Y.Z.md` when the version is chosen.
+Adopts PR #18 (datatype clashes, memory fixes, input rewrites, DL-safe SWRL, property entailment) and closes most of the remaining W3C OWL 2 DL conformance gaps. Start with [pr18-handover.md](pr18-handover.md); chapters: [api.md](api.md), [options.md](options.md), [swrl.md](swrl.md), [owl2-conformance.md](owl2-conformance.md).
+
+**W3C OWL 2 DL:** consistency 247 → 265 correct of 266 (raw set), 247 → 263 of 264 (normalized); entailment 60 → 68 correct of 84.
 
 ## Added
 
@@ -26,10 +28,26 @@ Collects the changes of the PR #18 adoption. Rename this file to `release-notes-
 
 - OWL 1 constructors on a named class: a class with several `owl:oneOf` lists is the intersection of them (one rewritten class per triple); fixes W3C `description-logic-502`.
 
+- **`isEntailedGraph(store, conclusion)`:** conclusions that are small RDF graphs with blank nodes (existential trees, decided by a refutation probe) and annotation triples (lookup through `sameAs`, equivalent classes and properties); `null` for anything it cannot decide soundly.
+- **`rdf:XMLLiteral` values** are compared in canonical form (the kernel could not parse XML and dropped every XML literal).
+
+## Fixed (kernel, patches 002 and 006)
+
+- Data cardinality over enumerated data ranges (`{0.5, 0.25}` with `minCardinality 2` was inconsistent, `{a}` with `minCardinality 2` consistent; W3C `New-Feature-Rational-003`).
+- Float and double: -0 orders before +0, subnormals parse, empty facet intervals are inconsistent (`Datatype-Float-Discrete-001`, `Plus_and_Minus_Zero_are_Distinct`).
+- A negated literal inside an OR branch was dropped (`excludeValue` compared the maximum in the wrong direction; `Minus_Infinity_is_not_in_owl_real`).
+- Consistency for ABox individuals typed with complex classes: nominal cardinality clash (`description-logic-105`) and the separated-node saturation (`-008`, `-012`, `-013`, `-015`, `-017`, `-612` to `-617`). `checkConsistency` itself now answers correctly; the `materialize()` check stays as a stopgap.
+- Merging nominals: links of non-child neighbours are moved to the merge target (`one_two`).
+- **Realization "stall" on two normalized W3C premises** was a WebAssembly thread stack overflow (64 KiB default, silent heap corruption). Thread stacks are now 2 MiB (`emscripten.cmake`).
+
 ## Changed
 
 - Vendor patches 006-009 of the PR are folded into 002 and 004; the vendor tree is byte-identical to the sequential application (`patches/README.md`).
 - `materialize()` checks asserted individuals against the unsatisfiable classes after realization, because Konclude's consistency step misses some of them (W3C description-logic-008 and others).
+
+## Performance
+
+No measurable change on the benchmark fixtures: LUBM schema 283 ms and GALEN 1,134 ms (WASM ingest to result, quick run on a loaded host; recorded 261 and 1,126 ms), PMDco `materialize` 3.1 s (`main` 3.0 s), identical inferred counts. SWRL: no cost without rules; 2.5x a rule-free run when rules derive thousands of triples ([swrl.md](swrl.md#cost)).
 
 ## Known limits and open work
 

@@ -16,11 +16,11 @@ Source: the PR #18 reviewer kit verdict table (raw run, 266 W3C OWL 2 DL tests, 
 | `Datatype-Float-Discrete-001` | inconsistent | inconsistent | **Fixed** (patch 002): `CDatatypeCompareValueSpaceMap::getNextPossibleDataValue` had an inverted test at the last map point (an empty interval looked satisfiable); parsing accepts subnormals; the single-node value search runs. |
 | `Minus_Infinity_is_not_in_owl_real` | inconsistent | inconsistent | **Fixed** (patch 002): `excludeValue` compared the maximum in the wrong direction (typo `isGreaterThan`), so a negated literal inside an OR branch was dropped (real, compare and string value space maps). |
 | `Plus_and_Minus_Zero_are_Distinct` | inconsistent | inconsistent | **Fixed** (patch 002): -0 orders before +0 in float and double values and value-space maps; float parsing uses strtod/strtof (accepts subnormals). |
-| `one_two` | inconsistent | consistent | To diagnose (float/double family). |
+| `one_two` | inconsistent | inconsistent | **Fixed** (patch 006): `mergeIndividualNodeInto` moved a neighbour's links to the merge target only for nominals, the parent and existing successors, so a blockable non-child neighbour kept its link on the old node and an inverse-functional rule at the target saw one link instead of two. One added clause (`!isIndividualAncestor`). |
 | `New-Feature-Rational-003` | consistent | consistent | **Fixed** (2026-11-23, patch 002): three kernel changes for data cardinality over enumerated ranges (value exclusion across distinct nodes in `checkSatisfiability`, non-integer points in `CDatatypeRealValueSpaceMap::getNextPossibleDataValue`, data cardinality above 1 routed to the tableau). `tests/integration/data-cardinality.test.ts`. |
-| `WebOnt-description-logic-035` | inconsistent | consistent | Kernel judges the class satisfiable although its definition is contradictory; native Konclude 0.7.0 agrees. Kernel limitation. |
+| `WebOnt-description-logic-035` | inconsistent | consistent | **Still open.** Both the saturation and the full tableau miss it (nominal `spy`, inverse role `invP` with `≤2`, a class with `≥3 r`; cardinality pairs `(3,2)`, `(4,2)`, `(4,3)` are missed, `(2,1)`, `(3,1)`, `(5,2)`, `(2,0)` are caught). A native null dereference on this case is guarded (patch 006). Not located. |
 | `WebOnt-description-logic-105` | inconsistent | inconsistent | **Fixed** (patch 002): the saturation skipped the cardinality clash for nominal nodes, so the consistency step stopped early; the node is now marked insufficient and the full tableau runs. `-008`/`-012`/`-035` have another cause and stay open. |
-| `WebOnt-description-logic-502` | inconsistent | inconsistent | **Fixed** (2026-11-23): a class with several `owl:oneOf` lists got all of them merged into one rewritten class, so the kernel read one list. Each constructor triple now becomes its own equivalent class (intersection semantics). |
+| `WebOnt-description-logic-502` | inconsistent | inconsistent | **Fixed** in the input rewrite: one equivalent class per `owl:oneOf` constructor triple. |
 | `WebOnt-miscellaneous-203` | inconsistent | inconsistent | **Fixed** (patch 002): the QDomDocument shim always failed, so every `rdf:XMLLiteral` was dropped; the lexical form is kept (equality by trimmed string, no well-formedness check). |
 | `WebOnt-miscellaneous-204` | inconsistent | inconsistent | **Fixed**, same as `-203`. |
 
@@ -46,6 +46,13 @@ Raw run: 84 entailment tests, port 60 correct / 4 wrong / 20 unsupported; native
 | Datatype-hierarchy conclusions | `WebOnt-I5.8-006`, `-007`, `-008`, `-009` | `p range byte` therefore `p range short`: decidable by a range probe, **being implemented** (useful for users). |
 | Property equivalence / characteristics | `WebOnt-equivalentProperty-003`, `-004`, `WebOnt-SymmetricProperty-002`, `WebOnt-TransitiveProperty-002` | The last two depend on the realization stall (Unit 8). |
 | Other | `WebOnt-allValuesFrom-002` | Not yet analysed. |
+
+**Update (2026-11-23):** after the range/domain, equivalence and graph-conclusion work the raw run is 68 correct, 3 wrong (`Consistent-but-all-unsat`, `WebOnt-I5.8-010`, `WebOnt-imports-011`; native Konclude is wrong on these too), 13 unsupported. `isEntailedGraph` decides existential conclusions with anonymous nodes and annotation triples; `description-logic-901` (anonymous classes on both sides of a subclass axiom) is not handled.
+
+## Unsatisfiable-individual family and `miscellaneous-202` (2026-11-23)
+
+- `WebOnt-description-logic-008`, `-012` and the family `-013`, `-015`, `-017`, `-612`, `-613`, `-615`, `-617`: **fixed in the kernel** (patch 002). The consistency step stopped early ("Trivial consistency detected") when the saturation approximation judged all assertion individuals sufficient. For `-008` the critical `≤1` cardinality of the shared filler was recorded under the role `r` but looked up under `concept->getRole()` (`invR`); the lookup now uses the loop's super role. For `-012` a representative successor at its limit is left out of the count on separated nodes; the node is now marked insufficient. Together with the `-105` fix (nominal clash) `checkConsistency` itself answers correctly. The TypeScript check in `materialize()` is kept as a stopgap but is probably redundant now. Test: `tests/integration/pr18-kernel.test.ts`.
+- `WebOnt-miscellaneous-202`: two XML literals that are the same value in different spellings. Fixed by the canonicalizer (`ts/xmlLiteral.ts`); the store fast path in `ts/n3Inject.ts` needed its own trigger for XML literals. Test: `tests/integration/xml-literal.test.ts`.
 
 ## Realization stall: fixed (2026-11-23)
 

@@ -5,6 +5,17 @@
 
 OWL-DL tableau reasoning via [Konclude](https://github.com/konclude/Konclude) compiled to WebAssembly, with an async TypeScript API using RDF.js Quad types.
 
+## Documentation
+
+| Document | Content |
+|---|---|
+| [API reference](docs/api.md) | every method, property, error and constant of `RdfReasoner` |
+| [Options reference](docs/options.md) | every option with default, cost and when to change it; what is on by default (opt-out) and what is opt-in |
+| [SWRL rules](docs/swrl.md) | DL-safe rules in `materialize`: scope, semantics, limits, cost |
+| [OWL 2 DL conformance](docs/owl2-conformance.md) | W3C test results, supported features, datatypes, known gaps |
+| [PR #18 handover](docs/pr18-handover.md) | what changed in the 0.9.7 adoption of PR #18, before and after, open items |
+| [Release notes 0.9.7](docs/release-notes-v0.9.7.md) | changes, behaviour changes, known limits |
+
 ## Installation
 
 ```bash

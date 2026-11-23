@@ -110,3 +110,5 @@ for (const auto& [s, o] : mImpl->mFpIfpSameAsPairs)
 | 4 | equivalentProperty bidirectional | `loadTripleBuffer()` collects `mEquivPropPairs`; `buildPropertyTripleBuffer()` emits subPropertyOf |
 | 5 | differentFrom self-clash | `loadTripleBuffer()` scan → `mTriviallyInconsistent`; `consistency()` short-circuits |
 | 6 | complementOf ABox clash | `loadTripleBuffer()` scan → `mTriviallyInconsistent`; `consistency()` short-circuits |
+
+**Store fast path (2026-11-23):** an input rewrite in `ts/inputNormalize.ts` must also be listed in the trigger list of `encodeStoreToBuffers` (`ts/n3Inject.ts`), otherwise stores take the fast path and skip it (W3C `miscellaneous-202`). See [fold-vendor-patches-and-npm-release-2026-11-09.md](../workflow-issues/fold-vendor-patches-and-npm-release-2026-11-09.md#pitfalls-found-in-the-pr-18-adoption-2026-11-23).

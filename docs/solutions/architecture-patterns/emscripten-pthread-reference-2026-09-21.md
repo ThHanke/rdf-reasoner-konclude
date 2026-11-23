@@ -307,6 +307,8 @@ Memory scaling: each Worker in the pool reserves its own JS heap and WASM stack.
 Empirically, 8 workers in Node.js consumes roughly 200–400 MB of process memory.
 Do not increase the pool size without profiling memory.
 
+**Thread stack size.** The emsdk default for the main thread and every pthread is 64 KiB. Stacks are malloc'ed from the heap and with `ASSERTIONS=0` and no stack check an overflow does not trap: it silently corrupts neighbouring heap memory. Konclude recurses about 3,400 frames deep in the backend-cache nominal neighbour expansion, which needs more than 256 KiB natively. The build therefore sets `-sSTACK_SIZE=2097152 -sDEFAULT_PTHREAD_STACK_SIZE=2097152` (`emscripten.cmake`; about 40 MiB of the heap for ~20 threads). See [wasm-pthread-stack-overflow-realization-stall-2026-11-23.md](../runtime-errors/wasm-pthread-stack-overflow-realization-stall-2026-11-23.md).
+
 ### 4.4 `SharedArrayBuffer` / `Atomics.wait` restrictions
 
 **Node.js worker context:** `Atomics.wait` is permitted inside Node.js `Worker` threads
