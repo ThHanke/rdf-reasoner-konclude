@@ -1,0 +1,15 @@
+_:df_10_1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .
+<http://example.org/hasName> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<http://example.org/hasAddress> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<http://example.org/hasZip> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+_:df_10_2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#AllDisjointProperties> .
+_:df_10_2 <http://www.w3.org/2002/07/owl#members> _:df_10_3 .
+_:df_10_3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <http://example.org/hasName> .
+_:df_10_3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> _:df_10_4 .
+_:df_10_4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <http://example.org/hasAddress> .
+_:df_10_4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> _:df_10_5 .
+_:df_10_5 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <http://example.org/hasZip> .
+_:df_10_5 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
+<http://example.org/Peter> <http://example.org/hasName> "Peter Griffin" .
+<http://example.org/Peter_Griffin> <http://example.org/hasAddress> "Peter Griffin" .
+<http://example.org/Petre> <http://example.org/hasZip> "Peter Griffin" .

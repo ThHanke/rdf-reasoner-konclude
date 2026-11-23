@@ -1,0 +1,6 @@
+_:df_23_1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .
+<http://www.w3.org/2002/03owlt/miscellaneous/inconsistent203#fp> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+<http://www.w3.org/2002/03owlt/miscellaneous/inconsistent203#fp> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#FunctionalProperty> .
+_:df_23_2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Thing> .
+_:df_23_2 <http://www.w3.org/2002/03owlt/miscellaneous/inconsistent203#fp> "\n<br></br>\n<img src=\"vn.png\" alt=\"Venn diagram\" longdesc=\"vn.html\" title=\"Venn\"></img>\n\n"^^<http://www.w3.org/1999/02/22-rdf-syntax-ns#XMLLiteral> .
+_:df_23_2 <http://www.w3.org/2002/03owlt/miscellaneous/inconsistent203#fp> "<br></br>\n<img src=\"vn.png\" title=\"Venn\" alt=\"Venn diagram\" longdesc=\"vn.html\"></img>\n"^^<http://www.w3.org/1999/02/22-rdf-syntax-ns#XMLLiteral> .

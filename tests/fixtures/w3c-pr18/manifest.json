@@ -1,0 +1,209 @@
+[
+ {
+  "id": "New-Feature-Keys-001",
+  "group": "hasKey",
+  "expected": "consistent",
+  "portVerdict": "consistent",
+  "status": "pass"
+ },
+ {
+  "id": "New-Feature-Keys-002",
+  "group": "hasKey",
+  "expected": "inconsistent",
+  "portVerdict": "inconsistent",
+  "status": "pass"
+ },
+ {
+  "id": "New-Feature-Keys-003",
+  "group": "hasKey",
+  "expected": "consistent",
+  "portVerdict": "consistent",
+  "status": "pass"
+ },
+ {
+  "id": "New-Feature-Keys-004",
+  "group": "hasKey",
+  "expected": "consistent",
+  "portVerdict": "consistent",
+  "status": "pass"
+ },
+ {
+  "id": "New-Feature-Keys-005",
+  "group": "hasKey",
+  "expected": "consistent",
+  "portVerdict": "consistent",
+  "status": "pass"
+ },
+ {
+  "id": "New-Feature-Keys-006",
+  "group": "hasKey",
+  "expected": "inconsistent",
+  "portVerdict": "inconsistent",
+  "status": "pass"
+ },
+ {
+  "id": "New-Feature-Keys-007",
+  "group": "hasKey",
+  "expected": "consistent",
+  "portVerdict": "consistent",
+  "status": "pass"
+ },
+ {
+  "id": "New-Feature-BottomDataProperty-001",
+  "group": "bottom-property",
+  "expected": "inconsistent",
+  "portVerdict": "inconsistent",
+  "status": "pass"
+ },
+ {
+  "id": "New-Feature-BottomObjectProperty-001",
+  "group": "bottom-property",
+  "expected": "inconsistent",
+  "portVerdict": "inconsistent",
+  "status": "pass"
+ },
+ {
+  "id": "New-Feature-DisjointDataProperties-001",
+  "group": "disjoint-data-properties",
+  "expected": "inconsistent",
+  "portVerdict": "inconsistent",
+  "status": "pass"
+ },
+ {
+  "id": "New-Feature-DisjointDataProperties-002",
+  "group": "disjoint-data-properties",
+  "expected": "consistent",
+  "portVerdict": "consistent",
+  "status": "pass"
+ },
+ {
+  "id": "New-Feature-NegativeDataPropertyAssertion-001",
+  "group": "negative-property-assertion",
+  "expected": "inconsistent",
+  "portVerdict": "inconsistent",
+  "status": "pass"
+ },
+ {
+  "id": "New-Feature-NegativeObjectPropertyAssertion-001",
+  "group": "negative-property-assertion",
+  "expected": "inconsistent",
+  "portVerdict": "inconsistent",
+  "status": "pass"
+ },
+ {
+  "id": "WebOnt-description-logic-006",
+  "group": "owl1-boolean",
+  "expected": "consistent",
+  "portVerdict": "consistent",
+  "status": "pass"
+ },
+ {
+  "id": "WebOnt-description-logic-020",
+  "group": "owl1-boolean",
+  "expected": "consistent",
+  "portVerdict": "consistent",
+  "status": "pass"
+ },
+ {
+  "id": "WebOnt-description-logic-027",
+  "group": "owl1-boolean",
+  "expected": "inconsistent",
+  "portVerdict": "inconsistent",
+  "status": "pass"
+ },
+ {
+  "id": "WebOnt-description-logic-034",
+  "group": "owl1-boolean",
+  "expected": "consistent",
+  "portVerdict": "consistent",
+  "status": "pass"
+ },
+ {
+  "id": "Datatype-Float-Discrete-001",
+  "group": "known-gap",
+  "expected": "inconsistent",
+  "portVerdict": "consistent",
+  "status": "known-gap"
+ },
+ {
+  "id": "New-Feature-Rational-003",
+  "group": "known-gap",
+  "expected": "consistent",
+  "portVerdict": "inconsistent",
+  "status": "known-gap"
+ },
+ {
+  "id": "one_two",
+  "group": "known-gap",
+  "expected": "inconsistent",
+  "portVerdict": "consistent",
+  "status": "known-gap"
+ },
+ {
+  "id": "WebOnt-description-logic-035",
+  "group": "known-gap",
+  "expected": "inconsistent",
+  "portVerdict": "consistent",
+  "status": "known-gap"
+ },
+ {
+  "id": "WebOnt-description-logic-105",
+  "group": "known-gap",
+  "expected": "inconsistent",
+  "portVerdict": "consistent",
+  "status": "known-gap"
+ },
+ {
+  "id": "WebOnt-description-logic-502",
+  "group": "known-gap",
+  "expected": "inconsistent",
+  "portVerdict": "consistent",
+  "status": "known-gap"
+ },
+ {
+  "id": "WebOnt-miscellaneous-203",
+  "group": "known-gap",
+  "expected": "inconsistent",
+  "portVerdict": "consistent",
+  "status": "known-gap"
+ },
+ {
+  "id": "WebOnt-miscellaneous-204",
+  "group": "known-gap",
+  "expected": "inconsistent",
+  "portVerdict": "consistent",
+  "status": "known-gap"
+ },
+ {
+  "id": "Inconsistent_Disjoint_Dataproperties",
+  "group": "disjoint-data-properties",
+  "expected": "inconsistent",
+  "portVerdict": "inconsistent",
+  "status": "pass",
+  "source": "ROBOT conversion (functional syntax only in the W3C set)"
+ },
+ {
+  "id": "consistent-dataproperty-disjointness",
+  "group": "disjoint-data-properties",
+  "expected": "consistent",
+  "portVerdict": "consistent",
+  "status": "pass",
+  "source": "ROBOT conversion (functional syntax only in the W3C set)"
+ },
+ {
+  "id": "Minus_Infinity_is_not_in_owl_real",
+  "group": "known-gap",
+  "expected": "inconsistent",
+  "portVerdict": "consistent",
+  "status": "known-gap",
+  "source": "ROBOT conversion (functional syntax only in the W3C set)"
+ },
+ {
+  "id": "Plus_and_Minus_Zero_are_Distinct",
+  "group": "known-gap",
+  "expected": "inconsistent",
+  "portVerdict": "consistent",
+  "status": "known-gap",
+  "source": "ROBOT conversion (functional syntax only in the W3C set)"
+ }
+]
