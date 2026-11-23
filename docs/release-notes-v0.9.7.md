@@ -13,11 +13,14 @@ Adopts PR #18 (datatype clashes, memory fixes, input rewrites, DL-safe SWRL, pro
 - `isEntailed` decides property assertions, property characteristics and declarations.
 - Input rewrites before reasoning: negative property assertions, the bottom data property, OWL 1 boolean constructors, disjoint data properties, `owl:hasKey`.
 - `weaken()` gets an `alsoRemove` option.
+- OWL 1 constructors on a named class: a class with several `owl:oneOf` lists is the intersection of them (one rewritten class per triple); fixes W3C `description-logic-502`.
+- **`isEntailedGraph(store, conclusion)`:** conclusions that are small RDF graphs with blank nodes (existential trees, decided by a refutation probe) and annotation triples (lookup through `sameAs`, equivalent classes and properties); `null` for anything it cannot decide soundly.
+- **`rdf:XMLLiteral` values** are compared in canonical form (the kernel could not parse XML and dropped every XML literal).
 - **`closure: true`** (opt-in) on `classify`, `classifyProperties` and `materialize` (with `includeClassHierarchy`): writes the transitive closure of the class / property hierarchy into the inferred graph (equivalents subsume each other, `equivalentClass` / `equivalentProperty` between all group members). Default stays the reduced hierarchy. About 6-9x the direct edges (PMDco 1,612 to 10,572 pairs).
 - **`isEntailed`** decides `owl:sameAs` (symmetric, transitive, reflexive), `owl:equivalentProperty`, `rdfs:range` and `rdfs:domain` (datatype and class hierarchy conclusions such as `p range byte` entails `p range short`), and answers `subClassOf` / `subPropertyOf` / `equivalentClass` over the transitive-reflexive closure of the hierarchy. Before, `sameAs` and `equivalentProperty` returned `null` and `A ⊑ C` for `A ⊑ B ⊑ C`, `A ⊑ A` and `A ≡ B` as `A ⊑ B` returned `false`. A `false` means not entailed (open world), not refuted.
 - **`illTypedLiterals`** option (`"report"` default, `"error"`, `"ignore"`) and `RdfReasoner.lastLiteralIssues`: ill-typed or out-of-range numeric and boolean literals are listed (or rejected with `InvalidLiteralError`) instead of being dropped silently by the kernel.
 
-## Fixed (kernel)
+## Fixed (kernel, patches 002, 004)
 
 - Datatype clashes between value spaces (a string where `xsd:integer` is required) are detected; datatype concepts get their datatype operator when created (patch 002).
 - A negated derived datatype (`not xsd:positiveInteger`) no longer closes the whole value space (patch 002).
@@ -26,12 +29,7 @@ Adopts PR #18 (datatype clashes, memory fixes, input rewrites, DL-safe SWRL, pro
 - The minimum of `xsd:byte`, `xsd:short` and `xsd:int` was one too high in upstream Konclude (-127, -32767, -2147483647), so valid values `-128`, `-32768` and `-2147483648` made an ontology inconsistent (patch 002).
 - Data values follow `rdfs:subPropertyOf` for data properties (`hasAge ⊑ hasNumber`: `Alice hasNumber 30` is materialized).
 
-- OWL 1 constructors on a named class: a class with several `owl:oneOf` lists is the intersection of them (one rewritten class per triple); fixes W3C `description-logic-502`.
-
-- **`isEntailedGraph(store, conclusion)`:** conclusions that are small RDF graphs with blank nodes (existential trees, decided by a refutation probe) and annotation triples (lookup through `sameAs`, equivalent classes and properties); `null` for anything it cannot decide soundly.
-- **`rdf:XMLLiteral` values** are compared in canonical form (the kernel could not parse XML and dropped every XML literal).
-
-## Fixed (kernel, patches 002 and 006)
+## Fixed (kernel, second round, patches 002 and 006)
 
 - Data cardinality over enumerated data ranges (`{0.5, 0.25}` with `minCardinality 2` was inconsistent, `{a}` with `minCardinality 2` consistent; W3C `New-Feature-Rational-003`).
 - Float and double: -0 orders before +0, subnormals parse, empty facet intervals are inconsistent (`Datatype-Float-Discrete-001`, `Plus_and_Minus_Zero_are_Distinct`).
@@ -42,7 +40,7 @@ Adopts PR #18 (datatype clashes, memory fixes, input rewrites, DL-safe SWRL, pro
 
 ## Changed
 
-- Vendor patches 006-009 of the PR are folded into 002 and 004; the vendor tree is byte-identical to the sequential application (`patches/README.md`).
+- The PR's vendor patches (its 006-009) are folded into `patches/002` and `004`; the vendor tree is byte-identical to the sequential application. `patches/006` is now a different, new patch (link moving on merge, see Fixed). Details in `patches/README.md`.
 - `materialize()` checks asserted individuals against the unsatisfiable classes after realization, because Konclude's consistency step misses some of them (W3C description-logic-008 and others).
 
 ## Performance
@@ -51,7 +49,8 @@ No measurable change on the benchmark fixtures: LUBM schema 283 ms and GALEN 1,1
 
 ## Known limits and open work
 
-- Realization of two ROBOT-normalized W3C premises (`SymmetricProperty-002`, `TransitiveProperty-002`) deadlocks the kernel and is not fixed.
-- Ten W3C consistency verdicts remain wrong (float/double value spaces, `owl:rational`, two kernel limitations); they are pinned in `tests/integration/w3c-conformance-pr18.test.ts` and listed in `docs/solutions/capability-gaps/pr18-known-conformance-gaps-2026-11-23.md`.
-- Ill-typed literals (`"5abc"^^xsd:integer`, `"1.5"^^xsd:integer`, hex floats, `"abc"^^xsd:float`) and integers beyond 64 bits are silently dropped by the kernel's literal parsers instead of making the ontology inconsistent (pinned in `tests/integration/datatype-bounds.test.ts`). The planned fix validates literals in `ts/inputNormalize.ts` before they reach the kernel.
-- Float and double value counting, and data cardinality over finite value spaces, are not implemented.
+- **W3C OWL 2 DL:** one consistency case is still wrong, `WebOnt-description-logic-035` (a nominal with an inverse role and number restrictions; `checkConsistency` says consistent, the saturation and the full tableau both miss it). Entailment: 68 of 84 correct; `Consistent-but-all-unsat`, `WebOnt-I5.8-010` and `WebOnt-imports-011` are wrong (native Konclude is wrong on these too), 13 are not decided (annotation or anonymous-class conclusions, kernel limits). Causes: [known-gaps note](solutions/capability-gaps/pr18-known-conformance-gaps-2026-11-23.md), [owl2-conformance.md](owl2-conformance.md#known-gaps).
+- **Ill-typed literals** (`"5abc"^^xsd:integer`, `"1.5"^^xsd:integer`, `"abc"^^xsd:float`) and integers beyond 64 bits are still dropped by the kernel's literal parsers, so they do not make an ontology inconsistent. They are listed in `lastLiteralIssues` by default or rejected with `illTypedLiterals: "error"` ([options.md](options.md#ill-typed-literals)); pinned in `tests/integration/datatype-bounds.test.ts`.
+- **SWRL:** built-in atoms (`swrlb:*`) are not supported (such rules are skipped and listed); explanations of `materialize` do not include rule consequences ([swrl.md](swrl.md#follow-ups)).
+- **`materialize()` unsatisfiable-individual check:** kept, although `checkConsistency` now answers correctly for the cases that needed it; it can be retired once confirmed on real data.
+- **Not run for this release:** the native Konclude and HermiT benchmark comparison (Docker images unavailable) and `trunk` lint.
