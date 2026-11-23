@@ -48,4 +48,27 @@ describe("DL-safe SWRL", () => {
     const facts = new Facts(parse(`${PRE} ex:fe ex:partOf ex:fesi . ex:fesi a ex:Alloy . ex:c ex:partOf ex:block .`));
     expect(keys(applyRules(rules, facts))).toEqual(["http://ex.org/fe http://www.w3.org/1999/02/22-rdf-syntax-ns#type http://ex.org/Constituent"]);
   });
+
+  it("semi-naive passes (with a delta) reach the same fixpoint as naive passes", () => {
+    // transitive-style rule over a chain and a branch: partOf(x,y) ^ partOf(y,z) -> partOf(x,z)
+    const text = `${PRE} ex:x a swrl:Variable . ex:y a swrl:Variable . ex:z a swrl:Variable .
+      [ a swrl:Imp ; swrl:body ( [ a swrl:IndividualPropertyAtom ; swrl:propertyPredicate ex:partOf ; swrl:argument1 ex:x ; swrl:argument2 ex:y ]
+                                 [ a swrl:IndividualPropertyAtom ; swrl:propertyPredicate ex:partOf ; swrl:argument1 ex:y ; swrl:argument2 ex:z ] ) ;
+        swrl:head ( [ a swrl:IndividualPropertyAtom ; swrl:propertyPredicate ex:partOf ; swrl:argument1 ex:x ; swrl:argument2 ex:z ] ) ] .
+      ${Array.from({ length: 12 }, (_, i) => `ex:n${i} ex:partOf ex:n${i + 1} .`).join(" ")} ex:b0 ex:partOf ex:n3 . ex:b1 ex:partOf ex:b0 .`;
+    const quads = parse(text);
+    const { rules } = parseRules(quads);
+    const closure = (semiNaive: boolean): string[] => {
+      const facts = new Facts(quads);
+      let delta: Facts | undefined;
+      for (let add = applyRules(rules, facts, delta); add.length > 0; add = applyRules(rules, facts, semiNaive ? delta : undefined)) {
+        delta = new Facts([]);
+        for (const [s, p, o] of add) { facts.add(s, p, o); delta.add(s, p, o); }
+      }
+      return [...facts.props.get("http://ex.org/partOf")!.keys()].sort();
+    };
+    const naive = closure(false);
+    expect(closure(true)).toEqual(naive);
+    expect(naive.length).toBeGreaterThan(12 * 13 / 2); // the full transitive closure of the chain plus the branch
+  });
 });

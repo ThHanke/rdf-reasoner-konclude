@@ -97,8 +97,9 @@ describe.skipIf(!wasmExists)("DL-safe SWRL fixpoint in materialize()", () => {
         .map((q) => line(q.subject.value, q.predicate.value, q.object.value)),
     );
     for (const e of expected) expect(have.has(e), `missing ${e}`).toBe(true);
-    // a part-of tree of 40 nodes with ternary branching is 4 levels deep: R2 needs several productive rounds
-    expect(rounds).toBeGreaterThanOrEqual(3);
+    // the rule chain (R2 moves a quality up one level per step) is closed in TypeScript: one kernel round plus the
+    // confirming pass, not one kernel round per tree level (the pre-batching implementation needed 5 for 40 nodes)
+    expect(rounds).toBeLessThanOrEqual(3);
   }, 120_000);
 
   it("rules whose body never matches derive nothing and cost no extra round", async () => {

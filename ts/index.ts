@@ -813,14 +813,26 @@ export class RdfReasoner {
     const { rules, unsupported } = parseRules(base);
     this.lastSwrl = { rules: rules.length, unsupported, rounds: 0, derived: 0 };
     if (rules.length === 0) return null;
+    // Rule chains (a head feeding another rule's body) need no kernel: close them in TypeScript over base + kernel output +
+    // derived facts, and call the kernel only when the closure produced facts it has not seen. `rounds` counts these
+    // passes (closure, then a kernel round if something new was derived); the last pass is the empty confirming one.
+    const facts = new Facts([...base, ...first]);
     const derived: Quad[] = [];
     let quads = first;
+    let synced = 0; // derived facts the kernel has already been given
+    let delta: Facts | undefined; // facts new since the previous pass; undefined = first pass, match everything
     for (let round = 1; round <= SWRL_MAX_ROUNDS; round++) {
-      const add = applyRules(rules, new Facts([...base, ...quads, ...derived]));
       this.lastSwrl.rounds = round;
-      if (add.length === 0) return derived.length ? { quads, derived } : null;
-      for (const [s, p, o] of add) derived.push(DataFactory.quad(s as Quad["subject"], DataFactory.namedNode(p), o as Quad["object"], DataFactory.namedNode(SWRL_GRAPH_IRI)));
+      for (let add = applyRules(rules, facts, delta); add.length > 0; add = applyRules(rules, facts, delta)) {
+        delta = new Facts([]);
+        for (const [s, p, o] of add) {
+          facts.add(s, p, o);
+          delta.add(s, p, o);
+          derived.push(DataFactory.quad(s as Quad["subject"], DataFactory.namedNode(p), o as Quad["object"], DataFactory.namedNode(SWRL_GRAPH_IRI)));
+        }
+      }
       this.lastSwrl.derived = derived.length;
+      if (derived.length === synced) return derived.length ? { quads, derived } : null;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const augmented = new Store([...base, ...derived] as any[]);
       await this._sync(augmented);
@@ -829,6 +841,9 @@ export class RdfReasoner {
       }
       await this._call("realization", []);
       quads = decodeBuffers((await this._call("getInferredTripleBuffer", [false])) as ArrayBuffer);
+      synced = derived.length;
+      delta = new Facts([]);
+      for (const q of quads) if (facts.add(q.subject, q.predicate.value, q.object)) delta.add(q.subject, q.predicate.value, q.object);
     }
     throw new Error(`SWRL rules did not reach a fixpoint within ${SWRL_MAX_ROUNDS} rounds.`);
   }

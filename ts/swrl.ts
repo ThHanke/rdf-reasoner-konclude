@@ -104,23 +104,32 @@ export class Facts {
   }
 }
 
-/** One pass over all rules: the head statements (as s, p, o) that `facts` does not yet hold. */
-export function applyRules(rules: readonly Rule[], facts: Facts): Array<[Term, string, Term]> {
+/**
+ * One pass over all rules: the head statements (as s, p, o) that `facts` does not yet hold.
+ * With `delta` (facts that are new since the previous pass, also contained in `facts`) the pass is semi-naive: only
+ * matches that use at least one delta fact are enumerated (one body atom is matched against `delta`, the others
+ * against `facts`), so a pass costs in proportion to what is new, not to the whole fact base.
+ */
+export function applyRules(rules: readonly Rule[], facts: Facts, delta?: Facts): Array<[Term, string, Term]> {
   const found = new Map<string, [Term, string, Term]>();
-  for (const r of rules) {
-    for (const env of match(r.body, 0, new Map(), facts)) {
-      for (const h of r.head) {
-        const t = headTriple(h, env);
-        if (!t || facts.has(...t)) continue;
-        found.set(termKey(t[0]) + "\0" + t[1] + "\0" + termKey(t[2]), t);
-      }
+  const collect = (r: Rule, env: Map<string, Term>) => {
+    for (const h of r.head) {
+      const t = headTriple(h, env);
+      if (!t || facts.has(...t)) continue;
+      found.set(termKey(t[0]) + "\0" + t[1] + "\0" + termKey(t[2]), t);
     }
+  };
+  for (const r of rules) {
+    if (!delta) { for (const env of match(r.body, 0, new Map(), facts)) collect(r, env); continue; }
+    for (let j = 0; j < r.body.length; j++) for (const env of match(r.body, 0, new Map(), facts, delta, j)) collect(r, env);
   }
   return [...found.values()];
 }
 
-function* match(body: readonly Atom[], i: number, env: Map<string, Term>, f: Facts): Generator<Map<string, Term>> {
+function* match(body: readonly Atom[], i: number, env: Map<string, Term>, all: Facts, delta?: Facts, deltaIdx = -1): Generator<Map<string, Term>> {
   if (i === body.length) { yield env; return; }
+  const f = i === deltaIdx ? delta! : all;
+  const rec = (e: Map<string, Term>) => match(body, i + 1, e, all, delta, deltaIdx);
   const at = body[i]!;
   const val = (a: Arg) => ("v" in a ? env.get(a.v) : a.t);
   const bind = (a: Arg, t: Term, e: Map<string, Term> = env): Map<string, Term> | null => {
@@ -134,7 +143,7 @@ function* match(body: readonly Atom[], i: number, env: Map<string, Term>, f: Fac
     const members = f.types.get(at.cls);
     if (!members) return;
     const cands = bound ? (members.has(termKey(bound)) ? [bound] : []) : [...members.values()];
-    for (const t of cands) if (isNamed(t)) { const e = bind(at.a, t); if (e) yield* match(body, i + 1, e, f); }
+    for (const t of cands) if (isNamed(t)) { const e = bind(at.a, t); if (e) yield* rec(e); }
     return;
   }
   const p = at.kind === "prop" ? at.p : at.kind === "same" ? OWL + "sameAs" : OWL + "differentFrom";
@@ -147,7 +156,7 @@ function* match(body: readonly Atom[], i: number, env: Map<string, Term>, f: Fac
     if (!isNamed(x) || (y.termType !== "Literal" && !isNamed(y))) continue;
     const e1 = bind(at.a, x); if (!e1) continue;
     const e2 = bind(at.b, y, e1);
-    if (e2) yield* match(body, i + 1, e2, f);
+    if (e2) yield* rec(e2);
   }
 }
 
