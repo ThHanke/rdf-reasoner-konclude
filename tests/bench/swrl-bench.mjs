@@ -1,5 +1,6 @@
 // tests/bench/swrl-bench.mjs — materialize() with and without DL-safe SWRL rules on a generated part-of tree.
-// usage: node tests/bench/swrl-bench.mjs [--materials 300] [--runs 3] [--root <checkout>]
+// usage: node tests/bench/swrl-bench.mjs [--materials 300] [--runs 3] [--root <checkout>] [--nofire]
+// --nofire: same rules, but their bodies never match (rules present, nothing derived): the cost of detection + one matching pass.
 // Data: ternary part-of tree of materials with three qualities each; rules
 //   R1 Quality(d) ^ hasCharacteristic(e,d) -> hasQuality(e,d)
 //   R2 hasQuality(e,d) ^ partOf(e,m)       -> hasQuality(m,d)   (one tree level per productive round)
@@ -35,12 +36,14 @@ const rules = `ex:e a swrl:Variable . ex:d a swrl:Variable . ex:m a swrl:Variabl
 [ a swrl:Imp ; swrl:body ( [ a swrl:IndividualPropertyAtom ; swrl:propertyPredicate ex:hasQuality ; swrl:argument1 ex:e ; swrl:argument2 ex:d ]
     [ a swrl:IndividualPropertyAtom ; swrl:propertyPredicate ex:partOf ; swrl:argument1 ex:e ; swrl:argument2 ex:m ] ) ;
   swrl:head ( [ a swrl:IndividualPropertyAtom ; swrl:propertyPredicate ex:hasQuality ; swrl:argument1 ex:m ; swrl:argument2 ex:d ] ) ] .\n`;
+const NOFIRE = process.argv.includes('--nofire');
+const rulesUsed = NOFIRE ? rules.replace(/ex:hasCharacteristic/g,'ex:neverAsserted').replace(/ex:partOf ; swrl:argument1 ex:e/g,'ex:neverAsserted2 ; swrl:argument1 ex:e') : rules;
 const median = (a) => [...a].sort((x, y) => x - y)[Math.floor(a.length / 2)];
 async function run(withRules) {
   const ms = []; let last;
   for (let i = 0; i < RUNS; i++) {
     const r = new RdfReasoner(); await r.ready;
-    const store = new Store(new Parser().parse(withRules ? ttl + rules : ttl));
+    const store = new Store(new Parser().parse(withRules ? ttl + rulesUsed : ttl));
     const t0 = performance.now(); await r.materialize(store); ms.push(Math.round(performance.now() - t0));
     last = r.lastSwrl; r.terminate();
   }

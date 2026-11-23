@@ -267,6 +267,7 @@ interface MaterializeStoreOptions {
   inferredGraph?: string; // default: INFERRED_GRAPH_IRI
   includeClassHierarchy?: boolean; // also emit subClassOf/equivalentClass; default false
   failOnInconsistent?: boolean; // default false
+  swrl?: boolean; // apply the store's DL-safe SWRL rules; default true, see "SWRL rules in materialize"
 }
 ```
 
@@ -401,6 +402,24 @@ To also receive the class hierarchy in the same call:
 
 ```typescript
 await reasoner.materialize(store, { includeClassHierarchy: true });
+```
+
+### SWRL rules in `materialize`
+
+Konclude has no SWRL support, so `materialize()` applies the DL-safe SWRL rules (`swrl:Imp`) found in the store itself:
+the rules are run over the named individuals of the realized ABox, their head statements are added to the reasoning input, and the ontology is realized again until no rule adds a statement. The consequences are written to the inferred graph.
+
+- Supported atoms: class atoms with a named class, individual and data property atoms, `sameIndividual`, `differentIndividuals`. A rule with another atom (built-ins, data ranges, class expressions as predicate) is skipped and reported.
+- Rule chains (a head that feeds another rule's body) are closed in TypeScript; the kernel runs again only when new facts appeared.
+- **Detection and cost.** A store without `swrl:Imp` triples pays nothing. Rules whose bodies never match cost one matching pass (about 3% on a 300-material benchmark). Rules that derive many statements make the kernel realize a larger ABox: on the benchmark (4,863 derived triples) `materialize` takes 2.5x as long as without rules (1.4 s against 0.56 s, `tests/bench/swrl-bench.mjs`).
+- **Opt out:** `materialize(store, { swrl: false })` skips rule processing.
+- `reasoner.lastSwrl` reports the last call: `{ rules, unsupported, rounds, derived, applied }`. With `swrl: false` it still lists the rules found, with `applied: false`.
+- Explanations (`explanations: true`) stay those of the first realization, without the rule consequences. A rule consequence that makes the ontology inconsistent rejects with `InconsistentOntologyError`.
+
+```typescript
+await reasoner.materialize(store); // rules applied (default)
+console.log(reasoner.lastSwrl); // { rules: 2, unsupported: [], rounds: 2, derived: 4863, applied: true }
+await reasoner.materialize(store, { swrl: false }); // rules ignored
 ```
 
 ### ABox: materialize the full role closure
