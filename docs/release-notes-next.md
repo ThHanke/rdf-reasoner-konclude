@@ -18,6 +18,7 @@ Collects the changes of the PR #18 adoption. Rename this file to `release-notes-
 - A negated derived datatype (`not xsd:positiveInteger`) no longer closes the whole value space (patch 002).
 - One Redland world for all loads fixes a trap after consecutive loads in one reasoner (patch 004).
 - Use-after-free and double free in `buildComplexABoxAxioms` for a blank-node class expression shared by several individuals (patch 004).
+- The minimum of `xsd:byte`, `xsd:short` and `xsd:int` was one too high in upstream Konclude (-127, -32767, -2147483647), so valid values `-128`, `-32768` and `-2147483648` made an ontology inconsistent (patch 002).
 - Data values follow `rdfs:subPropertyOf` for data properties (`hasAge ⊑ hasNumber`: `Alice hasNumber 30` is materialized).
 
 ## Changed
@@ -29,4 +30,5 @@ Collects the changes of the PR #18 adoption. Rename this file to `release-notes-
 
 - Realization of two ROBOT-normalized W3C premises (`SymmetricProperty-002`, `TransitiveProperty-002`) deadlocks the kernel and is not fixed.
 - Ten W3C consistency verdicts remain wrong (float/double value spaces, `owl:rational`, two kernel limitations); they are pinned in `tests/integration/w3c-conformance-pr18.test.ts` and listed in `docs/solutions/capability-gaps/pr18-known-conformance-gaps-2026-11-23.md`.
+- Ill-typed literals (`"5abc"^^xsd:integer`, `"1.5"^^xsd:integer`, hex floats, `"abc"^^xsd:float`) and integers beyond 64 bits are silently dropped by the kernel's literal parsers instead of making the ontology inconsistent (pinned in `tests/integration/datatype-bounds.test.ts`). The planned fix validates literals in `ts/inputNormalize.ts` before they reach the kernel.
 - Float and double value counting, and data cardinality over finite value spaces, are not implemented.

@@ -25,3 +25,8 @@ Source: the PR #18 reviewer kit verdict table (raw run, 266 W3C OWL 2 DL tests, 
 | `WebOnt-miscellaneous-204` | inconsistent | consistent | To diagnose. |
 
 Cause-hunting order (from the plan `docs/plans/2026-11-23-001-fix-pr18-remaining-issues-plan.md`, Unit 7): mapper flags and the FP/IFP skip first, then lexical-form conversion in the Qt shim (`src/compat/QtCompat.h`: `toDouble`/`toFloat` wrap `std::stod`/`stof`, which accept a numeric prefix, unlike Qt), then kernel value-space semantics.
+
+## Literal handling found while triaging (2026-11-23)
+
+- **Fixed:** the minimum of `xsd:byte`, `xsd:short` and `xsd:int` was one too high upstream (`CDatatypeNormalizerPreProcess.cpp`: `-127`, `-32767`, `-2147483647`), so the valid minima were reported inconsistent (patch 002).
+- **Open:** the kernel's `parseIntegerValue` / `parseDoubleValue` / `parseFloatValue` return null on a failed parse and the literal is dropped, so ill-typed literals and integers beyond 64 bits give a wrong "consistent". The shim's `QString::toDouble`/`toULongLong` accept a numeric prefix (`"5abc"` parses), unlike Qt, but Qt's strict failure would drop the literal too: the verdict does not change. Fix location: literal validation before the kernel, in `ts/inputNormalize.ts`. Pinned in `tests/integration/datatype-bounds.test.ts`.
